@@ -1,0 +1,7 @@
+# 大型查证素材（Mojang server.jar 与各版本 json，仅本地查证用）
+*.jar
+server-*.json
+v*.json
+vm.json
+# 本地工具配置
+.[c]laude/

@@ -1,0 +1,3779 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NBS2schematic — 红石音乐投影转换器</title>
+<style>
+:root {
+  --bg: #16181d;
+  --panel: #1f232b;
+  --panel2: #262b35;
+  --border: #3a4150;
+  --text: #d8dde6;
+  --text-dim: #8b94a3;
+  --accent: #4fc37c;
+  --accent2: #e8b340;
+  --danger: #e05c5c;
+  --warn: #e0b15c;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text);
+  font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif; font-size: 14px; height: 100%; }
+#app { max-width: 1400px; height: 100vh; margin: 0 auto; padding: 16px 20px;
+  display: flex; flex-direction: column; }
+header { flex: none; }
+header h1 { margin: 4px 0 2px; font-size: 22px; color: var(--accent); }
+header p { margin: 0 0 12px; color: var(--text-dim); font-size: 13px; }
+/* 左右分栏：左 = 音轨池侧边栏（可折叠：展开 = 2 × 340px = 680px（用户要求：当前版本宽度的 2 倍），
+   折叠 = 40px 细条仅留展开按钮），右 = 其余全部组件（滚轮滚动） */
+#content { flex: 1; min-height: 0; display: flex; gap: 14px; }
+#sidebar { flex: 0 0 680px; width: 680px; min-height: 0; display: flex; flex-direction: column; }
+#sidebar-bar { flex: none; display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+#sidebar-bar .sidebar-title { font-size: 12px; color: var(--text-dim); user-select: none;
+  white-space: nowrap; overflow: hidden; }
+#sidebarToggle { flex: none; padding: 2px 10px; font-size: 12px; }
+#main { flex: 1; min-width: 0; min-height: 0; overflow-y: auto; padding: 2px 10px 30px 2px; }
+/* 折叠 = 侧栏整体隐藏；展开按钮移到右侧顶部（用户要求），sticky 钉在滚动区顶部不随滚轮划走 */
+#content.sidebar-collapsed #sidebar { display: none; }
+#main-topbar { display: none; align-items: center; gap: 8px; margin: -2px 0 10px; }
+#content.sidebar-collapsed #main-topbar { display: flex; position: sticky; top: 0; z-index: 10;
+  background: var(--bg); padding: 0 0 8px; }  /* 上沿无 padding + 负 margin 抵掉 #main 顶部 2px → 与上方标题无隙 */
+#main-topbar button { padding: 2px 10px; font-size: 12px; }
+[hidden] { display: none !important; }  /* hidden 属性须压过下方 section/#layer-section 的 display 设定 */
+/* 窄屏退化为上下堆叠 + 整页滚动（桌面主流程为左右分栏） */
+@media (max-width: 900px) {
+  html, body, #app { height: auto; }
+  #content { flex-direction: column; }
+  #sidebar { width: auto; flex: none; }
+  #main { overflow: visible; }
+  #layer-section { flex: none; }
+  #layerList { flex: none; max-height: 260px; }
+}
+section { background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+  padding: 14px 16px; margin-bottom: 14px; }
+section h2 { margin: 0 0 10px; font-size: 15px; color: var(--accent2); }
+#dropzone { border: 2px dashed var(--border); border-radius: 8px; padding: 28px;
+  text-align: center; color: var(--text-dim); cursor: pointer; transition: border-color .15s, background .15s; }
+#dropzone.dragover { border-color: var(--accent); background: rgba(79,195,124,.06); }
+button { background: var(--panel2); color: var(--text); border: 1px solid var(--border);
+  border-radius: 5px; padding: 6px 14px; cursor: pointer; font-size: 13px; }
+button:hover { border-color: var(--accent); }
+button:disabled { opacity: .45; cursor: not-allowed; }
+button.primary { background: #2d6e4a; border-color: var(--accent); font-weight: 600; }
+button.primary:hover { background: #35805a; }
+table.info { border-collapse: collapse; }
+table.info td { padding: 3px 10px 3px 0; vertical-align: top; }
+table.info td:first-child { color: var(--text-dim); white-space: nowrap; }
+#layerList { display: flex; flex-direction: column; gap: 2px; flex: 1; min-height: 0; overflow-y: auto;
+  border: 1px solid var(--border); border-radius: 6px; padding: 6px; }
+/* 音轨池侧边栏：占满侧栏高度（内部 #layerList 滚动），h2/toolbar 定高 */
+#layer-section { display: flex; flex-direction: column; flex: 1; min-height: 0; margin-bottom: 0; }
+#layer-section h2 { margin: 0 0 8px; flex: none; }
+#layer-section .toolbar { flex: none; }
+.layer-row { display: flex; align-items: center; gap: 8px; padding: 3px 6px; border-radius: 4px; }
+.layer-row:hover { background: var(--panel2); }
+.layer-row label { display: flex; align-items: center; gap: 8px; cursor: pointer; min-width: 0; }
+.layer-row > label { flex: 1; }                    /* 仅主 label 撑满，参考/发声组定宽靠右（位置勾选前后不变） */
+.layer-ref-group { display: flex; align-items: center; gap: 8px; flex: none; }
+.layer-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.layer-meta { color: var(--text-dim); font-size: 12px; white-space: nowrap; }
+.layer-ref-cell { display: flex; align-items: center; gap: 4px; cursor: pointer; white-space: nowrap;
+  font-size: 12px; color: var(--text-dim); user-select: none; }
+.layer-ref-cell:hover { color: var(--accent2); }
+.layer-sound-cell { display: flex; align-items: center; gap: 4px; cursor: pointer; white-space: nowrap;
+  font-size: 12px; color: var(--text-dim); user-select: none; }
+.layer-sound-cell:hover { color: var(--accent); }
+.ref-lane-type { width: 88px; background: var(--panel2); color: var(--text); border: 1px solid var(--border);
+  border-radius: 4px; padding: 2px; font-size: 12px; }
+.group-select { width: 60px; background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 3px; }
+.toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+.toolbar .spacer { flex: 1; }
+.setting-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
+.setting-row label { color: var(--text-dim); min-width: 130px; }
+select, input[type="number"], input[type="text"] { background: var(--panel2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 4px; padding: 4px 8px; font-size: 13px; }
+input[type="number"] { width: 70px; }
+#layoutCanvas { border: 1px solid var(--border); border-radius: 6px; background: #12151a; cursor: grab; touch-action: none; }
+#layoutCanvas.dragging { cursor: grabbing; }
+.layout-tools { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+.layout-info { color: var(--text-dim); font-size: 12px; margin-top: 6px; }
+#statsPanel { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px; margin-bottom: 12px; }
+.stat-card { background: var(--panel2); border-radius: 6px; padding: 8px 12px; }
+.stat-card .k { color: var(--text-dim); font-size: 12px; }
+.stat-card .v { font-size: 16px; font-weight: 700; color: var(--accent); }
+#warnings { margin-top: 8px; }
+#warnings .w { color: var(--warn); font-size: 12px; padding: 2px 0; }
+#warnings .e { color: var(--danger); font-size: 12px; padding: 2px 0; }
+#previewPanel { display: flex; flex-direction: column; gap: 14px; }
+.preview-box { flex: none; }
+.preview-box h3 { margin: 4px 0 6px; font-size: 13px; color: var(--text-dim); font-weight: 600; }
+.preview-box canvas { width: 100%; border: 1px solid var(--border); border-radius: 6px; background: #12151a; }
+.lane-row { display: flex; align-items: flex-start; gap: 10px; padding: 6px; border: 1px solid var(--border); border-radius: 6px; margin-bottom: 6px; background: var(--panel2); }
+.lane-row .lane-head { display: flex; align-items: center; gap: 8px; min-width: 120px; }
+.lane-row .lane-name { font-weight: 700; color: var(--accent); }
+.lane-row .lane-del { background: #4a2530; border-color: #7a4050; padding: 2px 8px; font-size: 12px; }
+.lane-row .lane-dup { background: #2d3a4a; padding: 2px 8px; font-size: 12px; }
+.lane-drop { flex: 1; min-width: 180px; padding: 10px 8px; border: 2px dashed var(--border); border-radius: 6px; text-align: center; color: #7a8ba3; font-size: 12px; }
+.lane-drop.drop-active { border-color: #4caf50; color: #4caf50; background: rgba(76, 175, 80, 0.08); }
+.lane-tag { display: inline-block; background: #2d3a4a; border-radius: 3px; padding: 1px 6px; margin: 1px 2px; font-size: 11px; color: var(--text); cursor: pointer; user-select: none; }
+.lane-tag:hover { background: #7a4050; color: #ffd9d9; }
+.lane-conflict-ok { font-size: 11px; color: #6fbf73; margin-left: 6px; }
+.lane-conflict-warn { font-size: 11px; color: #e0a33c; margin-left: 6px; font-weight: 700; }
+.merge-advice { background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; margin-bottom: 8px; font-size: 12px; }
+.merge-advice:empty { display: none; }
+.advice-warn { color: #e0a33c; }
+.layer-row { cursor: grab; }
+.layer-row:active { cursor: grabbing; }
+.advice-line { margin: 4px 0; line-height: 1.6; }
+.advice-line code { background: #2a2f3a; padding: 1px 5px; border-radius: 3px; color: #9be3a0; }
+#errors { color: var(--danger); white-space: pre-wrap; font-size: 13px; }
+#errors:empty { display: none; }
+#error-diag { margin-top: 8px; }
+#error-diag:empty { display: none; }
+#error-diag summary { cursor: pointer; color: var(--text-dim); font-size: 12px; }
+#error-diag pre { background: var(--panel2); border: 1px solid var(--border); border-radius: 6px;
+  padding: 8px; font-size: 12px; overflow: auto; max-height: 300px; white-space: pre-wrap; word-break: break-all; }
+#error-diag-btn { margin-top: 6px; }
+.legend-row { display: flex; gap: 12px; flex-wrap: wrap; font-size: 11px; color: var(--text-dim); }
+.legend-row span { display: inline-flex; align-items: center; gap: 4px; }
+.legend-row i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+.hint { color: var(--text-dim); font-size: 12px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>NBS2schematic</h1>
+    <p>NBS 音乐文件 → 红石音乐 .litematic 投影 schematic（Minecraft 1.21.11 · Litematica）</p>
+  </header>
+
+  <div id="content">
+  <aside id="sidebar" hidden>
+    <div id="sidebar-bar">
+      <button id="sidebarToggle" title="收起音轨池侧栏（收起后在右侧顶部点「▶ 展开音轨池」恢复）">◀</button>
+      <span class="sidebar-title">音轨池侧栏</span>
+    </div>
+    <section id="layer-section" hidden>
+      <h2>音轨池（勾选参与转换的 NBS 音轨；可拖到右侧车道池或节奏形参考车道池分配）</h2>
+      <div class="toolbar">
+        <button id="selectAllBtn">全选</button>
+        <button id="selectNoneBtn">全不选</button>
+        <span class="hint" id="layerCount"></span>
+      </div>
+      <div id="layerList"></div>
+    </section>
+  </aside>
+  <main id="main">
+  <div id="main-topbar">
+    <button id="sidebarOpenBtn" title="展开音轨池侧边栏（680px）">▶ 展开音轨池</button>
+    <span class="hint">音轨池侧栏已折叠</span>
+  </div>
+  <section id="file-section">
+    <div id="dropzone">把 <b>.nbs</b> 文件拖到这里，或 <button id="fileBtn">选择文件</button></div>
+    <input type="file" id="fileInput" accept=".nbs" hidden>
+  </section>
+
+  <section id="song-section" hidden>
+    <h2>歌曲信息</h2>
+    <div id="songInfo"></div>
+  </section>
+
+  <section id="tempo-section" hidden>
+    <h2>播放速度分析（游戏 tick 速度建议）</h2>
+    <div id="tempoAdvice"></div>
+  </section>
+
+  <section id="group-section" hidden>
+    <h2>车道池（每条车道 = 一条中继器链 + 3 个音符盒位；音轨数量不限，同 tick 超过 3 位会被丢弃，见卡片上的冲突提示）</h2>
+    <div class="toolbar">
+      <button id="addLaneBtn">＋ 新增车道</button>
+      <button id="autoGroupBtn">自动分配（每 3 音轨一车道）</button>
+      <button id="applyPackBtn" hidden>🧩 应用无冲突打包建议</button>
+      <button id="assignRestBtn" hidden>＋ 自动并入未分配音轨</button>
+      <span class="hint" id="groupCount"></span>
+      <span class="hint">轨道 0（默认）恒生成于池顶：顶层雪块导轨每 32 格 1 个赭黄蛙灯；节奏参考声道的粒子命令方块统一放在轨道 0 主位底座（触发链），起点可在布局编辑器拖拽</span>
+      <span class="hint">把上方音轨池中的音轨拖入车道卡片即分配；同一音轨可重复拖入（占多个音符盒位齐响，更响）；点击已分配标签 ✕ 移除一次</span>
+    </div>
+    <div id="mergeAdvice" class="merge-advice"></div>
+    <div id="groupList"></div>
+  </section>
+
+  <section id="refLane-section" hidden>
+    <h2>节奏形参考车道池（每条参考车道 = 一条独立物理链 + 3 个音符盒位；成员在左侧音轨池勾选「节奏参考」，或直接拖入下方卡片）</h2>
+    <div class="toolbar">
+      <button id="addRefLaneBtn">＋ 新增参考车道</button>
+      <span class="hint" id="refGroupCount"></span>
+      <span class="hint">勾选音轨池的「节奏参考」→ 默认并入第一条无冲突参考车道、放不下自动新建；也可把左侧音轨池的音轨直接拖入卡片（拖入即登记为节奏参考并入该车道，允许重复拖入占多个盒位齐响）；同一声道允许同时存在于两个池（两套盒都发声）；每条参考车道可选类型（独立型/绑定型，作用于该车道全部成员）——绑定型粒子只锚定本池内该声道的盒、成员必须发声</span>
+    </div>
+    <div id="refLaneList"></div>
+  </section>
+
+  <section id="settings-section" hidden>
+    <h2>设置</h2>
+    <div class="setting-row" id="customInstRow" hidden>
+      <label>自定义乐器映射</label>
+      <span id="customInstSelects"></span>
+    </div>
+    <div class="setting-row">
+      <label>目标 Litematica 版本</label>
+      <select id="targetVersion"></select>
+      <span class="hint" id="targetVersionHint"></span>
+    </div>
+    <div class="setting-row">
+      <label>独立型参考 · 音高 Z 步长（格/半音）</label>
+      <input type="number" id="sfxPitchStep" min="0" max="8" step="1" value="1">
+      <span class="hint">独立型参考声道：粒子中心 Z 偏移 =（音高 − 12）× 步长；音高 12 居中，默认 1</span>
+    </div>
+  </section>
+
+  <section id="layout-section" hidden>
+    <h2>车道起点布局（Y-Z 截面，可拖拽）</h2>
+    <div class="layout-tools">
+      <button id="presetLineBtn">预置：单行</button>
+      <button id="presetGridBtn">预置：网格</button>
+      <button id="presetRadialBtn">预置：放射</button>
+      <label class="hint">网格/放射行距(格) <input type="number" id="gridHeight" min="3" max="30" value="5"></label>
+      <button id="fitLayoutBtn">缩放到全部</button>
+      <span class="hint">点击标记选中；拖拽移动；选中后可用方向键微调（Shift=大步）</span>
+    </div>
+    <canvas id="layoutCanvas" width="640" height="420"></canvas>
+    <div class="layout-info" id="layoutInfo"></div>
+  </section>
+
+  <section id="generate-section" hidden>
+    <h2>生成</h2>
+    <div class="toolbar">
+      <button class="primary" id="generateBtn">生成 schematic</button>
+      <button id="downloadBtn" hidden>下载 .litematic</button>
+      <button id="sfxZipBtn" hidden title="节奏参考粒子数据包（pack.mcmeta + data/nbs2sfx/…/<tick>.mcfunction）：放入世界 datapacks 目录后 /reload，配合 .litematic 使用">⬇ 下载粒子数据包 (.zip)</button>
+      <button id="debugBtn" hidden>导出 JSON 调试包</button>
+      <span class="hint" id="genStatus"></span>
+    </div>
+    <div id="statsPanel" hidden></div>
+    <div id="warnings"></div>
+    <div id="previewPanel" hidden>
+      <div class="preview-box">
+        <h3>俯视图（X-Z：时间 × 水平分布）</h3>
+        <canvas id="topView"></canvas>
+      </div>
+      <div class="preview-box">
+        <h3>正视图（X-Y：时间 × 垂直分布）</h3>
+        <canvas id="frontView"></canvas>
+      </div>
+      <div class="preview-box">
+        <h3>侧视图（Y-Z：车道起点截面）</h3>
+        <canvas id="sideView"></canvas>
+      </div>
+      <div class="legend-row" id="legendRow"></div>
+    </div>
+  </section>
+
+  <div id="errors"></div>
+  <div id="error-diag"></div>
+  </main>
+  </div>
+</div>
+
+<script>
+'use strict';
+/* =====================================================================
+ * NBS2schematic — NBS → 红石音乐 .litematic 转换器（单文件，无依赖）
+ * 目标：Minecraft 1.19.4 ~ 1.21.11（目标版本下拉可选，默认 1.21.11，DataVersion 4671），
+ *       Litematica 投影格式（Version=6/SubVersion=1 最大兼容头）
+ * 分节：
+ *   01 常量与映射表    02 NBS 解析器     03 数据模型与层/组处理
+ *   04 延迟计算        05 电路布局生成   06 palette 与位打包
+ *   07 NBT 编码器      08 gzip 与下载    09 UI 控制器
+ *   10 布局编辑器      11 双视角预览     12 调试钩子
+ *   13 NBT 解码器与产物自检
+ * ===================================================================== */
+
+/* ===== 01 常量与映射表 ===== */
+// 目标 Litematica 版本表（表驱动，下拉选项来源）。
+// DataVersion 取自 Mojang 官方 server.jar 内嵌 version.json 的 world_version 字段
+// （2026-08 用 HTTP Range 请求逐一查证，1.21.11=4671 与历史常量吻合）。
+// 生成的文件统一写 Version=6/SubVersion=1（见下方常量注释），
+// MinecraftDataVersion 按所选目标写入；方块状态跨版本同名，无需转换。
+const TARGET_VERSIONS = [
+  { mc: '1.19.4',  dataVersion: 3337, branch: 'LTS/1.19.4'  },
+  { mc: '1.20.1',  dataVersion: 3465, branch: 'LTS/1.20.1'  },
+  { mc: '1.20.4',  dataVersion: 3700, branch: 'LTS/1.20.4'  },
+  { mc: '1.21',    dataVersion: 3953, branch: 'LTS/1.21'    },
+  { mc: '1.21.3',  dataVersion: 4082, branch: 'LTS/1.21.3'  },
+  { mc: '1.21.4',  dataVersion: 4189, branch: 'LTS/1.21.4'  },
+  { mc: '1.21.5',  dataVersion: 4325, branch: 'LTS/1.21.5'  },
+  { mc: '1.21.8',  dataVersion: 4440, branch: 'LTS/1.21.8'  },
+  { mc: '1.21.10', dataVersion: 4556, branch: 'LTS/1.21.10' },
+  { mc: '1.21.11', dataVersion: 4671, branch: 'LTS/1.21.11' },
+];
+const DEFAULT_TARGET_MC = '1.21.11';
+function targetEntry(mc) {
+  return TARGET_VERSIONS.find(t => t.mc === mc)
+      || TARGET_VERSIONS.find(t => t.mc === DEFAULT_TARGET_MC);
+}
+// .litematic 格式版本头统一写 6/1 —— 最大兼容值：
+// Litematica 读取器做区间检查 version ∈ [1, SCHEMATIC_VERSION] 且不检查 SubVersion
+// （LTS/1.19.4 ~ LTS/1.21.11 各分支 LitematicaSchematic.readFromData 源码确认）；
+// ≤1.20.4 分支 SCHEMATIC_VERSION=6、≥1.21 分支 =7，故写 6 全分支可打开，写 7 会被 ≤1.20.4 拒绝。
+const LITEMATIC_VERSION = 6;
+const LITEMATIC_SUBVERSION = 1;
+
+// NBS instrument ID → 音符盒底座方块（0 harp = 雪块，用户风格）
+const INSTRUMENT_BLOCKS = [
+  'minecraft:snow_block',       // 0 harp
+  'minecraft:oak_planks',       // 1 bass
+  'minecraft:stone',            // 2 basedrum
+  'minecraft:sand',             // 3 snare（重力方块：放置时正下方补雪块托住，见 buildLayout 防掉落托底）
+  'minecraft:glass',            // 4 hat
+  'minecraft:white_wool',       // 5 guitar
+  'minecraft:clay',             // 6 flute
+  'minecraft:gold_block',       // 7 bell
+  'minecraft:packed_ice',       // 8 chime
+  'minecraft:bone_block',       // 9 xylophone
+  'minecraft:iron_block',       // 10 iron_xylophone
+  'minecraft:soul_sand',        // 11 cow_bell
+  'minecraft:pumpkin',          // 12 didgeridoo
+  'minecraft:emerald_block',    // 13 bit
+  'minecraft:hay_block',        // 14 banjo
+  'minecraft:glowstone',        // 15 pling
+];
+
+// NBS instrument ID → note_block 方块状态 instrument 属性值
+const INSTRUMENT_NAMES = [
+  'harp', 'bass', 'basedrum', 'snare', 'hat', 'guitar', 'flute', 'bell',
+  'chime', 'xylophone', 'iron_xylophone', 'cow_bell', 'didgeridoo',
+  'bit', 'banjo', 'pling',
+];
+
+// 预览配色（块名 → 颜色）
+const PREVIEW_COLORS = {
+  'minecraft:snow_block':      '#f0f2f5',
+  'minecraft:oak_planks':      '#a9814f',
+  'minecraft:stone':           '#8f8f8f',
+  'minecraft:sand':            '#dbd3a0',
+  'minecraft:glass':           '#b8d8e8',
+  'minecraft:white_wool':      '#e8e8e8',
+  'minecraft:clay':            '#9aa4ae',
+  'minecraft:gold_block':      '#f2c94c',
+  'minecraft:packed_ice':      '#9ad0f2',
+  'minecraft:bone_block':      '#e3dec8',
+  'minecraft:iron_block':      '#c8c8c8',
+  'minecraft:soul_sand':       '#5c4a3d',
+  'minecraft:pumpkin':         '#e08a2e',
+  'minecraft:emerald_block':   '#2ecc71',
+  'minecraft:hay_block':       '#d9b35a',
+  'minecraft:glowstone':       '#f5d97a',
+  'minecraft:ochre_froglight': '#d9a441',
+  'minecraft:redstone_wire':   '#ff3030',
+  'minecraft:repeater':        '#7a1020',
+  'minecraft:oak_button':      '#a9814f',
+  'minecraft:stone_button':    '#8f8f8f',
+  'minecraft:birch_button':    '#d8c9a0',
+  'minecraft:spruce_button':   '#6d4f32',
+  'minecraft:lever':           '#b08a4a',
+  'minecraft:oak_pressure_plate': '#a9814f',
+  'minecraft:stone_pressure_plate': '#8f8f8f',
+  'minecraft:stone_bricks':    '#7d7d7d',
+  'minecraft:note_block':      '#5d4030',
+  'minecraft:air':             'rgba(0,0,0,0)',
+};
+// 音符盒按乐器上色（覆盖 note_block 的默认棕色）
+const NOTE_BLOCK_COLORS = [
+  '#6ec46e', '#a96a3f', '#9aa0a6', '#e0d090', '#a8d8e8', '#e0e0e0',
+  '#7fd8c8', '#f2c94c', '#8fc8f2', '#e3dec8', '#b8b8b8', '#8a6a9a',
+  '#e08a2e', '#2ecc71', '#d9b35a', '#f5d97a',
+];
+const INSTRUMENT_NAMES_CN = [
+  '竖琴', '贝斯', '大鼓', '小军鼓', '踩镲', '吉他', '长笛', '钟',
+  '管钟', '木琴', '铁木琴', '牛铃', '迪吉里杜管', '方波', '班卓琴', '电子琴',
+];
+
+// 节奏参考声道 · 粒子特效（命令方块 + 数据包，用户批准的设计）
+// 固定命名空间 nbs2sfx；命令方块 Command = function nbs2sfx:<tick>（0-based NBS tick）；
+// function 文件 <tick>.mcfunction，同一 tick 多个参考音符 → 文件内每音符一行。
+const SFX_NAMESPACE = 'nbs2sfx';
+// 粒子命令文本：用户提供的参考命令第二行原样（particleex 为用户自定义/模组命令，不得改动）
+const SFX_PARTICLE_CMD =
+  "particleex polarparameter minecraft:end_rod ~ ~2 ~ 1 0.95 0.89 1 0 0 0 -10 10 'dis=1;s1=2*t;s2=0' 0.1 20 'i=0.1;(vx,vy,vz)=((i)*cos(s1),0,(i)*sin(s1))' 1.0 null";
+// 按构建时计算的相对偏移生成粒子命令行：仅替换坐标段 `~ ~2 ~` 为 `~dx ~dy ~dz`，
+//   命令其余部分（粒子/颜色/速度/表达式/寿命）逐字保持用户原样。
+//   偏移 = 粒子中心坐标 − CB 坐标（布局坐标，CB 恒在轨道 0 主位底座）。
+const sfxParticleCmd = (dx, dy, dz) =>
+  SFX_PARTICLE_CMD.replace('~ ~2 ~', `~${dx} ~${dy} ~${dz}`);
+// 命令方块方块状态：facing=up（1.21.11 jar 查证：command_block 的 blockstate 仅 facing 属性；
+//   轨道 0 主位信号层恒为红石粉，粉在机制正上方按红石规则激活下方方块 → 与音符盒同 tick 触发）
+const SFX_CB_STATE = 'minecraft:command_block[facing=up]';
+// 各目标版本的数据包写法（查证 2026-09-04，minecraft.wiki Pack format 页 data pack 表 + 1.21.11 server.jar 字节码）：
+//   · 目录名：≤1.20.4 = functions；≥1.21 = function
+//     （wiki Function (Java Edition) history：「1.21 24w21a Folder functions in datapack is renamed to function」）
+//   · ≤1.21.8：pack_format 整数 —— 1.19.4=13、1.20.1=15、1.20.4=26、1.21=48、1.21.3=57、1.21.4=61、1.21.5=71、1.21.8=81
+//   · ≥1.21.9：pack_format 由 min_format/max_format 取代（25w31a，wiki 推荐写法）—— 1.21.10=88.0、1.21.11=94.1
+//     （1.21.11 jar azz$a 字节码确认：旧 pack_format 字段仅触发 deprecated 警告、仍被解析）
+const SFX_PACKFORMAT = {
+  '1.19.4':  { dir: 'functions', pack_format: 13 },
+  '1.20.1':  { dir: 'functions', pack_format: 15 },
+  '1.20.4':  { dir: 'functions', pack_format: 26 },
+  '1.21':    { dir: 'function',  pack_format: 48 },
+  '1.21.3':  { dir: 'function',  pack_format: 57 },
+  '1.21.4':  { dir: 'function',  pack_format: 61 },
+  '1.21.5':  { dir: 'function',  pack_format: 71 },
+  '1.21.8':  { dir: 'function',  pack_format: 81 },
+  '1.21.10': { dir: 'function',  min_format: 88,   max_format: 88 },    // 88.0
+  '1.21.11': { dir: 'function',  min_format: 94.1, max_format: 94.1 },
+};
+function sfxPackFormat(mc) {
+  return SFX_PACKFORMAT[mc] || SFX_PACKFORMAT[DEFAULT_TARGET_MC];
+}
+
+/* ===== 02 NBS 解析器 ===== */
+// NBS 文件格式（v0-v5，小端序）
+// 参考：OpenNBS/pynbs（官方解析库）
+const cp1252Decoder = new TextDecoder('windows-1252');
+
+class ParseError extends Error {
+  constructor(msg) { super(msg); this.name = 'ParseError'; }
+}
+
+function parseNBS(bytes) {
+  if (!bytes || bytes.length < 4) throw new ParseError('文件太小，不是有效的 NBS 文件');
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const totalLen = bytes.length;
+  let off = 0;
+  // 部分解析状态：ParseError 上挂 e.partial，供诊断面板展示「已解析到哪里」
+  // （声明在闭包之前，避免头部就截断时 TDZ）
+  let headerDone = false;
+  const layers = [];
+  let noteCount = 0;
+  const customInstruments = [];
+  const partialSnapshot = () => ({
+    headerDone, layers: layers.length, notes: noteCount,
+    customInstruments: customInstruments.length,
+    bytesParsed: off, bytesTotal: totalLen,
+  });
+  const fail = (msg) => {
+    const e = new ParseError(msg);
+    e.offset = off; e.total = totalLen; e.partial = partialSnapshot();
+    throw e;
+  };
+  const u8  = () => { if (off >= bytes.length) fail('文件意外结束'); return dv.getUint8(off++); };
+  const u16 = () => { if (off + 2 > bytes.length) fail('文件意外结束'); const v = dv.getUint16(off, true); off += 2; return v; };
+  const i16 = () => { if (off + 2 > bytes.length) fail('文件意外结束'); const v = dv.getInt16(off, true); off += 2; return v; };
+  const u32 = () => { if (off + 4 > bytes.length) fail('文件意外结束'); const v = dv.getUint32(off, true); off += 4; return v; };
+  const str = () => {
+    const len = u32();
+    if (off + len > bytes.length) fail('字符串长度超出文件边界');
+    const s = cp1252Decoder.decode(bytes.subarray(off, off + len));
+    off += len;
+    return s;
+  };
+
+  // --- Header ---
+  const firstShort = u16();
+  let version, defaultInstruments, songLength;
+  if (firstShort === 0) {
+    // 新格式（v1+）：0x0000 标记 + 版本号
+    version = u8();
+    defaultInstruments = u8();
+    songLength = version >= 3 ? u16() : firstShort;
+  } else {
+    // v0 旧格式：开头直接是 song_length
+    version = 0;
+    defaultInstruments = 10;
+    songLength = firstShort;
+  }
+  const songLayers = u16();
+  const songName = str();
+  const songAuthor = str();
+  const originalAuthor = str();
+  const description = str();
+  const tempo = u16() / 100.0;                 // ticks/秒
+  const autoSave = u8() === 1;
+  const autoSaveDuration = u8();
+  const timeSignature = u8();
+  const minutesSpent = u32();
+  const leftClicks = u32();
+  const rightClicks = u32();
+  const blocksAdded = u32();
+  const blocksRemoved = u32();
+  const songOrigin = str();
+  let loop = false, maxLoopCount = 0, loopStart = 0;
+  if (version >= 4) {
+    loop = u8() === 1;
+    maxLoopCount = u8();
+    loopStart = u16();
+  }
+  headerDone = true;
+
+  // --- Notes（双层 jump 编码；增量基准 = -1，即首轮 delta = 实际 tick/layer + 1）---
+  for (let i = 0; i < songLayers; i++) layers.push({ name: '', lock: false, volume: 100, panning: 0, notes: new Map() });
+  let tick = -1;
+  while (true) {
+    const tickDelta = u16();
+    if (tickDelta === 0) break;
+    tick += tickDelta;
+    let layer = -1;
+    while (true) {
+      const layerDelta = u16();
+      if (layerDelta === 0) break;
+      layer += layerDelta;
+      const instrument = u8();
+      const key = u8();
+      let velocity = 100, panning = 0, pitch = 0;
+      if (version >= 4) {
+        velocity = u8();
+        panning = u8() - 100;
+        pitch = i16();
+      }
+      if (layer < 0) { const e = new ParseError(`音符引用了非法的声部号 ${layer}`); e.offset = off; e.total = totalLen; e.partial = partialSnapshot(); throw e; }
+      // 部分 NBS 文件的音符可能引用超过 song_layers 的声部号（声部被删除后残留），
+      // 动态扩展并用默认元数据（与 pynbs 行为一致：音符层号不校验）
+      while (layers.length <= layer) layers.push({ name: '', lock: false, volume:100, panning:0, notes:new Map() });
+      layers[layer].notes.set(tick, { instrument, key, velocity, panning, pitch });
+      noteCount++;
+    }
+  }
+
+  // --- Layers 元数据 ---
+  for (let i = 0; i < songLayers; i++) {
+    layers[i].name = str();
+    if (version >= 4) layers[i].lock = u8() === 1;
+    layers[i].volume = u8();
+    if (version >= 2) layers[i].panning = u8() - 100;
+  }
+
+  // --- Custom instruments ---
+  const customCount = u8();
+  for (let i = 0; i < customCount; i++) {
+    customInstruments.push({ name: str(), soundFile: str(), pitch: u8(), pressKey: u8() === 1 });
+  }
+
+  return {
+    version, defaultInstruments, songLength, songLayers, tempo,
+    songName, songAuthor, originalAuthor, description,
+    autoSave, autoSaveDuration, timeSignature,
+    minutesSpent, leftClicks, rightClicks, blocksAdded, blocksRemoved, songOrigin,
+    loop, maxLoopCount, loopStart,
+    layers, customInstruments,
+    sourceFileName: '',
+  };
+}
+
+/* ===== 03 数据模型与层/组处理 ===== */
+// 音高映射：NBS song_key → MC note_block note，线性绝对音高 note = key − 33
+// key 33=F#3→note 0、key 45=F#4→note 12、key 57=F#5→note 24（有效区间恰好覆盖音符盒 0-24 全音域）。
+// 依据：NBS Studio 官方红石导出（branch_export/track_export）均为 note = song_key − 33、
+//   有效范围 33≤key≤57；播放公式 play_sound pitch = 0.5×2^((key−33)/12) 同以 key 33 为半倍频基准。
+// 越界（key<33 或 >57，常见于微音移调后）音符盒无法表达 → 返回 -1 表示不可放置（调用方跳过并计数）
+function noteFromKey(key) {
+  if (key < 33 || key > 57) return -1;
+  return key - 33;
+}
+
+// 乐器 → 底座方块（自定义乐器走 customMap）
+function baseBlockFor(instrument, customMap) {
+  if (instrument >= 0 && instrument < 16) return INSTRUMENT_BLOCKS[instrument];
+  if (customMap && customMap.has(instrument)) return customMap.get(instrument);
+  return 'minecraft:snow_block'; // 未映射的自定义乐器 → harp（雪块）
+}
+
+function instrumentNameFor(instrument) {
+  if (instrument >= 0 && instrument < 16) return INSTRUMENT_NAMES[instrument];
+  return 'harp'; // 自定义乐器未映射时按 harp 写 note_block 状态
+}
+
+// 放置音色底座 + 防掉落托底：snare 音色底为沙子（重力方块，会掉落砸坏下层/移动）→
+//   其正下方补一个雪块托住（用户游戏内实测发现掉落问题）。其他音色底座为满方块，无需托底。
+function isFallingBaseBlock(base) { return base === 'minecraft:sand'; }
+
+// 声部统计：音符数 + 乐器集合
+function layerStats(song) {
+  return song.layers.map(layer => {
+    let noteCount = 0;
+    const instruments = new Set();
+    for (const note of layer.notes.values()) {
+      noteCount++;
+      instruments.add(note.instrument);
+    }
+    return { noteCount, instruments };
+  });
+}
+
+/* ===== 04 延迟计算（主链 1 档中继器 + 游戏 /tick rate 校正） ===== */
+// NBS 是基准，游戏去适应它：主链每 NBS tick 恒 1 档中继器（周期 2 游戏刻，用户游戏内实测校准——音符盒/红石粉 0 延迟）；
+// 播放时游戏内执行 /tick rate R = 2 × tempo 校正速度（tempo=10 时 R=20 即默认 20tps，无需调整）。
+// 每 NBS tick 游戏内耗时 = 2/R 秒 = 1/tempo 秒，速度精确（/tick rate 取值范围 (1,10000)，tempo ≤ 5000 均在界内）。
+const ASSUMED_TPS = [20, 10, 5, 2.5];
+function playbackPlan(tempo) {
+  // 假设标准 tps 仅用于展示（选最接近 tempo 的），挡位恒 1 档
+  let assumed = ASSUMED_TPS[0];
+  for (const a of ASSUMED_TPS) {
+    if (Math.abs(a - tempo) < Math.abs(assumed - tempo)) assumed = a;
+  }
+  return { assumedTps: assumed, delay: 1, tickRate: 2 * tempo };
+}
+function computeDelays(tempo, tickCount) {
+  if (!isFinite(tempo) || tempo <= 0) throw new Error(`无法处理的 tempo：${tempo} tps`);
+  return new Array(tickCount).fill(playbackPlan(tempo).delay);
+}
+
+/* ===== 05 电路布局生成（主链 + 底座；触发区由用户手动放置） ===== */
+// 主链结构（每 NBS tick）：
+//   中继器格 X_t  : Yb+1 中继器(facing=west, delay=1 恒 1 档；facing=输入侧，输出端朝 +X 指向音符格)
+//   传导格   X_t+1: Yb+1 主音符盒(zc) 或 红石粉（无音符时直通）
+//   音符盒是红石导体：主音符盒被中继器输出端强充能 → 发声 + 导电 + 激活两侧紧挨的第2(zc+1)/第3(zc-1)
+//   底座 Yb：Zc 雪块（中心线）、两侧音色方块
+// 周期 = 2 游戏刻/NBS tick（用户游戏内实测：音符盒/红石粉 0 延迟），播放速度由 /tick rate 2×tempo 校正
+class VoxelGrid {
+  constructor(sx, sy, sz) {
+    this.sx = sx; this.sy = sy; this.sz = sz;
+    this.data = new Uint16Array(sx * sy * sz); // 0 = air
+    this.stateIds = new Map([['minecraft:air', 0]]);
+    this.nextId = 1;
+  }
+  idx(x, y, z) { return (y * this.sz + z) * this.sx + x; }
+  inBounds(x, y, z) { return x >= 0 && x < this.sx && y >= 0 && y < this.sy && z >= 0 && z < this.sz; }
+  set(x, y, z, state) {
+    if (!this.inBounds(x, y, z)) throw new Error(`方块越界 (${x},${y},${z})`);
+    let id = this.stateIds.get(state);
+    if (id === undefined) {
+      id = this.nextId++;
+      if (id > 0xFFFF) throw new Error('palette 超过 65535 种方块状态');
+      this.stateIds.set(state, id);
+    }
+    this.data[this.idx(x, y, z)] = id;
+  }
+  get(x, y, z) { return this.inBounds(x, y, z) ? this.data[this.idx(x, y, z)] : 0; }
+}
+
+// 每 tick 段长度：d≤4 → 2 格（中继器+传导）；d>4 → 2+(d-4) 扩展格
+function segmentCells(d) { return d <= 4 ? 2 : 2 + (d - 4); }
+
+// 默认轨道 0 的顶层雪块导轨周期：每 32 格替换 1 格为赭黄蛙灯（用户风格；蛙灯与雪块同为不透明满方块，
+//   仅装饰差异，不影响命令方块预留空间的几何）。
+const DEFAULT_RAIL_SPACING = 32;
+const DEFAULT_RAIL_LIGHT = 'minecraft:ochre_froglight';
+
+// 组内同 tick 音符 → 槽位（按层顺序入位 P0/P1/P2）
+// defaultStart：默认轨道 0 的起点 {dz, dy}（可拖拽，随车道对象同生共死）；
+//   它是无音符的车道组——结构上与普通车道无异（中继器链 + 底座），
+//   区别仅在：不读任何音轨、不放音符盒；顶层 yb+2 沿 +X 铺 1 格高 × 1 格宽的雪块导轨，
+//   每 32 格替换为赭黄蛙灯（装饰/标识）。
+//   节奏参考声道的粒子命令方块统一放在轨道 0 主位底座（见下方 refLayers 注释）。
+// 触发区（总线/下降 tap/启动开关）已按用户要求从产物中移除：链头输入侧（X=0 的
+//   中继器输入端）留空，由用户手动铺设总线与开关（用户确认）。
+// refLayers：节奏参考声道 Map<声部下标, {type, sound}>（双类型，用户批准设计 v2）
+//   · 绑定型 bound：必须发声（sound 恒 true，车道池强制含该声道）；粒子以该声道所属车道
+//     的每个音符盒为中心，音符盒发声的同 tick 各触发一次；
+//   · 独立型 independent：sound 可 false（静音独立参考不进车道池、无音符盒，只贡献粒子时序）；
+//     粒子中心锚定轨道 0 链上、与 CB 同高，Z 向按音高线性偏移 (note−12)×sfxPitchStep（用户定：以 12 为中点）。
+// refMode（参考车道池启用后，用户批准设计）：
+//   绑定型粒子只锚定参考车道池（refLanes）内该声道的音符盒——参考车道链上放置该声道时才算数；
+//   声道若在音轨车道池还有盒（允许重叠），那些盒不触发粒子。参考车道未含该绑定型声道 → 粒子整体跳过（空 tick 回退还原 CB）。
+// 触发几何：所有参考 CB 统一放轨道 0 —— 该 tick 有任意参考音符 → 轨道 0 主位底座
+//   （X_t+1, Yb）雪块换命令方块 (facing=up)，Command = function nbs2sfx:<tick>（0 基 NBS tick）。
+//   轨道 0 无音符 → 主位信号层恒红石粉，粉在机制正上方按红石规则激活下方方块（wiki Redstone power），
+//   与音符盒演奏同 tick。每 tick 至多一个 CB；<tick>.mcfunction 含该 tick 全部参考音符
+//   （绑定+独立混合，每音符一行，各带各自计算的相对偏移，见 sfxParticleCmd）。
+// 类型选型按参考车道（用户 2026-09-04 定）：refLanes[l].type 决定该车道全部成员的粒子类型
+//   （绑定集合/独立行均按成员实际所在参考车道取类型）；refLanes 为 null 时回退按声道 refLayers 取类型（旧行为）。
+function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, refLanes = null, refLayersRef = null) {
+  const refLayers = refLayersRef;
+  const customMap = settings.customInstrumentMap;
+  const sfxPitchStep = Number.isFinite(settings.sfxPitchStep) ? settings.sfxPitchStep : 1;
+  // 旧存档兼容：refLayers 值 bool（= 发声与否）迁移为 { type:'independent', sound }
+  const normRef = (v) => (typeof v === 'object' && v !== null && (v.type === 'bound' || v.type === 'independent'))
+    ? v : { type: 'independent', sound: !!v };
+
+  // --- 链几何 ---
+  // 默认轨道 0 恒存在（即使所有音轨未分配），放在组下标 0 的位置，与音轨车道共享同一套链结构。
+  // 参考车道池（refLanes）作为追加的独立物理链：每条 = 3 个音符盒位，成员来自参考勾选（允许与音轨车道重叠）。
+  // refLanes 元素与 lanes 同构（{ tracks, start }）。
+  const refGroups = (refLanes || []).map(l => ({ layers: l.tracks }));
+  const refStarts = (refLanes || []).map(l => l.start);
+  const allGroups = defaultStart
+    ? [{ layers: [] }, ...groups, ...refGroups]
+    : [...groups, ...refGroups];
+  const allStarts = defaultStart
+    ? [defaultStart, ...groupStarts, ...refStarts]
+    : [...groupStarts, ...refStarts];
+  const nOrd = groups.length;
+  const chains = allGroups.map((g, i) => {
+    const isRef = i >= (defaultStart ? 1 : 0) + nOrd;
+    return {
+      groupIndex: i,
+      layers: g.layers,
+      zc: allStarts[i].dz,
+      yb: allStarts[i].dy,
+      isDefaultRail: i === 0 && !!defaultStart,
+      isRefLane: isRef,
+      refLaneType: isRef ? ((refLanes[i - (defaultStart ? 1 : 0) - nOrd].type || 'independent')) : null,
+    };
+  });
+  // 参考车道池启用 ⇔ 调用方传了 refLanes（UI 恒传数组；旧调用/测试传 undefined → 旧行为：绑定型锚定音轨车道）
+  const refMode = refLanes !== null;
+
+  // --- X 跨度 ---
+  // 音符可能出现在 tick == songLength（NBS 的 song_length 即最后一个音符的 tick），循环需覆盖
+  const nTicks = delays.length;
+  let xMax = 0;
+  for (let t = 0; t < nTicks; t++) xMax += segmentCells(delays[t]);
+  if (chains.length === 0) throw new Error('没有可生成的车道组（默认轨道 0 未启用且无音轨车道）');
+
+  // --- 触发区几何（总线/tap/开关）已按用户要求从产物中移除：用户手动放置 ---
+  // 链头（每链 X=0 的中继器）输入端（-X 侧）留空，用户自铺总线接通各链头。
+  // 产物坐标系：xOffset=0，西边界即链头输入端外沿；Y/Z 整体平移保证非负（起点可拖到负坐标，见下）。
+
+  // --- 网格尺寸 ---
+  // 起点允许负 Y/Z（布局编辑器可拖到负坐标）：网格整体平移保证非负——
+  //   yOffset = −min(0, 各链 yb)（底座行平移到网格 y≥0；全非负起点时 =0，与旧行为一致）
+  //   zOffset = 1 − min(0, 各链 zc)（第 3 音符盒占 zc−1；全非负起点时 =1，与旧行为一致）
+  // 只在最小值确为负时平移：全非负布局产物与旧版逐字节一致（gen-example 参考产物回归保护）。
+  // W 内嵌两个偏移；TE 坐标 = 网格坐标；绑定型粒子偏移是两链坐标差，平移对其无影响。
+  const zcList = chains.map(c => c.zc);
+  const ybList = chains.map(c => c.yb);
+  const zMax = Math.max(...zcList);
+  const zOffset = 1 - Math.min(0, ...zcList);
+  const maxYb = Math.max(...ybList);
+  const yOffset = -Math.min(0, ...ybList);
+  const sx = xMax;
+  // 默认轨道 0 顶层导轨在 yb+2、音符盒在 yb+1 → 网格 y 最大用到 maxYb+2+yOffset → 总高 +3
+  const sy = maxYb + yOffset + 3;
+  // 第 3 音符盒在 zc−1、第 2 音符盒在 zc+1 → 网格 z 用到 [minZc−1, zMax+1]+zOffset
+  //   zOffset = 1−min(0,minZc) 保证下界 ≥0；sz 保证上界 zMax+1+zOffset 在界内
+  const sz = zMax + zOffset + 2;
+  const grid = new VoxelGrid(sx, sy, sz);
+  const W = (x, y, z, s) => grid.set(x, y + yOffset, z + zOffset, s);
+
+  // --- 每 tick 段 ---
+  const stats = {
+    notesPlaced: 0, notesDiscarded: 0, noteBlocks: 0,
+    repeaters: 0, wires: 0,
+    commandBlocks: 0, sfxNotes: 0,
+    sfxBoundNotes: 0, sfxStandaloneNotes: 0, sfxDiscarded: 0, sfxEmptyTicks: 0,
+    discardedDetails: [],
+  };
+  // 节奏参考声道双类型（用户批准设计 v2）；类型选型按参考车道（用户 2026-09-04 定）：
+  //   绑定型 bound（强制发声）：粒子中心 = 所属参考车道音符盒，偏移在放置时按轨道排布求解；
+  //   独立型 independent：粒子中心 = 轨道 0 链上同高点，Z 按音高 (note−12)×sfxPitchStep。
+  // refTypeOf：某声道在某条链上的类型——refMode 且链为参考车道 → 取该参考车道的 lane.type；
+  //   否则回退该声道 refLayers 的类型（旧行为/旧调用 refLanes=null 时按声道取）。
+  const refTypeOf = (li, laneType) => {
+    if (refMode && laneType) return laneType;
+    const spec = refLayers && refLayers.has(li) ? normRef(refLayers.get(li)) : null;
+    return spec ? spec.type : null;
+  };
+  // 每 tick 参考音符 → 轨道 0 该段主位底座放 CB；<tick>.mcfunction 行在此随放置进度汇总。
+  const boundRefLayers = [];    // 绑定型声道下标（按声部升序）
+  const sfxEntries = new Map(); // tick → [{ kind: 'bound', li, key } | { kind: 'indep', key }]
+  const sfxTickLines = new Map(); // tick → 命令行数组（放置循环内填充，供数据包导出复用）
+  const refBoundWarned = new Set();
+  if (refLayers && refLayers.size > 0) {
+    for (const li of [...refLayers.keys()].sort((a, b) => a - b)) {
+      const layer = song.layers[li];
+      const spec = normRef(refLayers.get(li));
+      if (!layer) continue;
+      let type = spec.type;
+      if (refMode) {
+        // 类型选型按参考车道：声道在任一参考车道内 → 取车道类型（分属多车道时绑定优先）；
+        // 未分配任何参考车道 → 保持声道级类型（独立型 → 无行、空 tick 回退；绑定型 → 无锚点、警告）
+        const laneTypes = chains.filter(c => c.isRefLane && c.layers.includes(li)).map(c => c.refLaneType);
+        if (laneTypes.length > 0) type = laneTypes.includes('bound') ? 'bound' : 'independent';
+      }
+      for (const tick of layer.notes.keys()) {
+        if (tick < 0 || tick >= nTicks) continue;
+        if (!sfxEntries.has(tick)) sfxEntries.set(tick, []);
+        if (type === 'bound') {
+          if (boundRefLayers.indexOf(li) < 0) boundRefLayers.push(li);
+          sfxEntries.get(tick).push({ kind: 'bound', li, key: layer.notes.get(tick).key });
+        } else {
+          sfxEntries.get(tick).push({ kind: 'indep', key: layer.notes.get(tick).key });
+        }
+      }
+    }
+  }
+  // 绑定型参考声道在参考车道池无盒（refMode 下）→ 无音符盒可锚定：粒子整体跳过并警告（空 tick 回退会还原 CB）。
+  // 旧模式（refLanes 未传）保持原语义：看音轨车道是否含该声道。
+  const layerAnchor = new Set();
+  for (const c of chains) {
+    if (refMode && !c.isRefLane) continue;
+    for (const li of c.layers) layerAnchor.add(li);
+  }
+  for (const li of boundRefLayers) {
+    if (!layerAnchor.has(li)) {
+      stats.sfxDiscarded += (song.layers[li] && song.layers[li].notes.size) || 0;
+      stats.discardedDetails.push(`绑定型参考声道 #${li} 未分配车道（参考车道池无该声道）：其粒子全部跳过（绑定型必须发声，请在参考车道池分配）`);
+    }
+  }
+  const tileEntities = []; // 命令方块（节奏参考触发，全部在轨道 0）；无参考声道时为空数组
+  const entities = [];
+  const sfxCbs = new Map(); // tick → 已放 CB 记录（空 tick 回退用：该 tick 无粒子行 → 还原雪块 + 移除 TE）
+  let xCur = 0; // 段首 X（全局）
+
+  // --- 绑定型参考：随音符盒放置逐音符计算粒子行（偏移 = 音符盒坐标 − 轨道 0 CB 坐标，轨道排布求解） ---
+  // refMode（参考车道池启用）下只锚定参考车道链（isRefLane）上的盒：音轨车道上同一声道的重叠盒不触发粒子
+  const railChain = chains.find(c => c.isDefaultRail);
+  let curChain = null; // 当前遍历的链（同一声道重复分配到多链时，偏移按实际放置的链算）
+  function sfxBoundNoteLine(t, li, slotZ) {
+    if (boundRefLayers.indexOf(li) < 0) return;
+    const lane = curChain; // 音符盒就放在当前链（curChain 已在链循环入口更新）
+    if (refTypeOf(li, lane ? lane.refLaneType : null) !== 'bound') return; // 独立型不产绑定行（双保险）
+    if (!lane) {
+      // 理论上不可达（本函数只由车道放置路径调用）；保险：无链 → 跳过并一次性警告
+      if (!refBoundWarned.has(li)) {
+        refBoundWarned.add(li);
+        stats.discardedDetails.push(`绑定型参考声道 #${li} 未分配车道：其粒子跳过（绑定型必须发声，请在参考车道池分配）`);
+      }
+      stats.sfxDiscarded++;
+      return;
+    }
+    if (refMode && !lane.isRefLane) return; // 允许重叠：音轨车道上的重叠盒不产粒子行（静默跳过）
+    if (!railChain) return; // 无轨道 0（极端布局）→ 无 CB，粒子行无处附着
+    const dx = 0; // 信号前沿同 tick 扫到所有链的同一 X
+    const dy = (lane.yb + 1) - railChain.yb;   // 音符盒层 − 轨道 0 底座层
+    const dz = (lane.zc + slotZ) - railChain.zc; // 槽位 Z（主位 0 / 第2位 +1 / 第3位 −1）
+    if (!sfxTickLines.has(t)) sfxTickLines.set(t, []);
+    sfxTickLines.get(t).push(sfxParticleCmd(dx, dy, dz));
+    stats.sfxBoundNotes++;
+  }
+  function sfxBoundDiscard(t, li) {
+    if (boundRefLayers.indexOf(li) < 0) return;
+    stats.sfxDiscarded++;
+  }
+  // 独立型参考行：粒子中心 = 轨道 0 链上、与 CB 同高（垂直偏移恒 0，用户定），Z 按音高 (note−12)×step
+  function sfxStandaloneLine(t, key) {
+    const note = noteFromKey(key);
+    const zOff = (Math.max(0, Math.min(24, note)) - 12) * sfxPitchStep;
+    if (!sfxTickLines.has(t)) sfxTickLines.set(t, []);
+    sfxTickLines.get(t).push(sfxParticleCmd(0, 0, zOff));
+    stats.sfxStandaloneNotes++;
+  }
+  for (let t = 0; t < nTicks; t++) {
+    const d = delays[t];
+    const cells = segmentCells(d);
+
+    for (const c of chains) {
+      curChain = c; // 绑定型偏移计算用（音符盒所在车道的起点）
+      const { zc, yb } = c;
+      const ySig = yb + 1;
+
+      // 收集本 tick 组内音符（按层顺序）
+      const notes = [];
+      for (const li of c.layers) {
+        // 静音参考不进车道池（UI 已排除）：非绑定型且 sound=false → 无音符盒、只贡献粒子时序
+        //   （旧存档/手动分组误含时仍保证「静音参考 → 无音符盒」）；
+        //   绑定型强制发声 → 恒收集（否则无音符盒、算不出「以音符盒为中心」）。
+        //   类型按参考车道（refMode 下取链的 refLaneType），sound 仍按声道 refLayers（UI 已同步）。
+        const type = refTypeOf(li, c.refLaneType);
+        if (type !== 'bound') {
+          const spec = refLayers && refLayers.has(li) ? normRef(refLayers.get(li)) : null;
+          if (spec && spec.sound === false) continue;
+        }
+        const note = song.layers[li] && song.layers[li].notes.get(t);
+        if (note) notes.push({ layerIdx: li, note });
+      }
+      const slots = []; // {x, z, note}
+      notes.forEach((n, i) => {
+        if (i >= 3) {
+          stats.notesDiscarded++;
+          stats.discardedDetails.push(`tick ${t} 组 ${c.groupIndex + 1}：第 ${i + 1} 个音符被丢弃`);
+        } else {
+          slots.push({ ...n, slot: i });
+        }
+      });
+
+      {
+        // 标准段：中继器格 + 音符格
+        // 音符盒是红石导体：主音符盒被中继器输出端强充能 → 发声 + 导电 + 激活两侧紧挨的第 2/3 音符盒
+        // 无音符 tick 主位放红石粉直通传导
+        const repDelay = Math.min(4, d);
+        W(xCur, ySig, zc, `minecraft:repeater[facing=west,delay=${repDelay},locked=false,powered=false]`);
+        W(xCur, yb, zc, 'minecraft:snow_block');
+        stats.repeaters++;
+        // 主位（slot 0）：主音符盒 或 红石粉
+        const hasMain = slots.some(s => s.slot === 0);
+        if (hasMain) {
+          const main = slots.find(s => s.slot === 0);
+          const noteVal = noteFromKey(main.note.key);
+          if (noteVal >= 0) {
+            const base = baseBlockFor(main.note.instrument, customMap);
+            const inst = instrumentNameFor(main.note.instrument);
+            W(xCur + 1, ySig, zc, `minecraft:note_block[instrument=${inst},note=${noteVal},powered=false]`);
+            W(xCur + 1, yb, zc, base);
+            stats.noteBlocks++; stats.notesPlaced++;
+            sfxBoundNoteLine(t, main.layerIdx, 0);
+          } else {
+            // key 超出 [33,57]（音符盒音域外，NBS Studio 官方导出对此直接报错拒导）：
+            // 放红石粉代位保住导电通路，仅跳过该音（计数 + 调试明细）
+            W(xCur + 1, ySig, zc, 'minecraft:redstone_wire');
+            W(xCur + 1, yb, zc, 'minecraft:snow_block');
+            stats.wires++;
+            stats.notesDiscarded++;
+            stats.discardedDetails.push(`tick ${t} 组 ${c.groupIndex + 1}：主位音高 key=${main.note.key} 超出音符盒音域 [33,57]，跳过该音（红石粉代位）`);
+            sfxBoundDiscard(t, main.layerIdx);
+          }
+        } else {
+          W(xCur + 1, ySig, zc, 'minecraft:redstone_wire');
+          // 轨道 0 且该 tick 有任意参考音符（绑定∪独立）：主位底座由雪块替换为命令方块
+          //   （上方红石粉激活，红石粉置于机制正上方会将其激活——wiki Redstone power；轨道 0 无音符故主位恒为粉，
+          //   信号到达本格的 tick 即音符盒发声的同 tick）。<t>.mcfunction 行在放置循环内汇总。
+          const isSfxTick = c.isDefaultRail && sfxEntries.has(t);
+          W(xCur + 1, yb, zc, isSfxTick ? SFX_CB_STATE : 'minecraft:snow_block');
+          stats.wires++;
+          if (isSfxTick) {
+            stats.commandBlocks++;
+            // TE 坐标 = 网格坐标（布局 yb/zc 加 yOffset/zOffset；CB 格即 W(x, yb, zc) → 网格 (y+yOffset, z+zOffset)）；
+            // verifyLitematic 会核对所在格方块与 te.state 一致
+            sfxCbs.set(t, { x: xCur + 1, y: yb + yOffset, z: zc + zOffset, teIndex: tileEntities.length });
+            tileEntities.push({
+              id: 'minecraft:command_block',
+              x: xCur + 1, y: yb + yOffset, z: zc + zOffset,
+              Command: `function ${SFX_NAMESPACE}:${t}`,
+              auto: false,
+              state: SFX_CB_STATE,
+            });
+          }
+        }
+        // 第 2 音符盒（slot 1）：主音符盒外侧 zc+1，紧挨
+        const s2 = slots.find(s => s.slot === 1);
+        if (s2) {
+          const noteVal = noteFromKey(s2.note.key);
+          if (noteVal >= 0) {
+            const base = baseBlockFor(s2.note.instrument, customMap);
+            const inst = instrumentNameFor(s2.note.instrument);
+            W(xCur + 1, ySig, zc + 1, `minecraft:note_block[instrument=${inst},note=${noteVal},powered=false]`);
+            W(xCur + 1, yb, zc + 1, base);
+            stats.noteBlocks++; stats.notesPlaced++;
+            sfxBoundNoteLine(t, s2.layerIdx, 1);
+          } else {
+            stats.notesDiscarded++;
+            stats.discardedDetails.push(`tick ${t} 组 ${c.groupIndex + 1}：第2位音高 key=${s2.note.key} 超出音符盒音域 [33,57]，跳过该音`);
+            sfxBoundDiscard(t, s2.layerIdx);
+          }
+        }
+        // 第 3 音符盒（slot 2）：内侧 zc-1，紧挨
+        const s3 = slots.find(s => s.slot === 2);
+        if (s3) {
+          const noteVal = noteFromKey(s3.note.key);
+          if (noteVal >= 0) {
+            const base = baseBlockFor(s3.note.instrument, customMap);
+            const inst = instrumentNameFor(s3.note.instrument);
+            W(xCur + 1, ySig, zc - 1, `minecraft:note_block[instrument=${inst},note=${noteVal},powered=false]`);
+            W(xCur + 1, yb, zc - 1, base);
+            stats.noteBlocks++; stats.notesPlaced++;
+            sfxBoundNoteLine(t, s3.layerIdx, -1);
+          } else {
+            stats.notesDiscarded++;
+            stats.discardedDetails.push(`tick ${t} 组 ${c.groupIndex + 1}：第3位音高 key=${s3.note.key} 超出音符盒音域 [33,57]，跳过该音`);
+            sfxBoundDiscard(t, s3.layerIdx);
+          }
+        }
+        // 扩展格（d>4）：1 档中继器链
+        for (let e = 0; e < d - 4; e++) {
+          W(xCur + 2 + e, ySig, zc, 'minecraft:repeater[facing=west,delay=1,locked=false,powered=false]');
+          W(xCur + 2 + e, yb, zc, 'minecraft:snow_block');
+          stats.repeaters++;
+        }
+      }
+    }
+    xCur += cells;
+  }
+
+  // --- 独立型参考：粒子行汇总（粒子中心锚定轨道 0 链、与 CB 同高，Z 按音高偏移） ---
+  // 独立型不依赖音符盒放置，仅要求轨道 0 存在（有 CB 可触发）；行序 = 声部升序，与绑定行互不交叉
+  if (railChain) {
+    for (const [t, entries] of [...sfxEntries.entries()].sort((a, b) => a[0] - b[0])) {
+      for (const e of entries) if (e.kind === 'indep') sfxStandaloneLine(t, e.key);
+    }
+  }
+  // 空 tick 回退：该 tick 有参考音符但无任何粒子行（如绑定型声道未分配车道）→ 无 function 文件可写，
+  //   底座还原雪块、TE 移除、CB 计数回退（避免产物出现指向不存在 function 的空命令方块）
+  for (const t of sfxEntries.keys()) {
+    if (sfxTickLines.has(t)) continue;
+    const cb = sfxCbs.get(t);
+    if (!cb) continue;
+    const gIdx = (cb.y * grid.sz + cb.z) * grid.sx + cb.x;
+    if (grid.data[gIdx] !== 0) grid.data[gIdx] = grid.stateIds.get('minecraft:snow_block');
+    stats.commandBlocks--;
+    stats.sfxEmptyTicks++;
+    tileEntities.splice(cb.teIndex, 1);
+    for (const [k, v] of sfxCbs) if (v.teIndex > cb.teIndex) v.teIndex--;
+    sfxCbs.delete(t);
+  }
+  stats.sfxNotes = stats.sfxBoundNotes + stats.sfxStandaloneNotes;
+  // 逐 tick 粒子命令行（tick 升序）：与轨道 0 CB 一一对应（有行 ⇔ 有 CB；空 tick 已回退）
+  const sfxTickList = [...sfxTickLines.entries()].sort((a, b) => a[0] - b[0])
+    .map(([tick, lines]) => ({ tick, lines }));
+
+  // --- 默认轨道 0 顶层雪块导轨（命令方块预留） ---
+  // y=yb+2 沿 +X 铺 1 格高 × 1 格宽：雪块，每 32 格替换 1 格为赭黄蛙灯（X=32,64,96…，用户指定相位）；
+  //   纯装饰/预留结构（不透明满方块，无红石功能）。
+  // 仅写入空气格：若该层已被其他车道占用（极端布局把音轨车道拖到轨道 0 的 Z），保留既有方块，避免覆盖音符盒。
+  for (const c of chains) {
+    if (!c.isDefaultRail) continue;
+    const yRail = c.yb + 2 + yOffset; // 网格坐标（W 之外的直接写入同样要加偏移）
+    for (let x = 0; x < xMax; x++) {
+      const state = x > 0 && x % DEFAULT_RAIL_SPACING === 0 ? DEFAULT_RAIL_LIGHT : 'minecraft:snow_block';
+      const gx = x, gz = c.zc + zOffset;
+      if (grid.inBounds(gx, yRail, gz) && grid.data[grid.idx(gx, yRail, gz)] === 0) {
+        grid.set(gx, yRail, gz, state);
+      }
+    }
+  }
+
+  // 触发区（总线红石粉排 / 各链下降+水平线 tap / 启动开关+支撑柱）已按用户要求整体移除：
+  // 产物只含各轨道主体（主链中继器+音符盒+底座+轨道 0 顶层导轨），用户手动放置总线与开关。
+
+  // 防掉落托底：重力方块音色底（snare=沙子，会掉落）正下方补雪块托住（用户游戏内实测发现）。
+  // 底座层下方按几何布局恒为空，此处仅当下方确为空气时写入（若已有实体方块则沙本就静止，无需处理）。
+  {
+    const idToState = new Array(grid.nextId);
+    for (const [state, id] of grid.stateIds) idToState[id] = state;
+    const { sx: gsx, sy: gsy, sz: gsz } = grid;
+    for (let x = 0; x < gsx; x++) for (let y = 1; y < gsy; y++) for (let z = 0; z < gsz; z++) {
+      const id = grid.data[(y * gsz + z) * gsx + x];
+      const st = id ? idToState[id] : null;
+      if (!st || !isFallingBaseBlock(st)) continue;
+      if (grid.data[((y - 1) * gsz + z) * gsx + x] === 0) grid.set(x, y - 1, z, 'minecraft:snow_block');
+    }
+  }
+
+  // 跟随装置（命令方块 + 坐骑猪）、触发区（总线/tap/启动开关）均已按用户要求移除：
+  // 产物只含各轨道主体（节奏参考触发命令方块除外，见每 tick 段循环），播放时用户手动铺总线
+  // 接各链头（链头输入端为 X=0 中继器的 -X 侧）；播放跟随方式见面板「跟随播放」手动指引。
+  return {
+    grid, chains, stats,
+    tileEntities, entities,
+    sfxTickList, // [{ tick, lines: [命令行...] }]，与轨道 0 CB 对应；无参考声道时为空数组
+    geometry: {
+      xMax, zMax, zOffset, yOffset, // 网格坐标 = 布局坐标 + 偏移（起点可负，整体平移保证非负）
+      // 默认轨道 0（粒子触发链）：顶层导轨所在层与起点
+      defaultRail: chains.find(c => c.isDefaultRail) || null,
+      defaultRailSpacing: DEFAULT_RAIL_SPACING,
+    },
+  };
+}
+
+// ===== 节奏参考声道 · 粒子数据包（完整数据包 zip，STORE 零依赖） =====
+// pack.mcmeta 按目标版本两种写法：≤1.21.8 pack_format 整数；≥1.21.9 min_format/max_format
+// （25w31a 起 pack_format 被 min/max 取代，wiki 推荐写法；1.21.11 jar 字节码确认旧字段仅告警仍被解析）。
+function buildSfxPackMcmeta(mc, songName) {
+  const pf = sfxPackFormat(mc);
+  const pack = { description: `NBS2schematic 节奏参考粒子（${songName || ''}）` };
+  if (pf.pack_format !== undefined) pack.pack_format = pf.pack_format;
+  else { pack.min_format = pf.min_format; pack.max_format = pf.max_format; }
+  return JSON.stringify({ pack }, null, 2) + '\n';
+}
+
+// 参考声道 → 每 tick 的粒子行（绑定型按音符盒偏移、独立型按音高偏移，构建时逐音符计算）。
+// 行来自 buildLayout 的 sfxTickList（与轨道 0 命令方块逐 tick 一一对应）：
+//   同一 tick 多参考音符 → 文件内每音符一行，绑定行在前（按车道放置顺序）、独立行在后（按声部升序）。
+// 传 sfxTickList 时使用其行（推荐，与产物 CB 严格一致）；缺省时退化为旧行为（每行 SFX_PARTICLE_CMD 原样）。
+function buildSfxFunctions(song, refLayers, sfxTickList = null) {
+  if (sfxTickList) {
+    return sfxTickList.map(({ tick, lines }) => ({ tick, lines }));
+  }
+  const out = []; // { tick, lines: [命令行...] }
+  if (!refLayers || refLayers.size === 0) return out;
+  const perTick = new Map();
+  for (const li of [...refLayers.keys()].sort((a, b) => a - b)) {
+    const layer = song.layers[li];
+    if (!layer) continue;
+    for (const [tick] of layer.notes) {
+      if (tick < 0) continue;
+      if (!perTick.has(tick)) perTick.set(tick, []);
+      perTick.get(tick).push(SFX_PARTICLE_CMD);
+    }
+  }
+  for (const [tick, lines] of [...perTick.entries()].sort((a, b) => a[0] - b[0])) {
+    out.push({ tick, lines });
+  }
+  return out;
+}
+
+// 零依赖 zip 写入器（STORE 方式，CRC32）
+const ZIP_CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+function zipCrc32(data) {
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < data.length; i++) c = ZIP_CRC_TABLE[(c ^ data[i]) & 0xFF] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+// files: [{ name, data: Uint8Array }] → zip 字节（STORE：无压缩，解压端零成本）
+function buildZip(files) {
+  const enc = new TextEncoder();
+  const entries = [];
+  let offset = 0;
+  const u16 = (v) => [v & 0xFF, (v >> 8) & 0xFF];
+  const u32 = (v) => [v & 0xFF, (v >> 8) & 0xFF, (v >> 16) & 0xFF, (v >>> 24) & 0xFF];
+  for (const f of files) {
+    const nameB = enc.encode(f.name);
+    const data = f.data;
+    const crc = zipCrc32(data);
+    const local = [
+      ...u32(0x04034b50), ...u16(20), ...u16(0x0800), ...u16(0), ...u16(0), ...u16(0x2a), // 签名/版本/标志(STORE)/时间/日期
+      ...u32(crc), ...u32(data.length), ...u32(data.length),
+      ...u16(nameB.length), ...u16(0),
+      ...nameB, ...[...data],
+    ];
+    entries.push({ name: nameB, crc, size: data.length, local, localOffset: offset });
+    offset += local.length;
+  }
+  const centralOffset = offset;
+  const central = [];
+  for (const e of entries) {
+    // 中央目录条目固定 46 字节 + 文件名（PKZIP 规范字段序；internal attrs 为 2 字节，不可省）
+    central.push(
+      ...u32(0x02014b50), ...u16(20), ...u16(20), ...u16(0x0800), ...u16(0), ...u16(0), ...u16(0x2a), // 签名+版本+标志+方法+时间+日期
+      ...u32(e.crc), ...u32(e.size), ...u32(e.size),
+      ...u16(e.name.length), ...u16(0), ...u16(0), ...u16(0), // 名长、extra、comment、diskStart
+      ...u16(0), // 内部属性
+      ...u32(0), // 外部属性
+      ...u32(e.localOffset), ...e.name,
+    );
+    offset += 46 + e.name.length;
+  }
+  const centralSize = offset - centralOffset;
+  const end = [
+    ...u32(0x06054b50), ...u16(0), ...u16(0),
+    ...u16(entries.length), ...u16(entries.length),
+    ...u32(centralSize), ...u32(centralOffset), ...u16(0),
+  ];
+  const parts = entries.map(e => e.local).concat([central, end]);
+  const out = new Uint8Array(parts.reduce((s, p) => s + p.length, 0));
+  let o = 0;
+  for (const p of parts) { out.set(p, o); o += p.length; }
+  return out;
+}
+
+// 完整粒子数据包：pack.mcmeta + data/<ns>/<dir>/<tick>.mcfunction（按目标版本目录名）
+// sfxTickList：buildLayout 返回的逐 tick 粒子行（与产物 CB 严格一致）；缺省时退化为 buildSfxFunctions 旧行为
+function buildSfxDatapackZip(song, refLayers, targetMc, sfxTickList = null) {
+  const pf = sfxPackFormat(targetMc);
+  const files = [{ name: 'pack.mcmeta', data: new TextEncoder().encode(buildSfxPackMcmeta(targetMc, song && song.songName)) }];
+  for (const { tick, lines } of buildSfxFunctions(song, refLayers, sfxTickList)) {
+    files.push({ name: `data/${SFX_NAMESPACE}/${pf.dir}/${tick}.mcfunction`, data: new TextEncoder().encode(lines.join('\n') + '\n') });
+  }
+  return { bytes: buildZip(files), fileCount: files.length };
+}
+
+/* ===== 06 palette 与位打包 ===== */
+function buildPalette(grid) {
+  // grid.stateIds: Map<state, id>，id 0 = air 预置
+  const states = new Array(grid.nextId);
+  for (const [state, id] of grid.stateIds) states[id] = state;
+  return states;
+}
+
+// 连续位流 LSB-first、可跨 long 边界（与 LitematicaBitArray 一致）
+function packBlockStates(ids, paletteSize) {
+  const bits = Math.max(2, Math.ceil(Math.log2(paletteSize)));
+  const nBits = ids.length * bits;
+  const nLongs = Math.ceil(nBits / 64);
+  const out = new BigInt64Array(nLongs);
+  let acc = 0n, accBits = 0, oi = 0;
+  const MASK = 0xFFFFFFFFFFFFFFFFn;
+  for (let i = 0; i < ids.length; i++) {
+    acc |= BigInt(ids[i]) << BigInt(accBits);
+    accBits += bits;
+    while (accBits >= 64) {
+      out[oi++] = acc & MASK;
+      acc >>= 64n;
+      accBits -= 64;
+    }
+  }
+  if (accBits > 0) out[oi] = acc;
+  return { longs: out, bits };
+}
+
+/* ===== 07 NBT 编码器 ===== */
+class NbtWriter {
+  constructor() {
+    this.buf = new Uint8Array(1024);
+    this.len = 0;
+    this.view = new DataView(this.buf.buffer);
+  }
+  ensure(n) {
+    if (this.len + n <= this.buf.length) return;
+    let cap = this.buf.length * 2;
+    while (cap < this.len + n) cap *= 2;
+    const nb = new Uint8Array(cap);
+    nb.set(this.buf.subarray(0, this.len));
+    this.buf = nb;
+    this.view = new DataView(this.buf.buffer);
+  }
+  u8(v) { this.ensure(1); this.view.setUint8(this.len, v); this.len += 1; }
+  i16(v) { this.ensure(2); this.view.setInt16(this.len, v, false); this.len += 2; }
+  i32(v) { this.ensure(4); this.view.setInt32(this.len, v, false); this.len += 4; }
+  i64(v) { this.ensure(8); this.view.setBigInt64(this.len, v, false); this.len += 8; }
+  f32(v) { this.ensure(4); this.view.setFloat32(this.len, v, false); this.len += 4; }
+  f64(v) { this.ensure(8); this.view.setFloat64(this.len, v, false); this.len += 8; }
+  bytes(arr) { this.ensure(arr.length); this.buf.set(arr, this.len); this.len += arr.length; }
+  str(s) {
+    const enc = new TextEncoder().encode(s);
+    this.i16(enc.length);
+    this.bytes(enc);
+  }
+  tagHeader(type, name) {
+    this.u8(type);
+    if (name !== null) this.str(name);
+  }
+  compound(entries, named) {
+    if (named !== undefined) this.tagHeader(10, named);
+    for (const [type, name, write] of entries) {
+      this.tagHeader(type, name);
+      write();
+    }
+    this.u8(0); // TAG_End
+  }
+  list(itemType, items, named) {
+    if (named !== undefined) this.tagHeader(9, named);
+    this.u8(itemType);
+    this.i32(items.length);
+    items();
+  }
+  intArray(arr, named) {
+    if (named !== undefined) this.tagHeader(11, named);
+    this.i32(arr.length);
+    for (const v of arr) this.i32(v);
+  }
+  longArray(arr, named) {
+    if (named !== undefined) this.tagHeader(12, named);
+    this.i32(arr.length);
+    for (const v of arr) this.i64(v);
+  }
+  getBytes() { return this.buf.subarray(0, this.len); }
+}
+
+// 解析 "minecraft:xxx[a=b,c=d]" → { name, props }
+function parseStateString(state) {
+  const m = state.match(/^([a-z0-9_.:]+)(?:\[(.*)\])?$/);
+  if (!m) throw new Error(`无法解析方块状态：${state}`);
+  const props = {};
+  if (m[2]) {
+    for (const kv of m[2].split(',')) {
+      const eq = kv.indexOf('=');
+      props[kv.slice(0, eq)] = kv.slice(eq + 1);
+    }
+  }
+  return { name: m[1], props };
+}
+
+function buildLitematic(song, palette, packed, size, totalBlocks, nowMs, dataVersion, extras = { tileEntities: [], entities: [] }) {
+  const w = new NbtWriter();
+  const name = (song.songName || '红石音乐').trim() || '红石音乐';
+  const dv = (typeof dataVersion === 'number')
+    ? dataVersion
+    : targetEntry(DEFAULT_TARGET_MC).dataVersion;
+  // 根 tag：标准 NBT 文件的根是「具名 compound」（名字为空字符串），
+  // 与 level.dat 一致（0A 00 00 ...）。MC NbtIo / Litematica 读取器都要求这个根头，
+  // 缺少根头时会把第一个条目误读为根 tag 导致整个文件解析失败。
+  w.u8(10);      // TAG_Compound
+  w.str('');     // 根 tag 名字 = 空字符串
+  w.tagHeader(3, 'MinecraftDataVersion'); w.i32(dv);
+  w.tagHeader(3, 'Version'); w.i32(LITEMATIC_VERSION);
+  w.tagHeader(3, 'SubVersion'); w.i32(LITEMATIC_SUBVERSION);
+  // Metadata
+  w.tagHeader(10, 'Metadata');
+  {
+    const s = (t, v) => { w.tagHeader(8, t); w.str(v); };
+    const i = (t, v) => { w.tagHeader(3, t); w.i32(v); };
+    const l = (t, v) => { w.tagHeader(4, t); w.i64(v); };
+    s('Name', name);
+    s('Author', song.songAuthor || '');
+    s('Description', `NBS2schematic 转换：${song.songName || ''} · tempo ${song.tempo}tps · ${song.songLength} ticks`);
+    i('RegionCount', 1);
+    i('TotalVolume', size.x * size.y * size.z);
+    i('TotalBlocks', totalBlocks);
+    l('TimeCreated', nowMs);
+    l('TimeModified', nowMs);
+    s('Software', 'NBS2schematic');
+    w.tagHeader(10, 'EnclosingSize');
+    w.u8(3); w.str('x'); w.i32(size.x);
+    w.u8(3); w.str('y'); w.i32(size.y);
+    w.u8(3); w.str('z'); w.i32(size.z);
+    w.u8(0); // EnclosingSize end
+    w.u8(0); // Metadata end
+  }
+  // Regions
+  w.tagHeader(10, 'Regions');
+  {
+    w.tagHeader(10, 'MusicBand');
+    {
+      const pos = { x: 0, y: 0, z: 0 };
+      w.tagHeader(10, 'Position');
+      w.u8(3); w.str('x'); w.i32(pos.x);
+      w.u8(3); w.str('y'); w.i32(pos.y);
+      w.u8(3); w.str('z'); w.i32(pos.z);
+      w.u8(0);
+      w.tagHeader(10, 'Size');
+      w.u8(3); w.str('x'); w.i32(size.x);
+      w.u8(3); w.str('y'); w.i32(size.y);
+      w.u8(3); w.str('z'); w.i32(size.z);
+      w.u8(0);
+      // BlockStatePalette: List<Compound>
+      w.tagHeader(9, 'BlockStatePalette');
+      w.u8(10); // List 元素类型 = Compound
+      w.i32(palette.length);
+      for (const state of palette) {
+        const { name, props } = parseStateString(state);
+        w.tagHeader(8, 'Name'); w.str(name);
+        if (Object.keys(props).length > 0) {
+          w.tagHeader(10, 'Properties');
+          for (const [k, v] of Object.entries(props)) {
+            w.tagHeader(8, k); w.str(v);
+          }
+          w.u8(0);
+        }
+        w.u8(0);
+      }
+      // BlockStates: LongArray
+      w.longArray(packed.longs, 'BlockStates');
+      // TileEntities：通用序列化（当前恒为空列表；字段格式保留以兼容未来需要 TE 的产物）
+      w.tagHeader(9, 'TileEntities');
+      w.u8(10);
+      w.i32(extras.tileEntities.length);
+      for (const te of extras.tileEntities) {
+        w.tagHeader(8, 'id'); w.str(te.id);
+        w.tagHeader(3, 'x'); w.i32(te.x);
+        w.tagHeader(3, 'y'); w.i32(te.y);
+        w.tagHeader(3, 'z'); w.i32(te.z);
+        w.tagHeader(8, 'Command'); w.str(te.Command);
+        w.tagHeader(1, 'auto'); w.u8(te.auto ? 1 : 0);
+        w.tagHeader(1, 'conditionMet'); w.u8(0);
+        w.tagHeader(1, 'powered'); w.u8(0);
+        w.tagHeader(3, 'SuccessCount'); w.i32(0);
+        w.tagHeader(1, 'TrackOutput'); w.u8(0);
+        w.tagHeader(8, 'LastOutput'); w.str('');
+        w.tagHeader(1, 'UpdateLastExecution'); w.u8(1);
+        w.tagHeader(4, 'LastExecution'); w.i64(0n);
+        w.u8(0);
+      }
+      w.tagHeader(9, 'PendingBlockTicks');
+      w.u8(10);
+      w.i32(0);
+      w.tagHeader(9, 'PendingFluidTicks');
+      w.u8(10);
+      w.i32(0);
+      // Entities：通用实体序列化（当前恒为空列表）
+      w.tagHeader(9, 'Entities');
+      w.u8(10);
+      w.i32(extras.entities.length);
+      for (const ent of extras.entities) {
+        w.tagHeader(8, 'id'); w.str(ent.id);
+        w.tagHeader(9, 'Pos'); w.u8(6);
+        w.i32(3);
+        for (const v of ent.Pos) w.f64(v);
+        if (ent.Tags && ent.Tags.length > 0) {
+          w.tagHeader(9, 'Tags'); w.u8(8);
+          w.i32(ent.Tags.length);
+          for (const t of ent.Tags) w.str(t);
+        }
+        w.tagHeader(1, 'PersistenceRequired'); w.u8(1);
+        w.u8(0);
+      }
+      w.u8(0); // MusicBand end
+    }
+    w.u8(0); // Regions end
+  }
+  w.u8(0); // 根 end
+  return w.getBytes();
+}
+
+/* ===== 08 gzip 与下载 ===== */
+async function gzipBytes(bytes) {
+  if (typeof CompressionStream === 'undefined') {
+    throw new Error('当前浏览器不支持 CompressionStream（需要 Chrome/Edge 80+、Firefox 113+、Safari 16.4+）');
+  }
+  const cs = new CompressionStream('gzip');
+  const writer = cs.writable.getWriter();
+  writer.write(bytes);
+  writer.close();
+  const reader = cs.readable.getReader();
+  const chunks = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    total += value.length;
+  }
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const c of chunks) { out.set(c, off); off += c.length; }
+  return out;
+}
+
+// gzip 解压（自检用：验证浏览器压缩流往返一致）
+async function gunzipBytes(bytes) {
+  const ds = new DecompressionStream('gzip');
+  const writer = ds.writable.getWriter();
+  writer.write(bytes);
+  writer.close();
+  const reader = ds.readable.getReader();
+  const chunks = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    total += value.length;
+  }
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const c of chunks) { out.set(c, off); off += c.length; }
+  return out;
+}
+
+// 有效 tick 数：覆盖 songLength 与最大音符 tick（部分 NBS 文件的 song_length 小于实际音符 tick）
+function effectiveTickCount(song) {
+  let maxTick = song.songLength;
+  for (const layer of song.layers) {
+    for (const t of layer.notes.keys()) if (t > maxTick) maxTick = t;
+  }
+  return maxTick + 1;
+}
+
+function sanitizeFilename(name) {
+  const cleaned = (name || 'redstone_music').replace(/[\\/:*?"<>|\x00-\x1f]/g, '_').trim();
+  return (cleaned || 'redstone_music').slice(0, 120);
+}
+
+/* ===== 09 UI 控制器（基础部分：文件、歌曲信息、声部列表） ===== */
+const AppState = {
+  song: null,            // ParsedSong
+  fileBytes: null,
+  selectedLayers: new Set(),   // 音轨池：勾选的声部下标
+  // 节奏参考声道：Map<声部下标, {type, sound}>（双类型，用户批准设计 v2）。
+  //   type='bound' 绑定型：强制发声（sound 恒 true），粒子以所属车道音符盒为中心，偏移按轨道排布求解；
+  //   type='independent' 独立型：sound 可 false（静音参考不进车道池），粒子中心锚定轨道 0、与 CB 同高，
+  //     Z 向按音高 (note−12)×settings.sfxPitchStep。
+  // 触发：轨道 0 主位底座命令方块 + nbs2sfx 数据包（buildSfxDatapackZip）；旧存档 bool 值按独立型迁移。
+  refLayers: new Map(),
+  lanes: [],             // 车道池：[{ tracks: [layerIdx...], start: {dz, dy} }]，每条车道 = 一条物理链
+                         // start = 该链起点在 Y-Z 截面的偏移，随车道对象同生共死（删除/复制/插入不会错位）
+  // 参考车道池：与 lanes 同构（{ tracks, start }），每条参考车道 = 一条独立物理链（3 个音符盒位）。
+  // 成员 = 勾选了「节奏参考」的声道，用勾选式并入（onRefToggle → 第一条无冲突参考车道，放不下新建），
+  // 与车道池的拖拽分配不同；允许与车道池重叠（同一声道两套盒都发声，用户批准设计）。
+  // 绑定型粒子只锚定参考车道内该声道的音符盒（buildLayout refMode）。
+  refLanes: [],
+  lane0: { start: { dz: 0, dy: 0 } }, // 默认轨道 0（顶层雪块导轨 + 每 32 格赭黄蛙灯；
+                         // 同时承载节奏参考粒子命令方块——触发链，起点可拖拽，持久化在 localStorage）
+  settings: {
+    targetVersion: DEFAULT_TARGET_MC,
+    customInstrumentMap: new Map(),
+    sfxPitchStep: 1,     // 独立型参考：音高 → Z 偏移步长（格/半音），默认 1（用户定：以音高 12 为中点线性）
+  },
+  result: null,          // 生成结果 { grid, palette, size, ... }
+  litematicBytes: null,
+  sfxZipBytes: null,     // 节奏参考粒子数据包 zip（有参考声道时生成；无参考为 null）
+};
+
+const $ = (id) => document.getElementById(id);
+
+function showError(msg, err) {
+  const box = $('errors');
+  box.textContent = msg;
+  const diagBox = $('error-diag');
+  while (diagBox.firstChild) diagBox.removeChild(diagBox.firstChild);
+  if (err && (err.offset !== undefined || err.partial)) {
+    const offsetTxt = err.offset !== undefined
+      ? ` ｜ 字节偏移 ${err.offset}/${err.total ?? '?'}`
+      : '';
+    const p = err.partial;
+    const partialTxt = p
+      ? `\n已解析部分：${p.headerDone ? '头部完整' : '头部未完成'}；${p.layers} 层 / ${p.notes} 音符；${p.customInstruments} 自定义乐器；读到字节 ${p.bytesParsed}/${p.bytesTotal}`
+      : '';
+    box.textContent += offsetTxt + partialTxt;
+    // 诊断 JSON（DOM API 渲染，不拼接用户数据到 innerHTML）
+    const details = document.createElement('details');
+    const summary = document.createElement('summary');
+    summary.textContent = '诊断信息';
+    details.appendChild(summary);
+    const pre = document.createElement('pre');
+    const diag = {
+      error: { message: msg, name: err.name, offset: err.offset, totalBytes: err.total },
+      partial: p || null,
+      file: { name: AppState.song ? AppState.song.sourceFileName : '' },
+    };
+    pre.textContent = JSON.stringify(diag, null, 2);
+    details.appendChild(pre);
+    const btn = document.createElement('button');
+    btn.id = 'error-diag-btn';
+    btn.textContent = '导出诊断 JSON';
+    btn.addEventListener('click', () => {
+      const blob = new Blob([JSON.stringify(diag, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = sanitizeFilename((AppState.song && AppState.song.sourceFileName) || 'nbs') + '.diagnosis.json';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    });
+    details.appendChild(btn);
+    diagBox.appendChild(details);
+  }
+}
+function clearError() {
+  $('errors').textContent = '';
+  const diagBox = $('error-diag');
+  while (diagBox.firstChild) diagBox.removeChild(diagBox.firstChild);
+}
+
+function formatTime(song) {
+  const seconds = song.songLength / song.tempo;
+  const m = Math.floor(seconds / 60), s = Math.round(seconds % 60);
+  return `${m}:${String(s).padStart(2, '0')}（${seconds.toFixed(1)} 秒）`;
+}
+
+function renderSongInfo(song) {
+  const rows = [
+    ['名称', song.songName || '(未命名)'],
+    ['作者', song.songAuthor || '(无)'],
+    ['时长', `${song.songLength} ticks · ${formatTime(song)}`],
+    ['NBS 版本', `v${song.version}`],
+    ['tempo', `${song.tempo} ticks/秒`],
+    ['拍号', `${song.timeSignature}/4`],
+    ['声部数', `${song.songLayers}（${song.layers.filter(l => l.notes.size > 0).length} 条有音符）`],
+    ['自定义乐器', song.customInstruments.length > 0
+      ? song.customInstruments.map(c => c.name).join('、') : '(无)'],
+    ['循环', song.loop ? (song.maxLoopCount === 0 ? '是（无限）' : `是（${song.maxLoopCount} 次）`) : '否'],
+  ];
+  $('songInfo').innerHTML = '<table class="info">' +
+    rows.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('') + '</table>';
+  $('song-section').hidden = false;
+}
+
+function renderLayerList() {
+  const song = AppState.song;
+  const stats = layerStats(song);
+  const list = $('layerList');
+  list.innerHTML = '';
+  song.layers.forEach((layer, i) => {
+    const st = stats[i];
+    const instSummary = [...st.instruments].sort((a, b) => a - b)
+      .map(id => id < 16 ? INSTRUMENT_NAMES_CN[id] : `自定#${id}`).join('+');
+    const isRef = AppState.refLayers.has(i);
+    const spec = isRef ? refSpecOf(AppState.refLayers.get(i)) : null;
+    const refOn = spec ? spec.sound : false; // 发声（独立型默认勾；绑定型恒勾）
+    const isBound = spec && spec.type === 'bound';
+    const row = document.createElement('div');
+    row.className = 'layer-row';
+    row.draggable = true;                    // 可拖到车道池分配
+    row.dataset.dragLayer = String(i);
+    row.title = '可拖到右侧车道池或节奏形参考车道池的车道卡片中分配';
+    row.innerHTML = `
+      <label>
+        <input type="checkbox" class="layer-check" data-i="${i}" ${AppState.selectedLayers.has(i) ? 'checked' : ''}>
+        <span class="layer-name">#${i} ${layer.name || '(未命名)'}${isRef ? ' <b style="color:var(--accent2)">♪</b>' : ''}</span>
+        <span class="layer-meta">${st.noteCount} 音符 · ${instSummary} · 音量 ${layer.volume}</span>
+      </label>
+      <span class="layer-ref-group">
+        <label class="layer-ref-cell" title="节奏参考声道：每个音符在轨道 0 触发一次粒子特效（命令方块 + nbs2sfx 数据包）">
+          <input type="checkbox" class="layer-ref" data-i="${i}" ${isRef ? 'checked' : ''}>
+          <span>节奏参考</span>
+        </label>
+        ${isRef ? `
+        <label class="layer-sound-cell" title="发声：勾选 = 车道池与参考车道池都放该声道的音符盒（允许重叠，两套盒都发声）；取消 = 不放音符盒，只贡献粒子时序（静音参考，仅独立型可用）">
+          <input type="checkbox" class="layer-sound" data-i="${i}" ${refOn ? 'checked' : ''} ${isBound ? 'disabled' : ''}>
+          <span>发声</span>
+        </label>` : ''}
+      </span>`;
+    list.appendChild(row);
+  });
+  updateLayerCount();
+}
+
+function updateLayerCount() {
+  $('layerCount').textContent = `已选 ${AppState.selectedLayers.size} / ${AppState.song.layers.length} 条声部`;
+}
+
+// 播放速度分析：主链 1 档中继器（周期 2 刻/tick，用户游戏内实测：音符盒/红石粉 0 延迟）+ 游戏内 /tick rate 校正（NBS 是基准，游戏去适应它）+ 跟随播放指引
+// 依据（已查证）：Mojang 官方 1.20.3 更新日志 — vanilla `/tick rate <rate>`（值 >1 且 <10000，需管理员权限）；
+// fabric-carpet 1.4.123+ 已移除自有 /tick，1.21.11 直接用 vanilla 命令；
+// 音符盒可听范围约 48 格、创造飞行约 10.9 块/秒（红石音乐社区教程查证）
+function renderTempoAdvice() {
+  const song = AppState.song;
+  const tempo = song.tempo;
+  const plan = playbackPlan(tempo);
+  const D = plan.delay;
+  const R = plan.tickRate;
+  const rStr = String(Math.round(R * 100) / 100);
+  const cellsPerTick = segmentCells(D);
+  const speed = cellsPerTick * tempo;      // 链推进速度（块/秒，校正后）
+  const perTick = cellsPerTick / D;        // 每游戏 tick 前进格数（tp 步长）
+  const estX = Math.round(effectiveTickCount(song) * cellsPerTick);
+  const lines = [];
+  lines.push(`NBS tempo <b>${tempo}</b> ticks/秒 → 主链每 tick 固定 <b>1 档中继器</b>（周期 2 游戏刻${D > 1 ? `（tempo>20，每 tick 占 ${D} 档扩展格）` : ''}，零抖动）；本曲最接近的标准 tps 为 ${plan.assumedTps}（仅参考）。`);
+  if (Math.abs(R - 20) < 0.005) {
+    lines.push(`✅ 需要的游戏速率 R = 2 × tempo = <b>${rStr}</b> ≈ 20：<b>保持默认 20tps 即可</b>，无需任何调整。`);
+  } else {
+    lines.push(`🎮 播放前在游戏内执行（需管理员权限）：<code>/tick rate ${rStr}</code> → 每个 NBS tick 恰好 2/${rStr} 秒 = 原曲 1/${tempo} 秒，速度精确；改回 <code>/tick rate 20</code> 恢复。不执行时按默认 20tps 播放（每 tick 实际 ${2 / 20} 秒，为原曲的 ${Math.round(2 / (20 / tempo) * 100) / 100} 倍速）。`);
+  }
+  if (R < 1.001 || R > 10000) {
+    lines.push(`🚫 /tick rate 取值范围 (1, 10000)，本曲 R=${rStr} 越界，请回 NBS 调整 tempo。`);
+  }
+  lines.push(`⚠ <code>/tick rate</code> 改变整个世界速度（实体/玩家/昼夜），建议每次进世界后重新执行；无管理员权限的服务器请让服主执行。`);
+  lines.push(`🏃 <b>跟随播放</b>：音符盒可听约 48 格，链以 <b>${(Math.round(speed * 100) / 100)}</b> 块/秒 沿 +X 推进（本曲全长约 ${estX} 格）。`);
+  if (speed <= 10.5) {
+    lines.push(`　• 可<b>创造飞行</b>跟随（约 10.9 块/秒）：F3 将 facing 对齐 0° 后按住 W 直飞。`);
+  } else {
+    lines.push(`　• 推进快于飞行速度，用<b>骑乘 + 命令方块 tp</b>：召唤并骑乘带 tag 的猪，循环命令方块每游戏 tick 前移 <b>${perTick}</b> 格：<code>/execute as @e[tag=rmr,type=pig] at @s run tp @s ^${perTick} ^ ^</code>（与链精确同步；命令方块区也需常加载）。`);
+  }
+  lines.push(`　• 建议拉大模拟距离或 <code>/forceload add</code> 常加载链所在区块；玩家跟随到位时前方区块已加载，信号不会断。`);
+  $('tempoAdvice').innerHTML = lines.map(l => `<div class="advice-line">${l}</div>`).join('');
+}
+
+function onSongLoaded(song, bytes) {
+  AppState.song = song;
+  AppState.fileBytes = bytes;
+  clearError();
+  renderSongInfo(song);
+  renderTempoAdvice();
+  $('tempo-section').hidden = false;
+  // 优先恢复上次保存的车道/音轨/设置（key = 文件名+大小哈希，换歌不误恢复）
+  const saved = loadSavedState(song);
+  if (saved) {
+    applySavedState(song, saved);
+  } else {
+    // 默认全选所有有声部的层（参考声道默认无）
+    AppState.refLayers = new Map();
+    AppState.selectedLayers = new Set();
+    AppState.refLanes = [];
+    song.layers.forEach((l, i) => { if (l.notes.size > 0) AppState.selectedLayers.add(i); });
+    rebuildLanesAuto();
+  }
+  renderLayerList();
+  $('layer-section').hidden = false;
+  $('sidebar').hidden = false;   // 左右分栏：载歌后音轨池侧边栏出现
+  renderLaneSection();
+  $('group-section').hidden = false;
+  renderRefLaneSection();
+  $('refLane-section').hidden = false;
+  renderSettings();
+  $('settings-section').hidden = false;
+  $('layout-section').hidden = false;
+  $('generate-section').hidden = false;
+  // 清空旧结果（含预览画布离屏图，避免新文件生成前残留旧图）
+  AppState.result = null;
+  AppState.litematicBytes = null;
+  AppState.sfxZipBytes = null;
+  $('downloadBtn').hidden = true;
+  $('sfxZipBtn').hidden = true;
+  $('debugBtn').hidden = true;
+  $('statsPanel').hidden = true;
+  $('previewPanel').hidden = true;
+  $('warnings').innerHTML = '';
+  $('genStatus').textContent = saved
+    ? `已恢复上次编辑状态（${new Date(saved.savedAt).toLocaleString()}）`
+    : '';
+  if (topPreview) topPreview.clear();
+  if (frontPreview) frontPreview.clear();
+  if (sidePreview) sidePreview.clear();
+}
+
+/* ===== 状态持久化（localStorage，按 文件名+大小 哈希建 key） ===== */
+// 换一首同名不同内容的 NBS 不会误恢复（size 参与哈希）；localStorage 不可用（隐私模式/无头）时静默降级
+function fnv1a32(str) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(36);
+}
+function stateKey(song) {
+  const size = AppState.fileBytes ? AppState.fileBytes.length : 0;
+  return 'nbs2schematic:v1:' + fnv1a32((song.sourceFileName || song.songName || 'unnamed') + ':' + size);
+}
+function saveStateNow() {
+  if (typeof localStorage === 'undefined' || !AppState.song) return;
+  try {
+    const payload = {
+      v: 1,
+      savedAt: Date.now(),
+      selectedLayers: [...AppState.selectedLayers],
+      refLayers: [...AppState.refLayers.entries()],
+      lanes: AppState.lanes.map(l => ({
+        tracks: [...l.tracks],
+        start: l.start ? { dz: l.start.dz, dy: l.start.dy } : null,
+      })),
+      lane0Start: AppState.lane0 ? { dz: AppState.lane0.start.dz, dy: AppState.lane0.start.dy } : null,
+      refLanes: AppState.refLanes.map(l => ({
+        tracks: [...l.tracks],
+        type: l.type || 'independent',
+        start: l.start ? { dz: l.start.dz, dy: l.start.dy } : null,
+      })),
+      settings: {
+        targetVersion: AppState.settings.targetVersion,
+        customInstrumentMap: [...AppState.settings.customInstrumentMap.entries()],
+        sfxPitchStep: AppState.settings.sfxPitchStep,
+      },
+    };
+    localStorage.setItem(stateKey(AppState.song), JSON.stringify(payload));
+  } catch (e) { /* 配额/安全异常：静默忽略，不影响主流程 */ }
+}
+let stateSaveTimer = null;
+function scheduleStateSave() {
+  if (typeof localStorage === 'undefined' || !AppState.song) return;
+  if (stateSaveTimer) clearTimeout(stateSaveTimer);
+  stateSaveTimer = setTimeout(() => { stateSaveTimer = null; saveStateNow(); }, 300);
+}
+// 读取并校验已存状态；返回 {selectedLayers, lanes, settings} 或 null（任何一项不合法即整体放弃）
+function loadSavedState(song) {
+  if (typeof localStorage === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(stateKey(song));
+    if (!raw) return null;
+    const s = JSON.parse(raw);
+    if (!s || s.v !== 1) return null;
+    const nLayers = song.layers.length;
+    if (!Array.isArray(s.selectedLayers) || !Array.isArray(s.lanes)) return null;
+    for (const i of s.selectedLayers) if (!Number.isInteger(i) || i < 0 || i >= nLayers) return null;
+    // refLayers：可选（旧存档无此字段）；值兼容旧格式 bool（=发声与否，按独立型迁移）
+    //   与新格式 {type:'bound'|'independent', sound:bool}
+    if (s.refLayers !== undefined) {
+      if (!Array.isArray(s.refLayers)) return null;
+      for (const [i, spec] of s.refLayers) {
+        if (!Number.isInteger(i) || i < 0 || i >= nLayers) return null;
+        if (typeof spec === 'boolean') continue;
+        if (!spec || (spec.type !== 'bound' && spec.type !== 'independent') || typeof spec.sound !== 'boolean') return null;
+      }
+    }
+    for (const lane of s.lanes) {
+      if (!lane || !Array.isArray(lane.tracks)) return null;
+      for (const t of lane.tracks) if (!Number.isInteger(t) || t < 0 || t >= nLayers) return null;
+      if (!lane.start || !Number.isFinite(lane.start.dz) || !Number.isFinite(lane.start.dy)) return null;
+    }
+    if (s.lane0Start !== undefined && (s.lane0Start === null
+      || !Number.isFinite(s.lane0Start.dz) || !Number.isFinite(s.lane0Start.dy))) return null;
+    // refLanes：可选（旧存档无此字段 → 空池）；结构与 lanes 相同
+    if (s.refLanes !== undefined) {
+      if (!Array.isArray(s.refLanes)) return null;
+      for (const lane of s.refLanes) {
+        if (!lane || !Array.isArray(lane.tracks)) return null;
+        if (lane.type !== undefined && lane.type !== 'bound' && lane.type !== 'independent') return null;
+        for (const t of lane.tracks) if (!Number.isInteger(t) || t < 0 || t >= nLayers) return null;
+        if (!lane.start || !Number.isFinite(lane.start.dz) || !Number.isFinite(lane.start.dy)) return null;
+      }
+    }
+    return s;
+  } catch (e) { return null; }
+}
+// 应用已存状态到 AppState（调用前须已设置默认值）；返回是否恢复成功
+function applySavedState(song, saved) {
+  AppState.selectedLayers = new Set(saved.selectedLayers);
+  // refLayers：旧格式 bool 值迁移为独立型（buildLayout 侧 normRef 同样兜底，双保险）
+  AppState.refLayers = new Map((Array.isArray(saved.refLayers) ? saved.refLayers : []).map(([i, spec]) =>
+    [i, typeof spec === 'object' && spec !== null
+      ? { type: spec.type, sound: !!spec.sound }
+      : { type: 'independent', sound: !!spec }]));
+  AppState.lanes = saved.lanes.map(l => ({ tracks: [...l.tracks], start: { dz: l.start.dz, dy: l.start.dy } }));
+  if (saved.lane0Start) AppState.lane0 = { start: { dz: saved.lane0Start.dz, dy: saved.lane0Start.dy } };
+  AppState.refLanes = (Array.isArray(saved.refLanes) ? saved.refLanes : [])
+    .map(l => ({ tracks: [...l.tracks], type: l.type || 'independent', start: { dz: l.start.dz, dy: l.start.dy } }));
+  // 车道级类型迁移（类型选型按参考车道存储）：车道显式含绑定型成员 → 该声道 refLayers 类型跟随车道
+  for (const l of AppState.refLanes) {
+    for (const t of l.tracks) {
+      if (AppState.refLayers.has(t)) AppState.refLayers.set(t, { ...AppState.refLayers.get(t), type: l.type });
+    }
+  }
+  const st = saved.settings;
+  if (st) {
+    if (st.targetVersion && TARGET_VERSIONS.some(t => t.mc === st.targetVersion)) {
+      AppState.settings.targetVersion = st.targetVersion;
+    }
+    if (Array.isArray(st.customInstrumentMap)) {
+      AppState.settings.customInstrumentMap = new Map(
+        st.customInstrumentMap.filter(([k, v]) => Number.isInteger(k) && Number.isInteger(v)));
+    }
+    if (Number.isFinite(st.sfxPitchStep)) AppState.settings.sfxPitchStep = st.sfxPitchStep;
+  }
+  return true;
+}
+
+/* ===== 车道池（音轨池 + 车道分配） ===== */
+// 参考声道规格归一化（UI 侧镜像 buildLayout 的 normRef；旧存档 bool 值按独立型迁移）
+function refSpecOf(v) {
+  return (typeof v === 'object' && v !== null && (v.type === 'bound' || v.type === 'independent'))
+    ? { type: v.type, sound: !!v.sound }
+    : { type: 'independent', sound: !!v };
+}
+// 车道池成员资格（允许重叠设计，用户批准）：
+//   · 非参考声道：参与 ⇔ 主勾选（selectedLayers）
+//   · 参考声道（refLayers 含 i）：参与发声 ⇔ 规格 sound
+//     —— 绑定型 sound 恒 true（必须发声）；独立型 sound=false 时不进车道池、无音符盒、只贡献粒子时序
+// 参考+发声的声道同时属于本池与参考车道池（refLanePoolMembers）——两套盒都发声。
+function lanePoolMembers(song) {
+  const out = [];
+  song.layers.forEach((_, i) => {
+    const isRef = AppState.refLayers.has(i);
+    if (isRef ? refSpecOf(AppState.refLayers.get(i)).sound : AppState.selectedLayers.has(i)) out.push(i);
+  });
+  return out.sort((a, b) => a - b);
+}
+
+// 自动分配：每 3 条池中音轨一条车道
+function rebuildLanesAuto() {
+  const pool = lanePoolMembers(AppState.song);
+  AppState.lanes = [];
+  for (let i = 0; i < pool.length; i += 3) {
+    AppState.lanes.push({ tracks: pool.slice(i, i + 3) });
+  }
+  syncLaneStarts();
+}
+
+// 勾选/取消勾选音轨：增量增删，保留现有车道分组与起点
+// 勾选 → 追加到第一条无冲突车道，否则新建车道；取消勾选 → 从各车道移除（空车道保留）
+// 仅由主勾选框触发；参考声道的发声框走 onRefSoundToggle（同签名，语义按参考状态分支）
+function onLayerToggle(i, checked) {
+  const isRef = AppState.refLayers.has(i);
+  const spec = isRef ? refSpecOf(AppState.refLayers.get(i)) : null;
+  // 静音参考（独立型 + 不发声）时主勾选是死区：取消主勾选不会把粒子参考从车道池移除（它本就不在），
+  // 重新勾选也不自动进入车道池（发声框才是发声开关）—— 避免与发声框状态打架
+  if (spec && spec.sound === false) {
+    if (checked) AppState.selectedLayers.add(i); else AppState.selectedLayers.delete(i);
+    updateLayerCount();
+    scheduleStateSave();
+    return;
+  }
+  if (checked) {
+    AppState.selectedLayers.add(i);
+    const song = AppState.song;
+    const layer = song.layers[i];
+    let placed = false;
+    if (layer) {
+      for (const lane of AppState.lanes) {
+        if (lane.tracks.includes(i)) continue;
+        if (laneCanAdd(laneTickCounts(song, lane.tracks), layer)) {
+          lane.tracks.push(i);
+          lane.tracks.sort((a, b) => a - b);
+          placed = true;
+          break;
+        }
+      }
+    }
+    if (!placed) AppState.lanes.push({ tracks: [i] });
+  } else {
+    AppState.selectedLayers.delete(i);
+    for (const lane of AppState.lanes) {
+      lane.tracks = lane.tracks.filter(t => t !== i);
+    }
+  }
+  syncLaneStarts();
+  updateLayerCount();
+  renderLaneSection();
+  scheduleStateSave();
+}
+
+// 参考框勾选/取消（允许重叠设计，用户批准）：
+// 勾选 = 登记为节奏参考声道（默认独立型、发声勾）+ 勾选式并入参考车道池（第一条无冲突、否则新建）
+//   + 主勾选联动进音轨车道池（两套池可同时含该声道，两套盒都发声）；
+// 取消 = 移出参考状态（发声框一并移除）+ 从各参考车道移除（空车道保留），音轨车道池不受影响
+function onRefToggle(i, checked) {
+  if (checked) {
+    AppState.refLayers.set(i, { type: 'independent', sound: true });
+    addToRefLanes(i); // 勾选式并入参考车道池
+    AppState.selectedLayers.add(i); // 参考+发声 → 同时进音轨车道池（允许重叠）
+    onLayerToggle(i, true);
+  } else {
+    AppState.refLayers.delete(i);
+    for (const lane of AppState.refLanes) lane.tracks = lane.tracks.filter(t => t !== i);
+    syncRefLaneStarts();
+    // 主勾选若已取消（参考+不发声期间被取消）→ 车道池不变（onLayerToggle 死区分支）
+    onLayerToggle(i, AppState.selectedLayers.has(i));
+  }
+  renderLayerList();
+  renderLaneSection();
+  renderRefLaneSection();
+  scheduleStateSave();
+}
+
+// 参考车道类型下拉（选型按参考车道）：一条参考车道的全部成员声道共用同一类型，存 lane.type。
+// 切绑定型：全部成员强制发声（refLayers type=bound、sound=true、确保在音轨车道池；未分配者并入本车道）；
+// 切独立型：成员 refLayers type=independent（sound 保持当前——绑定型恒 true，独立型可再取消发声）。
+// 边界：同一成员分属多条参考车道时类型冲突，refLayers 按「绑定优先」合并（构建侧取车道级类型，绑定语义更强）。
+function onRefLaneTypeChange(li, type) {
+  const lane = AppState.refLanes[li];
+  if (!lane || (type !== 'bound' && type !== 'independent')) return;
+  const prev = lane.type || 'independent';
+  if (type === prev) return;
+  lane.type = type;
+  const uniq = [...new Set(lane.tracks)];
+  for (const i of uniq) {
+    if (!AppState.refLayers.has(i)) continue; // 非参考成员（手工加入）：无 refLayers 记录可写
+    const cur = refSpecOf(AppState.refLayers.get(i));
+    if (type === 'bound') {
+      if (cur.type === 'bound' && cur.sound === true) continue;
+      AppState.refLayers.set(i, { type: 'bound', sound: true });
+      // 绑定型必须发声进音轨车道池；成员已在某车道（参考车道成员恒发声）则不重复加入
+      if (!AppState.lanes.some(l => l.tracks.includes(i))) onLayerToggle(i, true);
+    } else {
+      AppState.refLayers.set(i, { type: 'independent', sound: cur.sound });
+      // 其他参考车道仍绑定该成员 → 绑定优先，不随本车道降级
+      const stillBound = AppState.refLanes.some(l => l !== lane && (l.type || 'independent') === 'bound' && l.tracks.includes(i));
+      if (stillBound) AppState.refLayers.set(i, { type: 'bound', sound: true });
+    }
+  }
+  renderLayerList();
+  renderLaneSection();
+  renderRefLaneSection();
+  scheduleStateSave();
+}
+
+// 发声框勾选/取消（允许重叠设计）：切换车道池与参考车道池的成员资格
+// （粒子时序不受影响；绑定型 UI 已禁用，此处再保险拒绝）
+function onRefSoundToggle(i, soundOn) {
+  const spec = AppState.refLayers.get(i) !== undefined ? refSpecOf(AppState.refLayers.get(i)) : null;
+  if (!spec) return;
+  if (spec.type === 'bound') soundOn = true; // 绑定型强制发声
+  AppState.refLayers.set(i, { type: spec.type, sound: soundOn });
+  if (soundOn) {
+    addToRefLanes(i); // 勾选式并入参考车道池（已有则跳过）
+    onLayerToggle(i, true); // 同时进音轨车道池
+  } else {
+    // 静音参考：从两池移除（空车道保留）；主勾选与参考状态（♪ 标记）仍在
+    AppState.selectedLayers.delete(i);
+    for (const lane of AppState.lanes) {
+      lane.tracks = lane.tracks.filter(t => t !== i);
+    }
+    for (const lane of AppState.refLanes) {
+      lane.tracks = lane.tracks.filter(t => t !== i);
+    }
+    syncLaneStarts();
+    syncRefLaneStarts();
+  }
+  updateLayerCount();
+  renderLayerList();
+  renderLaneSection();
+  renderRefLaneSection();
+  scheduleStateSave();
+}
+
+/* ===== 车道冲突分析 + 简并建议 ===== */
+// 车道 tick 计数：合并 tracks 后每 tick 的音轨数（同一音轨重复分配算多个位）
+function laneTickCounts(song, tracks) {
+  const merged = new Map();
+  for (const t of tracks) {
+    const layer = song.layers[t];
+    if (!layer) continue;
+    for (const tick of layer.notes.keys()) merged.set(tick, (merged.get(tick) || 0) + 1);
+  }
+  return merged;
+}
+
+// 车道冲突分析：合并 tracks 后每 tick 的同时音符数
+function laneConflictStats(song, tracks) {
+  const merged = laneTickCounts(song, tracks);
+  let maxSimul = 0, overflowTicks = 0, discarded = 0;
+  for (const c of merged.values()) {
+    if (c > maxSimul) maxSimul = c;
+    if (c > 3) { overflowTicks++; discarded += c - 3; }
+  }
+  return { maxSimul, overflowTicks, discarded };
+}
+
+// 主导乐器：层内出现最多的乐器
+function dominantInstrument(layer) {
+  const counts = new Map();
+  for (const n of layer.notes.values()) counts.set(n.instrument, (counts.get(n.instrument) || 0) + 1);
+  let best = 0, bestN = -1;
+  for (const [inst, n] of counts) if (n > bestN) { bestN = n; best = inst; }
+  return best;
+}
+
+// 该层并入车道后是否所有 tick 仍 ≤3 位（无冲突）
+function laneCanAdd(laneTicks, layer) {
+  for (const tick of layer.notes.keys()) {
+    if ((laneTicks.get(tick) || 0) >= 3) return false;
+  }
+  return true;
+}
+
+// 简并建议：从名称重复、音符少、乐器类型三个角度（currentLanes = 当前车道分配，用于给出可并入的车道号）
+function normalizeTrackName(name) {
+  // 取第一行（换行后多为备注/复本标注）、小写、去空白、去尾部数字 → Main/Main2/Main\nMain 归一
+  return (name || '').split(/[\r\n]+/)[0].trim().toLowerCase().replace(/\d+$/, '');
+}
+function mergeSuggestions(song, pool, currentLanes = []) {
+  const items = pool.map(i => {
+    const l = song.layers[i];
+    return { i, name: (l.name || '').trim(), norm: normalizeTrackName(l.name), notes: l.notes.size, inst: dominantInstrument(l) };
+  });
+  const out = [];
+  const covered = new Set();
+  // ① 名称重复（完全同名 + 相似名，如 Main 与 Main2）：建议合并，按无冲突打包给出车道数
+  const byNorm = new Map();
+  items.forEach(it => { if (it.norm) { if (!byNorm.has(it.norm)) byNorm.set(it.norm, []); byNorm.get(it.norm).push(it); } });
+  for (const [norm, group] of byNorm) {
+    if (group.length < 2) continue;
+    group.forEach(it => covered.add(it.i));
+    const ids = group.map(it => it.i);
+    const names = [...new Set(group.map(it => it.name))];
+    const packed = packLanesNoConflict(song, ids);
+    let text;
+    if (packed.length === 1) {
+      text = `名称重复：「${names.join('」「')}」×${ids.length}（#${ids.join('/#')}）→ 建议放同一车道（无冲突）`;
+    } else {
+      const allInOne = laneConflictStats(song, ids);
+      text = `名称重复：「${names.join('」「')}」×${ids.length}（#${ids.join('/#')}）→ 建议合并为 ${packed.length} 条车道（无冲突；全放一条将丢弃 ${allInOne.discarded} 音符）`;
+    }
+    out.push({ kind: '同名', ids, text, discarded: 0 });
+  }
+  // ② 音符少（≤10）：给出可无冲突并入的当前车道号
+  const few = items.filter(it => it.notes <= 10);
+  if (few.length > 0) {
+    const parts = few.map(it => {
+      const fits = [];
+      currentLanes.forEach((lane, li) => {
+        if (laneConflictStats(song, [...lane.tracks, it.i]).discarded === 0) fits.push(li + 1);
+      });
+      return fits.length > 0
+        ? `#${it.i}（${it.notes} 音符）可并入车道 ${fits.join('/')}`
+        : `#${it.i}（${it.notes} 音符）可与其他音轨组队`;
+    });
+    out.push({ kind: '音符少', ids: few.map(it => it.i), text: `音符少：${parts.join('；')}`, discarded: 0 });
+  }
+  // ③ 同乐器（未被同名建议涵盖的成员 ≥2 条）
+  const byInst = new Map();
+  items.forEach(it => { if (!byInst.has(it.inst)) byInst.set(it.inst, []); byInst.get(it.inst).push(it.i); });
+  for (const [inst, ids] of byInst) {
+    if (ids.length < 2) continue;
+    const fresh = ids.filter(i => !covered.has(i));
+    if (fresh.length < 2) continue;
+    const packed = packLanesNoConflict(song, fresh);
+    out.push({
+      kind: '乐器', ids: fresh,
+      text: `同乐器 ${INSTRUMENT_NAMES_CN[inst] ?? `#${inst}`}：#${fresh.join('/#')} → 建议合并为 ${packed.length} 条车道（无冲突）`,
+      discarded: 0,
+    });
+  }
+  return out;
+}
+
+// 贪心无冲突打包：**名称重复组先**（用户要求：优先保名称重复聚集，再做常规简并）——
+// 同名归一组（normalizeTrackName：Main 与 Main2 归组），按组大小降序整体前置、组内音符升序；
+// 唯一命名音轨随后（常见乐器先 → 音符少先 → 下标升序）；
+// 放置时优先放入「已含同名成员」的无冲突车道（保证同名成员在容量允许下绝不拆散到多余车道）。
+function packLanesNoConflict(song, pool) {
+  const items = pool.map(i => {
+    const l = song.layers[i];
+    return { i, name: (l.name || '').trim(), norm: normalizeTrackName(l.name), notes: l.notes.size, inst: dominantInstrument(l) };
+  });
+  const byNorm = new Map();
+  items.forEach(it => { if (it.norm) { if (!byNorm.has(it.norm)) byNorm.set(it.norm, []); byNorm.get(it.norm).push(it); } });
+  const groups = [...byNorm.values()].filter(g => g.length >= 2)
+    .sort((a, b) => b.length - a.length || a[0].name.localeCompare(b[0].name));
+  const grouped = new Set();
+  const ordered = [];
+  for (const g of groups) {
+    g.slice().sort((a, b) => a.notes - b.notes || a.i - b.i).forEach(it => { ordered.push(it); grouped.add(it.i); });
+  }
+  const instCount = new Map();
+  items.forEach(it => instCount.set(it.inst, (instCount.get(it.inst) || 0) + 1));
+  items.filter(it => !grouped.has(it.i))
+    .sort((a, b) => {
+      const ia = instCount.get(a.inst), ib = instCount.get(b.inst);
+      if (ia !== ib) return ib - ia;                  // 常见乐器先
+      return a.notes - b.notes || a.i - b.i;          // 音符少先
+    })
+    .forEach(it => ordered.push(it));
+  const lanes = []; // { tracks: [], ticks: Map<tick, count>, norms: Set }
+  for (const it of ordered) {
+    const layer = song.layers[it.i];
+    let target = null;
+    if (it.norm) {                                     // 同名成员先聚到已有同类车道
+      for (const lane of lanes) {
+        if (lane.norms.has(it.norm) && laneCanAdd(lane.ticks, layer)) { target = lane; break; }
+      }
+    }
+    if (!target) {                                     // 其次第一条无冲突车道（常规简并）
+      for (const lane of lanes) {
+        if (laneCanAdd(lane.ticks, layer)) { target = lane; break; }
+      }
+    }
+    if (!target) { target = { tracks: [], ticks: new Map(), norms: new Set() }; lanes.push(target); }
+    target.tracks.push(it.i);
+    if (it.norm) target.norms.add(it.norm);
+    for (const tick of layer.notes.keys()) target.ticks.set(tick, (target.ticks.get(tick) || 0) + 1);
+  }
+  return lanes.map(l => l.tracks);
+}
+
+// 未分配音轨：池中未被任何车道引用的音轨下标
+function unassignedTracks(song, pool, lanes) {
+  const assigned = new Set();
+  for (const lane of lanes) for (const t of lane.tracks) assigned.add(t);
+  return pool.filter(i => !assigned.has(i));
+}
+
+// 复制车道：插入原车道之后（两条独立链播放相同音轨 = 齐响加倍）
+function duplicateLane(li) {
+  const src = AppState.lanes[li];
+  if (!src) return false;
+  // 新车道起点不用源起点（会重叠报错）：空位启发——源 Z 右侧每 +3 扫描一格，
+  // 与既有起点重叠则继续，同排扫 40 次（120 格）放不下则抬升一行（dy+1 从 Z=0 重扫）
+  const taken = new Set(AppState.lanes.map(l => (l.start ? l.start.dz + ',' + l.start.dy : '')));
+  if (AppState.lane0) taken.add(AppState.lane0.start.dz + ',' + AppState.lane0.start.dy);
+  for (const l of AppState.refLanes) if (l.start) taken.add(l.start.dz + ',' + l.start.dy);
+  const free = (dz, dy) => !taken.has(dz + ',' + dy);
+  let start = null;
+  for (let row = 0; row < 2 && !start; row++) {
+    const baseDy = row === 0 ? (src.start ? src.start.dy : 0) : (src.start ? src.start.dy : 0) + 1;
+    for (let n = 0; n < 40 && !start; n++) {
+      const dz = row === 0 ? (src.start ? src.start.dz : 0) + n * 3 : n * 3;
+      if (free(dz, baseDy)) start = { dz, dy: baseDy };
+    }
+  }
+  AppState.lanes.splice(li + 1, 0, { tracks: [...src.tracks], start: start || { dz: 0, dy: 1 } });
+  syncLaneStarts();
+  renderLaneSection();
+  return true;
+}
+
+// 删除车道：起点随 lane.start 一起被 splice 带走，其余车道起点不受影响
+function deleteLane(li) {
+  if (!AppState.lanes[li]) return false;
+  AppState.lanes.splice(li, 1);
+  syncLaneStarts();
+  renderLaneSection();
+  return true;
+}
+
+// 自动并入未分配音轨：逐条尝试无冲突并入现有车道，放不下则新建车道；返回并入条数
+function assignUnassigned(song) {
+  const pool = lanePoolMembers(song);
+  const rest = unassignedTracks(song, pool, AppState.lanes);
+  if (rest.length === 0) return 0;
+  const lanes = AppState.lanes.map(lane => ({
+    tracks: [...lane.tracks],
+    ticks: laneTickCounts(song, lane.tracks),
+  }));
+  for (const i of rest) {
+    const layer = song.layers[i];
+    let target = null;
+    for (const lane of lanes) {
+      if (laneCanAdd(lane.ticks, layer)) { target = lane; break; }
+    }
+    if (!target) { target = { tracks: [], ticks: new Map() }; lanes.push(target); }
+    target.tracks.push(i);
+    for (const tick of layer.notes.keys()) target.ticks.set(tick, (target.ticks.get(tick) || 0) + 1);
+  }
+  AppState.lanes = lanes.map(l => ({ tracks: l.tracks }));
+  syncLaneStarts();
+  renderLaneSection();
+  return rest.length;
+}
+
+// 简并建议面板：未分配检查 + 建议行 + 当前冲突汇总 + 无冲突打包方案
+function renderMergeAdvice() {
+  const song = AppState.song;
+  const pool = lanePoolMembers(song);
+  const box = $('mergeAdvice');
+  const assignBtn = $('assignRestBtn');
+  if (!song || pool.length === 0) { box.innerHTML = ''; $('applyPackBtn').hidden = true; assignBtn.hidden = true; return; }
+  const lines = [];
+  const unassigned = unassignedTracks(song, pool, AppState.lanes);
+  if (unassigned.length > 0) {
+    lines.push(`<div class="advice-line advice-warn">⚠ 未分配的音轨：<b>#${unassigned.join('/#')}</b>（${unassigned.length} 条）—— 不会出现在 schematic 中，可用「＋ 自动并入未分配音轨」按钮处理</div>`);
+  }
+  assignBtn.hidden = unassigned.length === 0;
+  for (const s of mergeSuggestions(song, pool, AppState.lanes)) {
+    lines.push(`<div class="advice-line${s.discarded > 0 ? ' advice-warn' : ''}">💡 ${s.text}</div>`);
+  }
+  let curDiscard = 0;
+  for (const lane of AppState.lanes) curDiscard += laneConflictStats(song, lane.tracks).discarded;
+  const packed = packLanesNoConflict(song, pool);
+  const packSummary = packed.map((tr, i) => `车道 ${i + 1}：#${tr.join('/#')}`).join('；');
+  lines.push(`<div class="advice-line">🧩 当前 ${AppState.lanes.length} 条车道，预计丢弃 <b>${curDiscard}</b> 音符`
+    + `（${curDiscard > 0 ? '⚠ 有冲突，请按上方建议调整' : '无冲突'}）。无冲突打包方案：<b>${packed.length} 条车道</b>——${packSummary}</div>`);
+  box.innerHTML = lines.join('');
+  $('applyPackBtn').hidden = false;
+}
+
+// 车道起点与车道数对齐（保留已有位置，新增的按单行接续）
+// 默认轨道 0 占用 Z=0 附近时，音轨车道默认起点整体右移 +3（i*3+3），避免与轨道 0 重叠
+// （轨道 0 恒存在；若被拖到别处，音轨车道默认位置仍保持 +3 的独立排布，不跟随其位置）
+function syncLaneStarts() {
+  // 起点存在车道对象上（lane.start），此函数只补缺：缺 start 的车道按默认单行补位。
+  // （旧版用平行数组按下标继承旧起点，删除/复制车道时后续车道会套用到别车道的起点，已废弃。）
+  AppState.lanes.forEach((lane, i) => {
+    const s = lane.start;
+    if (!s || !Number.isFinite(s.dz) || !Number.isFinite(s.dy)) lane.start = { dz: i * 3 + 3, dy: 0 };
+  });
+}
+
+// 参考车道池成员：勾选了「节奏参考」的声道（与车道池允许重叠；sound=false 的静音参考无盒、不占位）
+function refLanePoolMembers(song) {
+  const out = [];
+  song.layers.forEach((_, i) => {
+    if (AppState.refLayers.has(i) && refSpecOf(AppState.refLayers.get(i)).sound) out.push(i);
+  });
+  return out.sort((a, b) => a - b);
+}
+
+// 参考车道成员增量：勾选式并入（onRefToggle 勾选时调用）——
+// 追加到第一条无冲突参考车道（且未含该声道），否则新建一条；取消由 onRefToggle 直接从各条移除。
+// 类型选型随车道：并入绑定型车道 → 成员 refLayers 类型跟随车道（绑定强制发声）；
+// 车道池的入位由调用方随后的 onLayerToggle(i, true) 完成（不在此处，避免重复入位）。
+function addToRefLanes(i) {
+  const song = AppState.song;
+  const layer = song.layers[i];
+  let placed = false;
+  if (layer) {
+    for (const lane of AppState.refLanes) {
+      if (lane.tracks.includes(i)) continue;
+      if (laneCanAdd(laneTickCounts(song, lane.tracks), layer)) {
+        lane.tracks.push(i);
+        lane.tracks.sort((a, b) => a - b);
+        placed = true;
+        break;
+      }
+    }
+  }
+  if (!placed) AppState.refLanes.push({ tracks: [i], type: 'independent' });
+  const host = AppState.refLanes.find(l => l.tracks.includes(i));
+  if (host && (host.type || 'independent') === 'bound' && AppState.refLayers.has(i)) {
+    AppState.refLayers.set(i, { type: 'bound', sound: true });
+  }
+  syncRefLaneStarts();
+}
+
+// 拖拽并入指定参考车道（类车道池拖放：允许重复拖入同一音轨 = 占多个音符盒位齐响）：
+// 拖入即登记为节奏参考声道（未勾选参考的音轨默认独立型 + 发声勾）；
+// 强制发声（参考车道成员无盒则绑定型无锚、独立型无盒可齐响——与勾选式并入语义一致）；
+// 从其他参考车道移入本车道（同一成员保留多份 = 重复拖入）；同步进音轨车道池（允许重叠）；
+// 并入绑定型车道 → 成员 refLayers 类型跟随车道。与勾选式并入（addToRefLanes 自动选车道）并存。
+function dropToRefLane(t, li) {
+  const lane = AppState.refLanes[li];
+  const song = AppState.song;
+  if (!lane || !Number.isInteger(t) || !song.layers[t]) return;
+  const isRef = AppState.refLayers.has(t);
+  if (!isRef) AppState.refLayers.set(t, { type: 'independent', sound: true });
+  const cur = refSpecOf(AppState.refLayers.get(t));
+  if (cur.sound !== true) AppState.refLayers.set(t, { type: cur.type, sound: true });
+  // 参考车道内移：从其他参考车道移除该音轨（保留本车道内已有的重复份 = 齐响）
+  for (const l of AppState.refLanes) if (l !== lane) l.tracks = l.tracks.filter(x => x !== t);
+  lane.tracks.push(t);
+  lane.tracks.sort((a, b) => a - b);
+  if ((lane.type || 'independent') === 'bound') AppState.refLayers.set(t, { type: 'bound', sound: true });
+  AppState.selectedLayers.add(t);
+  if (!AppState.lanes.some(l => l.tracks.includes(t))) {   // 已在某音轨车道则不重复入位（重复份只留在参考车道内）
+    const layer = song.layers[t];
+    let placed = false;
+    for (const l of AppState.lanes) {
+      if (l.tracks.includes(t)) continue;
+      if (laneCanAdd(laneTickCounts(song, l.tracks), layer)) {
+        l.tracks.push(t);
+        l.tracks.sort((a, b) => a - b);
+        placed = true;
+        break;
+      }
+    }
+    if (!placed) AppState.lanes.push({ tracks: [t] });
+  }
+  syncLaneStarts();
+  syncRefLaneStarts();
+  updateLayerCount();
+  renderLayerList();
+  renderLaneSection();
+  renderRefLaneSection();
+  scheduleStateSave();
+}
+
+// 参考车道起点补缺：缺 start 的参考车道找空位——从 dz=i*3+6 起每 +3 扫描（行 dy=0，放不下抬 dy+1），
+// 避开全部既有起点（音轨车道/参考车道/轨道 0），避免默认布局相互重叠（重叠会被布局校验阻断生成）
+function syncRefLaneStarts() {
+  const taken = new Set();
+  for (const l of AppState.lanes) if (l.start && Number.isFinite(l.start.dz) && Number.isFinite(l.start.dy)) taken.add(l.start.dz + ',' + l.start.dy);
+  for (const l of AppState.refLanes) if (l.start && Number.isFinite(l.start.dz) && Number.isFinite(l.start.dy)) taken.add(l.start.dz + ',' + l.start.dy);
+  if (AppState.lane0 && Number.isFinite(AppState.lane0.start.dz)) taken.add(AppState.lane0.start.dz + ',' + AppState.lane0.start.dy);
+  AppState.refLanes.forEach((lane, i) => {
+    const s = lane.start;
+    if (s && Number.isFinite(s.dz) && Number.isFinite(s.dy)) return;
+    let start = null;
+    for (let row = 0; row < 2 && !start; row++) {
+      for (let n = 0; n < 40 && !start; n++) {
+        const dz = i * 3 + 6 + n * 3;
+        if (!taken.has(dz + ',' + row)) { start = { dz, dy: row }; taken.add(dz + ',' + row); }
+      }
+    }
+    lane.start = start || { dz: i * 3 + 6, dy: 1 };
+  });
+}
+
+// 复制参考车道：插入原车道之后（两条独立链播放相同参考音轨 = 粒子/齐响加倍）
+function duplicateRefLane(li) {
+  const src = AppState.refLanes[li];
+  if (!src) return false;
+  const taken = new Set(AppState.refLanes.map(l => (l.start ? l.start.dz + ',' + l.start.dy : '')));
+  for (const l of AppState.lanes) if (l.start) taken.add(l.start.dz + ',' + l.start.dy);
+  if (AppState.lane0) taken.add(AppState.lane0.start.dz + ',' + AppState.lane0.start.dy);
+  const free = (dz, dy) => !taken.has(dz + ',' + dy);
+  let start = null;
+  for (let row = 0; row < 2 && !start; row++) {
+    const baseDy = row === 0 ? (src.start ? src.start.dy : 0) : (src.start ? src.start.dy : 0) + 1;
+    for (let n = 0; n < 40 && !start; n++) {
+      const dz = row === 0 ? (src.start ? src.start.dz : 0) + n * 3 : n * 3;
+      if (free(dz, baseDy)) start = { dz, dy: baseDy };
+    }
+  }
+  AppState.refLanes.splice(li + 1, 0, { tracks: [...src.tracks], type: src.type || 'independent', start: start || { dz: 0, dy: 1 } });
+  syncRefLaneStarts();
+  renderRefLaneSection();
+  return true;
+}
+
+// 删除参考车道：起点随对象一起被 splice 带走，其余参考车道起点不受影响
+function deleteRefLane(li) {
+  if (!AppState.refLanes[li]) return false;
+  AppState.refLanes.splice(li, 1);
+  syncRefLaneStarts();
+  renderRefLaneSection();
+  return true;
+}
+
+// 参考车道池卡片渲染（类车道池：名称 + 冲突徽章 + 复制/删除 + 成员标签✕ + 拖放区；
+// 成员走「勾选」或「从左侧音轨池拖入」两种方式，见 dropToRefLane）
+function renderRefLaneSection() {
+  const song = AppState.song;
+  const list = $('refLaneList');
+  list.innerHTML = '';
+  const pool = refLanePoolMembers(song);
+  if (pool.length === 0 && AppState.refLanes.length === 0) {
+    const emptyHint = document.createElement('div');
+    emptyHint.className = 'hint';
+    emptyHint.textContent = '尚无参考车道：在左侧音轨池勾选「节奏参考」即自动创建/并入，或先新增再拖入音轨';
+    list.appendChild(emptyHint);
+  } else if (pool.length > 0) {
+    // 未分配检查：参考成员未被任何参考车道引用（仅在卡片内移除标签后出现）→ 无盒可锚定
+    const unassigned = unassignedTracks(song, pool, AppState.refLanes);
+    if (unassigned.length > 0) {
+      const warn = document.createElement('div');
+      warn.className = 'hint';
+      warn.style.color = '#e0a33c';
+      warn.textContent = `⚠ 参考成员未分配参考车道：#${unassigned.join('/#')}（无音符盒；绑定型将无粒子可锚定）`;
+      list.appendChild(warn);
+    }
+  }
+  AppState.refLanes.forEach((lane, li) => {
+    const row = document.createElement('div');
+    row.className = 'lane-row ref-lane-row';
+    const head = document.createElement('div');
+    head.className = 'lane-head';
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'lane-name';
+    nameSpan.textContent = `参考车道 ${li + 1}`;
+    nameSpan.title = '独立物理链：与车道池允许重叠（同一声道两套盒都发声）；绑定型粒子只锚定本池内的盒';
+    head.appendChild(nameSpan);
+    const dupBtn = document.createElement('button');
+    dupBtn.className = 'lane-dup ref-lane-dup';
+    dupBtn.textContent = '⧉ 复制';
+    dupBtn.dataset.li = String(li);
+    dupBtn.title = '复制本参考车道（音轨相同，生成第二条独立链）';
+    head.appendChild(dupBtn);
+    const delBtn = document.createElement('button');
+    delBtn.className = 'lane-del ref-lane-del';
+    delBtn.textContent = '✕ 删除';
+    delBtn.dataset.li = String(li);
+    head.appendChild(delBtn);
+    const cst = laneConflictStats(song, lane.tracks);
+    const badge = document.createElement('span');
+    badge.className = cst.discarded > 0 ? 'lane-conflict-warn' : 'lane-conflict-ok';
+    badge.textContent = cst.discarded > 0
+      ? `⚠ 预计丢弃 ${cst.discarded} 音符（${cst.overflowTicks} 个 tick 超 3 位）`
+      : `✓ 无冲突（最大同刻 ${cst.maxSimul}）`;
+    head.appendChild(badge);
+    const laneType = lane.type || 'independent';
+    const typeSel = document.createElement('select');
+    typeSel.className = 'ref-lane-type';
+    typeSel.dataset.li = String(li);
+    typeSel.title = '本参考车道全部成员声道共用的参考类型（选型按车道）：绑定型 = 粒子以本车道该声道音符盒为中心（成员必须发声）；独立型 = 粒子锚定轨道 0，Z 按音高偏移（可静音参考）';
+    typeSel.innerHTML = `<option value="independent" ${laneType === 'independent' ? 'selected' : ''}>独立型</option>
+      <option value="bound" ${laneType === 'bound' ? 'selected' : ''}>绑定型</option>`;
+    typeSel.addEventListener('change', (e) => onRefLaneTypeChange(li, e.target.value));
+    head.appendChild(typeSel);
+    row.appendChild(head);
+    const tags = document.createElement('div');
+    tags.className = 'lane-tags';
+    lane.tracks.forEach((t, ti) => {
+      const tag = document.createElement('span');
+      tag.className = 'lane-tag ref-lane-tag';
+      tag.dataset.li = String(li);
+      tag.dataset.ti = String(ti);
+      tag.title = '点击移除本次分配（不影响「节奏参考」勾选状态；如需彻底退出参考，取消音轨池的参考勾选）';
+      tag.textContent = `#${t} ${song.layers[t] && song.layers[t].name ? song.layers[t].name : '(未命名)'} ✕`;
+      tags.appendChild(tag);
+    });
+    row.appendChild(tags);
+    const hint = document.createElement('div');
+    hint.className = 'lane-drop ref-lane-drop';
+    hint.dataset.li = String(li);
+    hint.textContent = '把左侧音轨池的音轨拖到这里即并入本车道（已勾选参考的音轨可重复拖入，占多个盒位齐响）';
+    row.appendChild(hint);
+    list.appendChild(row);
+  });
+  $('refGroupCount').textContent = `共 ${AppState.refLanes.length} 条参考车道`;
+  renderLayoutEditor();
+}
+
+function renderLaneSection() {
+  const song = AppState.song;
+  const pool = lanePoolMembers(song);
+  const list = $('groupList');
+  list.innerHTML = '';
+  // 默认轨道 0（固定卡片：不可删除/复制，无音轨；起点可拖拽，布局编辑器中显示为「0」号标记）
+  const lane0Row = document.createElement('div');
+  lane0Row.className = 'lane-row';
+  const lane0Head = document.createElement('div');
+  lane0Head.className = 'lane-head';
+  const lane0Name = document.createElement('span');
+  lane0Name.className = 'lane-name';
+  lane0Name.textContent = '轨道 0（默认）';
+  lane0Name.title = '默认轨道：顶层每 32 格 1 个赭黄蛙灯的雪块导轨；承载节奏参考声道的粒子命令方块（触发链，统一在轨道 0 主位底座）；起点可在布局编辑器中拖拽';
+  lane0Head.appendChild(lane0Name);
+  const lane0Badge = document.createElement('span');
+  lane0Badge.className = 'lane-conflict-ok';
+  lane0Badge.textContent = '粒子触发链 · 无音轨';
+  lane0Head.appendChild(lane0Badge);
+  lane0Row.appendChild(lane0Head);
+  const lane0Hint = document.createElement('div');
+  lane0Hint.className = 'lane-drop';
+  lane0Hint.style.cursor = 'default';
+  lane0Hint.textContent = '不可分配音轨；在下方布局编辑器中可拖拽起点';
+  lane0Row.appendChild(lane0Hint);
+  list.appendChild(lane0Row);
+  if (pool.length === 0) {
+    const emptyHint = document.createElement('div');
+    emptyHint.className = 'hint';
+    emptyHint.textContent = '音轨池为空，可仅生成默认轨道 0';
+    list.appendChild(emptyHint);
+  }
+  AppState.lanes.forEach((lane, li) => {
+    const row = document.createElement('div');
+    row.className = 'lane-row';
+    // 车道头部：编号 + 音轨标签 + 删除
+    const head = document.createElement('div');
+    head.className = 'lane-head';
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'lane-name';
+    nameSpan.textContent = `车道 ${li + 1}`;
+    head.appendChild(nameSpan);
+    const delBtn = document.createElement('button');
+    delBtn.className = 'lane-del';
+    delBtn.textContent = '✕ 删除';
+    delBtn.dataset.li = String(li);
+    head.appendChild(delBtn);
+    const dupBtn = document.createElement('button');
+    dupBtn.className = 'lane-dup';
+    dupBtn.textContent = '⧉ 复制';
+    dupBtn.dataset.li = String(li);
+    dupBtn.title = '复制本车道（音轨相同，生成第二条独立链 = 齐响加倍）';
+    head.appendChild(dupBtn);
+    // 冲突徽章：本车道合并后的同刻音符分析
+    const cst = laneConflictStats(song, lane.tracks);
+    const badge = document.createElement('span');
+    badge.className = cst.discarded > 0 ? 'lane-conflict-warn' : 'lane-conflict-ok';
+    badge.textContent = cst.discarded > 0
+      ? `⚠ 预计丢弃 ${cst.discarded} 音符（${cst.overflowTicks} 个 tick 超 3 位）`
+      : `✓ 无冲突（最大同刻 ${cst.maxSimul}）`;
+    head.appendChild(badge);
+    row.appendChild(head);
+    // 已分配音轨标签（点击 ✕ 移除一次；同一音轨可出现多次 = 占多个音符盒位齐响）
+    const tags = document.createElement('div');
+    tags.className = 'lane-tags';
+    lane.tracks.forEach((t, ti) => {
+      const tag = document.createElement('span');
+      tag.className = 'lane-tag';
+      tag.dataset.li = String(li);
+      tag.dataset.ti = String(ti);
+      tag.title = '点击移除本次分配';
+      tag.textContent = `#${t} ${song.layers[t] && song.layers[t].name ? song.layers[t].name : '(未命名)'} ✕`;
+      tags.appendChild(tag);
+    });
+    row.appendChild(tags);
+    // 放置区：从音轨池拖入即分配
+    const dz = document.createElement('div');
+    dz.className = 'lane-drop';
+    dz.dataset.li = String(li);
+    dz.textContent = '⇩ 把音轨拖到这里分配';
+    row.appendChild(dz);
+    list.appendChild(row);
+  });
+  $('groupCount').textContent = `共 ${AppState.lanes.length} 条车道`;
+  renderMergeAdvice();
+  renderLayoutEditor();
+}
+
+function renderSettings() {
+  const song = AppState.song;
+  // 目标 Litematica 版本下拉
+  const tvSel = $('targetVersion');
+  if (tvSel) {
+    if (tvSel.options.length === 0) {
+      TARGET_VERSIONS.forEach(t => {
+        const opt = document.createElement('option');
+        opt.value = t.mc;
+        opt.textContent = `MC ${t.mc}${t.mc === DEFAULT_TARGET_MC ? '（默认）' : ''}`;
+        opt.title = `Litematica 分支 ${t.branch} · MinecraftDataVersion ${t.dataVersion}`;
+        tvSel.appendChild(opt);
+      });
+    }
+    tvSel.value = AppState.settings.targetVersion;
+    const tvEntry = targetEntry(AppState.settings.targetVersion);
+    $('targetVersionHint').textContent =
+      `DataVersion ${tvEntry.dataVersion} · Litematica 分支 ${tvEntry.branch}`;
+  }
+  // 独立型参考音高 Z 步长
+  const stepIn = $('sfxPitchStep');
+  if (stepIn && document.activeElement !== stepIn) {
+    stepIn.value = String(AppState.settings.sfxPitchStep);
+  }
+  // 自定义乐器映射
+  const customRow = $('customInstRow');
+  const selects = $('customInstSelects');
+  selects.innerHTML = '';
+  if (song.customInstruments.length > 0) {
+    customRow.hidden = false;
+    song.customInstruments.forEach((ci, idx) => {
+      // 乐器 ID = 16 + idx（NBS 自定义乐器 ID 从 defaultInstruments 开始）
+      const instId = song.defaultInstruments + idx;
+      const sel = document.createElement('select');
+      sel.className = 'custom-inst-select';
+      sel.dataset.instId = String(instId);
+      INSTRUMENT_NAMES.forEach((name, id) => {
+        const opt = document.createElement('option');
+        opt.value = String(id);
+        opt.textContent = `${INSTRUMENT_NAMES_CN[id]}（${INSTRUMENT_BLOCKS[id].replace('minecraft:', '')}）`;
+        if (id === 0) opt.selected = true;
+        sel.appendChild(opt);
+      });
+      const span = document.createElement('span');
+      span.className = 'hint';
+      span.textContent = `  #${instId} ${ci.name}: `;
+      selects.appendChild(span);
+      selects.appendChild(sel);
+    });
+  } else {
+    customRow.hidden = true;
+  }
+}
+
+/* ===== 10 布局编辑器（Y-Z 截面，拖拽链起点） ===== */
+class LayoutEditor {
+  constructor(canvas) {
+    this.canvas = canvas;
+    this.ctx = canvas.getContext('2d');
+    this.zoom = 22;
+    this.panX = 50;
+    this.panY = 210;
+    this.selected = -1;
+    this.dragIndex = -1;
+    this.panning = false;
+    this.lastPointer = null;
+    this.hoverIndex = -1;
+    this.fitted = false;
+    this.bindEvents();
+  }
+  groups() { return AppState.lanes || []; }
+  // 布局标记 = [默认轨道 0, 车道 1, …, 参考车道 R1, …]（轨道 0 恒存在，下标 0 固定；参考车道排在音轨车道之后）
+  starts() {
+    const s0 = AppState.lane0 ? AppState.lane0.start : { dz: 0, dy: 0 };
+    return [s0, ...AppState.lanes.map(l => l.start), ...(AppState.refLanes || []).map(l => l.start)];
+  }
+  refStartsCount() { return (AppState.refLanes || []).length; }
+  // 布局下标 → 所属数组下标（0=轨道 0；1..N=车道池；其后为参考车道池）
+  idxKind(i) {
+    if (i === 0) return { kind: 'lane0' };
+    if (i - 1 < AppState.lanes.length) return { kind: 'lane', j: i - 1 };
+    const j = i - 1 - AppState.lanes.length;
+    if (j < (AppState.refLanes || []).length) return { kind: 'ref', j };
+    return {};
+  }
+  w2s(z, y) {
+    return { x: this.panX + z * this.zoom, y: this.panY - y * this.zoom };
+  }
+  s2w(x, y) {
+    return { z: (x - this.panX) / this.zoom, y: (this.panY - y) / this.zoom };
+  }
+  groupColor(gi) {
+    const g = this.groups()[gi];
+    if (!g || g.tracks.length === 0) return '#8b94a3';
+    const inst = AppState.song.layers[g.tracks[0]].notes.size > 0
+      ? AppState.song.layers[g.tracks[0]].notes.values().next().value.instrument : 0;
+    return inst < 16 ? NOTE_BLOCK_COLORS[inst] : '#8b94a3';
+  }
+  bindEvents() {
+    const cv = this.canvas;
+    // 布局下标 → 所属数组（布局 0 = 默认轨道 0，不可拖拽；其余车道/参考车道均可拖）
+    cv.addEventListener('pointerdown', (e) => {
+      cv.setPointerCapture(e.pointerId);
+      this.lastPointer = { x: e.offsetX, y: e.offsetY };
+      const hits = this.hitTest(e.offsetX, e.offsetY);
+      if (hits.length > 0) {
+        this.selected = hits[hits.length - 1];
+        this.dragIndex = this.selected; // 拖拽在 pointermove 里按 dragIndex>=1 过滤（轨道 0 只选中不拖）
+        cv.classList.add('dragging');
+      } else {
+        this.selected = -1;
+        this.panning = true;
+      }
+      this.draw(); this.updateInfo();
+    });
+    cv.addEventListener('pointermove', (e) => {
+      if (!this.lastPointer) return;
+      const dx = e.offsetX - this.lastPointer.x, dy = e.offsetY - this.lastPointer.y;
+      this.lastPointer = { x: e.offsetX, y: e.offsetY };
+      const sel = this.idxKind(this.dragIndex);
+      if (this.dragIndex >= 1 && sel.kind === 'lane' && AppState.lanes[sel.j]) {
+        const w = this.s2w(e.offsetX, e.offsetY);
+        const z = Math.round(w.z);   // 允许负坐标（网格生成时整体平移保证非负）
+        const y = Math.round(w.y);
+        AppState.lanes[sel.j].start = { dz: z, dy: y };
+        this.draw(); this.updateInfo();
+        scheduleStateSave();
+      } else if (this.dragIndex >= 1 && sel.kind === 'ref' && AppState.refLanes[sel.j]) {
+        const w = this.s2w(e.offsetX, e.offsetY);
+        const z = Math.round(w.z);
+        const y = Math.round(w.y);
+        AppState.refLanes[sel.j].start = { dz: z, dy: y };
+        this.draw(); this.updateInfo();
+        scheduleStateSave();
+      } else if (this.panning) {
+        this.panX += dx; this.panY += dy;
+        this.draw();
+      } else {
+        this.hoverIndex = this.hitTest(e.offsetX, e.offsetY)[0] ?? -1;
+        this.draw();
+      }
+    });
+    const end = (e) => {
+      this.dragIndex = -1; this.panning = false;
+      cv.classList.remove('dragging');
+      this.lastPointer = null;
+      this.draw(); this.updateInfo();
+    };
+    cv.addEventListener('pointerup', end);
+    cv.addEventListener('pointercancel', end);
+    cv.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+      const w = this.s2w(e.offsetX, e.offsetY);
+      this.zoom = Math.min(60, Math.max(6, this.zoom * factor));
+      // 保持鼠标下的世界点不动
+      this.panX = e.offsetX - w.z * this.zoom;
+      this.panY = e.offsetY + w.y * this.zoom;
+      this.draw();
+    }, { passive: false });
+    window.addEventListener('keydown', (e) => {
+      if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA')) return;
+      if (this.selected < 0) return;
+      const sel = this.idxKind(this.selected);
+      const lane = sel.kind === 'lane0' ? AppState.lane0
+        : sel.kind === 'lane' ? AppState.lanes[sel.j]
+        : sel.kind === 'ref' ? AppState.refLanes[sel.j] : null;
+      if (!lane) return;
+      const step = e.shiftKey ? 5 : 1;
+      const s = lane.start;
+      let moved = false;
+      if (e.key === 'ArrowLeft') { s.dz -= step; moved = true; }
+      if (e.key === 'ArrowRight') { s.dz += step; moved = true; }
+      if (e.key === 'ArrowDown') { s.dy -= step; moved = true; }
+      if (e.key === 'ArrowUp') { s.dy += step; moved = true; }
+      if (moved) {
+        // 允许负坐标（网格生成时整体平移保证非负）
+        e.preventDefault();
+        this.draw(); this.updateInfo();
+        scheduleStateSave();
+      }
+    });
+  }
+  hitTest(x, y) {
+    const hits = [];
+    this.starts().forEach((s, i) => {
+      const p = this.w2s(s.dz, s.dy);
+      const half = Math.max(4, this.zoom / 2 - 2);
+      if (Math.abs(x - p.x) <= half && Math.abs(y - p.y) <= half) hits.push(i);
+    });
+    return hits;
+  }
+  validate() {
+    const warnings = [], errors = [];
+    const starts = this.starts();
+    const name = (i) => {
+      const k = this.idxKind(i);
+      if (k.kind === 'lane0') return '轨道 0';
+      if (k.kind === 'lane') return `车道 ${k.j + 1}`;
+      if (k.kind === 'ref') return `参考车道 ${k.j + 1}`;
+      return `#${i}`;
+    };
+    for (let i = 0; i < starts.length; i++) {
+      for (let j = i + 1; j < starts.length; j++) {
+        if (starts[i].dz === starts[j].dz && starts[i].dy === starts[j].dy) {
+          errors.push(`${name(i)} 与 ${name(j)} 的起点重叠`);
+        } else if (Math.abs(starts[i].dz - starts[j].dz) < 3 && Math.abs(starts[i].dy - starts[j].dy) < 3) {
+          warnings.push(`${name(i)} 与 ${name(j)} 的起点过近（Z 差 ${Math.abs(starts[i].dz - starts[j].dz)}、Y 差 ${Math.abs(starts[i].dy - starts[j].dy)}，可能串扰）`);
+        }
+      }
+    }
+    return { warnings, errors };
+  }
+  fitView() {
+    const starts = this.starts();
+    if (starts.length === 0) return;
+    const zs = starts.map(s => s.dz), ys = starts.map(s => s.dy);
+    const minZ = Math.min(...zs), maxZ = Math.max(...zs);
+    const minY = Math.min(...ys), maxY = Math.max(...ys);
+    const spanZ = Math.max(2, maxZ - minZ + 3), spanY = Math.max(2, maxY - minY + 3);
+    this.zoom = Math.min(40, Math.max(8,
+      Math.min((this.canvas.width - 80) / spanZ, (this.canvas.height - 80) / spanY)));
+    this.panX = 40 - minZ * this.zoom;
+    this.panY = this.canvas.height - 40 + minY * this.zoom;
+    this.fitted = true;
+  }
+  refresh() {
+    if (!this.fitted) this.fitView();
+    this.draw();
+    this.updateInfo();
+  }
+  draw() {
+    const ctx = this.ctx;
+    const W = this.canvas.width, H = this.canvas.height;
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = '#12151a';
+    ctx.fillRect(0, 0, W, H);
+    // 网格
+    const topLeft = this.s2w(0, 0), bottomRight = this.s2w(W, H);
+    // 网格线画到负坐标区（起点可拖到负 Y/Z）
+    const z0 = Math.floor(topLeft.z), z1 = Math.max(z0, Math.ceil(bottomRight.z));
+    const y0 = Math.floor(bottomRight.y), y1 = Math.max(y0, Math.ceil(topLeft.y));
+    ctx.strokeStyle = '#262b35';
+    ctx.lineWidth = 1;
+    for (let z = z0; z <= z1; z++) {
+      const p = this.w2s(z, 0);
+      ctx.beginPath(); ctx.moveTo(p.x, 0); ctx.lineTo(p.x, H); ctx.stroke();
+    }
+    for (let y = y0; y <= y1; y++) {
+      const p = this.w2s(0, y);
+      ctx.beginPath(); ctx.moveTo(0, p.y); ctx.lineTo(W, p.y); ctx.stroke();
+    }
+    // 坐标轴（Z=0 竖轴 / Y=0 横轴）：加粗 + 提亮，方便查看（用户要求）
+    ctx.strokeStyle = '#4a5568';
+    ctx.lineWidth = 2;
+    const pAxZ = this.w2s(0, 0);
+    ctx.beginPath(); ctx.moveTo(pAxZ.x, 0); ctx.lineTo(pAxZ.x, H); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, pAxZ.y); ctx.lineTo(W, pAxZ.y); ctx.stroke();
+    // 轴标签（加大加粗）
+    ctx.fillStyle = '#8a94a6';
+    ctx.font = 'bold 13px sans-serif';
+    ctx.fillText('Z →', W - 36, H - 8);
+    ctx.fillText('Y ↑', 6, 16);
+    // 校验冲突标记
+    const { warnings, errors } = this.validate();
+    const errorPairs = new Set(), warnPairs = new Set();
+    const starts = this.starts();
+    for (let i = 0; i < starts.length; i++) {
+      for (let j = i + 1; j < starts.length; j++) {
+        const a = starts[i], b = starts[j];
+        if (a.dz === b.dz && a.dy === b.dy) { errorPairs.add(i); errorPairs.add(j); }
+        else if (Math.abs(a.dz - b.dz) < 3 && Math.abs(a.dy - b.dy) < 3) { warnPairs.add(i); warnPairs.add(j); }
+      }
+    }
+    // 标记
+    starts.forEach((s, i) => {
+      const p = this.w2s(s.dz, s.dy);
+      const half = Math.max(5, this.zoom / 2 - 3);
+      const isRail0 = i === 0;
+      const k = this.idxKind(i);
+      // 颜色：轨道 0 琥珀虚线；参考车道紫色；音轨车道按主导乐器色
+      ctx.fillStyle = isRail0 ? '#d9a441' : (k.kind === 'ref' ? '#a06cd5' : this.groupColor(i - 1));
+      ctx.fillRect(p.x - half, p.y - half, half * 2, half * 2);
+      if (errorPairs.has(i)) { ctx.strokeStyle = '#e05c5c'; }
+      else if (warnPairs.has(i)) { ctx.strokeStyle = '#e0b15c'; }
+      else { ctx.strokeStyle = i === this.selected ? '#ffffff' : (isRail0 ? '#d9a441' : (k.kind === 'ref' ? '#a06cd5' : '#3a4150')); }
+      ctx.lineWidth = i === this.selected ? 2.5 : 1.5;
+      // 轨道 0 虚线；参考车道点划线（区别于音轨车道的实线描边）
+      if (isRail0) ctx.setLineDash([3, 2]);
+      else if (k.kind === 'ref') ctx.setLineDash([6, 2, 2, 2]);
+      ctx.strokeRect(p.x - half, p.y - half, half * 2, half * 2);
+      ctx.setLineDash([]);
+      ctx.fillStyle = '#0b0d10';
+      ctx.font = `bold ${Math.min(12, Math.max(8, this.zoom * 0.45))}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      // 轨道 0 = 「0」，音轨车道从 1 开始编号，参考车道以 R 前缀
+      const label = isRail0 ? '0' : (k.kind === 'ref' ? 'R' + (i - 1 - AppState.lanes.length) : String(i));
+      ctx.fillText(label, p.x, p.y);
+    });
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+  }
+  updateInfo() {
+    const { warnings, errors } = this.validate();
+    const nRef = this.refStartsCount();
+    let txt = `轨道 0 + ${this.groups().length} 条车道` + (nRef > 0 ? ` + ${nRef} 条参考车道（紫）` : '');
+    if (this.selected >= 0 && this.starts()[this.selected]) {
+      const s = this.starts()[this.selected];
+      const k = this.idxKind(this.selected);
+      const name = k.kind === 'lane0' ? '轨道 0'
+        : k.kind === 'lane' ? `车道 ${k.j + 1}`
+        : k.kind === 'ref' ? `参考车道 ${k.j + 1}` : `#${this.selected}`;
+      txt += ` ｜ 选中${name}：Z=${s.dz} Y=${s.dy}`;
+    }
+    if (errors.length) txt += ` ｜ <span style="color:#e05c5c">${errors.length} 处重叠</span>`;
+    if (warnings.length) txt += ` ｜ <span style="color:#e0b15c">${warnings.length} 处过近警告</span>`;
+    $('layoutInfo').innerHTML = txt;
+  }
+}
+
+/* ===== 11 双视角预览渲染 ===== */
+function colorForState(state) {
+  if (state.startsWith('minecraft:note_block')) {
+    const m = state.match(/instrument=([a-z_]+)/);
+    const idx = m ? INSTRUMENT_NAMES.indexOf(m[1]) : -1;
+    if (idx >= 0 && idx < 16) return NOTE_BLOCK_COLORS[idx];
+    return PREVIEW_COLORS['minecraft:note_block'];
+  }
+  const base = state.replace(/\[.*\]$/, '');
+  return PREVIEW_COLORS[base] || '#6a6f78';
+}
+
+class PreviewView {
+  constructor(canvas) {
+    this.canvas = canvas;
+    this.ctx = canvas.getContext('2d');
+    this.off = null;         // 离屏 canvas（每格 1px 投影）
+    this.offX = 0; this.offY = 0;
+    this.viewX = 0; this.viewY = 0; // 显示偏移
+    this.px = 4;             // 显示缩放 px/格
+    this.drag = null;
+    this.hoverInfo = null;
+    this.bindEvents();
+  }
+  bindEvents() {
+    const cv = this.canvas;
+    cv.style.cursor = 'grab';
+    cv.addEventListener('pointerdown', (e) => {
+      this.drag = { x: e.offsetX, y: e.offsetY, vx: this.viewX, vy: this.viewY };
+      cv.style.cursor = 'grabbing';
+    });
+    cv.addEventListener('pointermove', (e) => {
+      if (this.drag) {
+        this.viewX = this.drag.vx + (e.offsetX - this.drag.x);
+        this.viewY = this.drag.vy + (e.offsetY - this.drag.y);
+        this.redraw();
+      }
+      if (this.off) {
+        const gx = Math.floor((e.offsetX - this.viewX) / this.px);
+        const gy = Math.floor((e.offsetY - this.viewY) / this.px);
+        this.hoverInfo = this.lookup(gx, gy);
+        this.redraw();
+      }
+    });
+    cv.addEventListener('pointerup', () => { this.drag = null; cv.style.cursor = 'grab'; });
+    cv.addEventListener('pointerleave', () => { this.hoverInfo = null; this.drag = null; this.redraw(); });
+    cv.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const factor = e.deltaY < 0 ? 1.25 : 0.8;
+      const gx = (e.offsetX - this.viewX) / this.px;
+      const gy = (e.offsetY - this.viewY) / this.px;
+      this.px = Math.min(24, Math.max(1, this.px * factor));
+      this.viewX = e.offsetX - gx * this.px;
+      this.viewY = e.offsetY - gy * this.px;
+      this.redraw();
+    }, { passive: false });
+  }
+  // 投影到离屏图（每格 1px）。axis: 'top'（X-Z 俯视，取每列最高块）
+  // | 'front'（X-Y 正视，取每列最前块）| 'side'（Y-Z 侧视，从 +X 方向看，取每列最近块）
+  buildProjection(grid, palette, size, axis) {
+    const off = document.createElement('canvas');
+    let ox, oy;
+    if (axis === 'top') { ox = size.x; oy = size.z; }
+    else if (axis === 'front') { ox = size.x; oy = size.y; }
+    else { ox = size.z; oy = size.y; }
+    off.width = Math.min(ox, 16000);
+    off.height = Math.min(oy, 16000);
+    const ctx = off.getContext('2d');
+    const img = ctx.createImageData(off.width, off.height);
+    const data = img.data;
+    const sx = size.x, sy = size.y, sz = size.z;
+    if (axis === 'top') {
+      for (let x = 0; x < off.width; x++) {
+        for (let z = 0; z < off.height; z++) {
+          let color = null;
+          for (let y = sy - 1; y >= 0; y--) {
+            const id = grid.data[(y * sz + z) * sx + x];
+            if (id !== 0) { color = colorForState(palette[id]); break; }
+          }
+          const i = (z * off.width + x) * 4;
+          if (color) {
+            const [r, g, b] = hexToRgb(color);
+            data[i] = r; data[i + 1] = g; data[i + 2] = b; data[i + 3] = 255;
+          } else {
+            data[i + 3] = 0;
+          }
+        }
+      }
+    } else if (axis === 'front') {
+      for (let x = 0; x < off.width; x++) {
+        for (let y = 0; y < off.height; y++) {
+          const yy = sy - 1 - y; // 画布 Y 向下 → 世界 Y 向上
+          let color = null;
+          for (let z = 0; z < sz; z++) {
+            const id = grid.data[(yy * sz + z) * sx + x];
+            if (id !== 0) { color = colorForState(palette[id]); break; }
+          }
+          const i = (y * off.width + x) * 4;
+          if (color) {
+            const [r, g, b] = hexToRgb(color);
+            data[i] = r; data[i + 1] = g; data[i + 2] = b; data[i + 3] = 255;
+          } else {
+            data[i + 3] = 0;
+          }
+        }
+      }
+    } else {
+      // side：Y-Z 截面（Y 向上翻转，Z 向右）
+      for (let z = 0; z < off.width; z++) {
+        for (let y = 0; y < off.height; y++) {
+          const yy = sy - 1 - y; // 画布 Y 向下 → 世界 Y 向上
+          let color = null;
+          for (let x = 0; x < sx; x++) {
+            const id = grid.data[(yy * sz + z) * sx + x];
+            if (id !== 0) { color = colorForState(palette[id]); break; }
+          }
+          const i = (y * off.width + z) * 4;
+          if (color) {
+            const [r, g, b] = hexToRgb(color);
+            data[i] = r; data[i + 1] = g; data[i + 2] = b; data[i + 3] = 255;
+          } else {
+            data[i + 3] = 0;
+          }
+        }
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    return off;
+  }
+  lookup(gx, gy) {
+    return null; // 简化：不显示块名（投影后反查代价高）
+  }
+  redraw() {
+    const ctx = this.ctx;
+    const W = this.canvas.width, H = this.canvas.height;
+    ctx.fillStyle = '#12151a';
+    ctx.fillRect(0, 0, W, H);
+    if (!this.off) return;
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(this.off, this.viewX, this.viewY, this.off.width * this.px, this.off.height * this.px);
+  }
+  setResult(result) {
+    this.px = Math.max(1, Math.min(8, Math.floor(760 / Math.max(result.grid.sx, 1))));
+    this.viewX = 0; this.viewY = 0;
+    this.redraw();
+  }
+  // 清空离屏投影图（导入新文件时调用）
+  clear() {
+    this.off = null;
+    this.hoverInfo = null;
+    this.viewX = 0; this.viewY = 0;
+    this.redraw();
+  }
+}
+
+function hexToRgb(hex) {
+  if (hex.startsWith('#')) {
+    const v = parseInt(hex.slice(1), 16);
+    return [(v >> 16) & 255, (v >> 8) & 255, v & 255];
+  }
+  return [255, 255, 255];
+}
+
+let topPreview = null, frontPreview = null, sidePreview = null;
+let layoutEditor = null;
+
+function renderLayoutEditor() {
+  if (!layoutEditor) layoutEditor = new LayoutEditor($('layoutCanvas'));
+  layoutEditor.refresh();
+}
+
+function renderPreviews() {
+  const { result, palette, size } = AppState.result;
+  const grid = result.grid;
+  if (!topPreview) {
+    topPreview = new PreviewView($('topView'));
+    frontPreview = new PreviewView($('frontView'));
+    sidePreview = new PreviewView($('sideView'));
+    $('topView').width = 900; $('topView').height = 300;
+    $('frontView').width = 900; $('frontView').height = 240;
+    $('sideView').width = 900; $('sideView').height = 260;
+  }
+  // 重新创建离屏（布局可能变化）
+  topPreview.off = topPreview.buildProjection(grid, palette, size, 'top');
+  frontPreview.off = frontPreview.buildProjection(grid, palette, size, 'front');
+  sidePreview.off = sidePreview.buildProjection(grid, palette, size, 'side');
+  topPreview.setResult(result);
+  frontPreview.setResult(result);
+  sidePreview.setResult(result);
+  $('previewPanel').hidden = false;
+  // 图例
+  const used = new Set();
+  for (const s of palette) {
+    if (s.startsWith('minecraft:note_block')) {
+      const m = s.match(/instrument=([a-z_]+)/);
+      if (m) used.add(INSTRUMENT_NAMES.indexOf(m[1]));
+    }
+  }
+  $('legendRow').innerHTML = [...used].sort((a, b) => a - b).map(id =>
+    `<span><i style="background:${NOTE_BLOCK_COLORS[id]}"></i>${INSTRUMENT_NAMES_CN[id]}</span>`).join('') +
+    `<span><i style="background:${PREVIEW_COLORS['minecraft:snow_block']}"></i>雪块</span>` +
+    `<span><i style="background:${PREVIEW_COLORS['minecraft:ochre_froglight']}"></i>赭黄蛙灯（轨道 0 顶层每 32 格）</span>` +
+    `<span><i style="background:${PREVIEW_COLORS['minecraft:redstone_wire']}"></i>红石线</span>` +
+    `<span><i style="background:${PREVIEW_COLORS['minecraft:repeater']}"></i>中继器</span>`;
+}
+
+/* ===== 13 NBT 解码器与产物自检 ===== */
+// 大端 NBT 解码器（与 MC NbtIo / Litematica 读取器一致）
+class NbtReader {
+  constructor(buf) {
+    this.buf = buf; this.off = 0;
+    this.view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+  }
+  u8() { const v = this.view.getUint8(this.off); this.off += 1; return v; }
+  i16() { const v = this.view.getInt16(this.off, false); this.off += 2; return v; }
+  i32() { const v = this.view.getInt32(this.off, false); this.off += 4; return v; }
+  i64() { const v = this.view.getBigInt64(this.off, false); this.off += 8; return v; }
+  str() {
+    const len = this.i16();
+    const s = new TextDecoder('utf-8').decode(this.buf.subarray(this.off, this.off + len));
+    this.off += len;
+    return s;
+  }
+  readTag() {
+    const type = this.u8();
+    if (type === 0) return { type: 0, name: '', value: null };
+    const name = this.str();
+    return { type, name, value: this.readPayload(type) };
+  }
+  readPayload(type) {
+    switch (type) {
+      case 1: return this.u8();
+      case 2: return this.i16();
+      case 3: return this.i32();
+      case 4: return this.i64();
+      case 5: { const v = this.view.getFloat32(this.off, false); this.off += 4; return v; }
+      case 6: { const v = this.view.getFloat64(this.off, false); this.off += 8; return v; }
+      case 7: { const n = this.i32(); const a = []; for (let i = 0; i < n; i++) a.push(this.u8()); return a; }
+      case 8: return this.str();
+      case 9: {
+        const itemType = this.u8();
+        const n = this.i32();
+        const items = [];
+        for (let i = 0; i < n; i++) items.push(this.readPayload(itemType));
+        return items;
+      }
+      case 10: {
+        const entries = {};
+        while (true) {
+          const t = this.readTag();
+          if (t.type === 0) break;
+          entries[t.name] = t.value;
+        }
+        return entries;
+      }
+      case 11: { const n = this.i32(); const a = []; for (let i = 0; i < n; i++) a.push(this.i32()); return a; }
+      case 12: { const n = this.i32(); const a = []; for (let i = 0; i < n; i++) a.push(this.i64()); return a; }
+      default: throw new Error(`未知 NBT 类型 ${type}`);
+    }
+  }
+  readRoot() {
+    // NBT 根 = 具名 compound：type byte(10) + 空名字 + 条目流 + TAG_End
+    const type = this.u8();
+    if (type !== 10) throw new Error(`根 tag 类型应为 10 (Compound)，实际 ${type}`);
+    const rootName = this.str();
+    if (rootName !== '') throw new Error(`根 tag 名字应为空，实际 "${rootName}"`);
+    const entries = {};
+    while (true) {
+      const t = this.readTag();
+      if (t.type === 0) break;
+      entries[t.name] = t.value;
+    }
+    return { type: 10, name: rootName, entries };
+  }
+}
+
+// 位解包（LitematicaBitArray 语义：LSB-first、可跨 long 边界）
+function decodePacked(longs, bits, count) {
+  const mask = (1n << BigInt(bits)) - 1n;
+  const out = new Array(count);
+  for (let i = 0; i < count; i++) {
+    const start = i * bits;
+    const li = Math.floor(start / 64);
+    const shift = start % 64;
+    // BigInt64Array 元素有符号：必须 asUintN 转无符号再右移（Java 用 >>> 无符号移位）
+    const L = BigInt.asUintN(64, longs[li]);
+    let v = (L >> BigInt(shift)) & mask;
+    if (shift + bits > 64 && li + 1 < longs.length) {
+      const L2 = BigInt.asUintN(64, longs[li + 1]);
+      v = ((L >> BigInt(shift)) | (L2 << BigInt(64 - shift))) & mask;
+    }
+    out[i] = Number(v);
+  }
+  return out;
+}
+
+// 产物自检：把刚生成的 .litematic 字节（未压缩 NBT）解码回来，与内存网格逐格比对。
+// 失败返回 {ok:false, message}（不抛异常），调用方决定如何呈现。
+function verifyLitematic(nbtBytes, opts) {
+  const { grid, palette, size, totalBlocks, dataVersion, packed } = opts;
+  const check = (cond, msg) => { if (!cond) return { ok: false, message: msg }; return null; };
+  let nbt;
+  try {
+    nbt = new NbtReader(nbtBytes).readRoot();
+  } catch (e) {
+    return { ok: false, message: `自检 NBT 解码失败：${e.message}` };
+  }
+  let r;
+  r = check(nbt.entries.MinecraftDataVersion === dataVersion,
+    `自检 DataVersion=${nbt.entries.MinecraftDataVersion} ≠ ${dataVersion}`); if (r) return r;
+  r = check(nbt.entries.Version === LITEMATIC_VERSION, `自检 Version=${nbt.entries.Version} ≠ ${LITEMATIC_VERSION}`); if (r) return r;
+  r = check(nbt.entries.SubVersion === LITEMATIC_SUBVERSION, `自检 SubVersion=${nbt.entries.SubVersion} ≠ ${LITEMATIC_SUBVERSION}`); if (r) return r;
+  const meta = nbt.entries.Metadata;
+  r = check(!!meta, '自检缺 Metadata'); if (r) return r;
+  r = check(meta.TotalVolume === size.x * size.y * size.z, `自检 TotalVolume=${meta.TotalVolume} ≠ ${size.x * size.y * size.z}`); if (r) return r;
+  r = check(meta.TotalBlocks === totalBlocks, `自检 TotalBlocks=${meta.TotalBlocks} ≠ ${totalBlocks}`); if (r) return r;
+  const es = meta.EnclosingSize;
+  r = check(es && es.x === size.x && es.y === size.y && es.z === size.z,
+    '自检 EnclosingSize 与网格尺寸不一致'); if (r) return r;
+  const region = nbt.entries.Regions && nbt.entries.Regions.MusicBand;
+  r = check(!!region, '自检缺 Region MusicBand'); if (r) return r;
+  r = check(region.Size.x === size.x && region.Size.y === size.y && region.Size.z === size.z,
+    '自检 Region Size 与网格尺寸不一致'); if (r) return r;
+  // palette 逐项（Name + Properties 重组为完整 state 字符串）
+  const bp = region.BlockStatePalette;
+  r = check(Array.isArray(bp) && bp.length === palette.length,
+    `自检 palette 长度 ${bp && bp.length} ≠ ${palette.length}`); if (r) return r;
+  for (let i = 0; i < palette.length; i++) {
+    const { name, props } = parseStateString(palette[i]);
+    const item = bp[i] || {};
+    if (item.Name !== name) return { ok: false, message: `自检 palette[${i}].Name="${item.Name}" ≠ "${name}"` };
+    const got = Object.entries(props).sort(([a], [b]) => a < b ? -1 : 1).map(([k, v]) => `${k}=${v}`);
+    const want = Object.entries(item.Properties || {}).sort(([a], [b]) => a < b ? -1 : 1).map(([k, v]) => `${k}=${v}`);
+    if (got.join(',') !== want.join(',')) {
+      return { ok: false, message: `自检 palette[${i}] 属性 "${want.join(',')}" ≠ "${got.join(',')}"（${name}）` };
+    }
+  }
+  // BlockStates：long 数 + 全量逐格比对（首个不一致报坐标）
+  const longs = region.BlockStates;
+  r = check(Array.isArray(longs) && longs.length === packed.longs.length,
+    `自检 BlockStates long 数 ${longs && longs.length} ≠ ${packed.longs.length}`); if (r) return r;
+  const ids = decodePacked(longs, packed.bits, grid.data.length);
+  for (let i = 0; i < ids.length; i++) {
+    if (ids[i] !== grid.data[i]) {
+      const x = i % size.x, z = Math.floor(i / size.x) % size.z, y = Math.floor(i / (size.x * size.z));
+      return { ok: false, message: `自检方块不一致：坐标 (${x},${y},${z}) 网格 id=${grid.data[i]} 文件 id=${ids[i]}` };
+    }
+  }
+  // TileEntities / Entities：与生成侧逐项比对（位置、id、命令）
+  const wantTE = opts.tileEntities || [];
+  const gotTE = region.TileEntities || [];
+  r = check(gotTE.length === wantTE.length,
+    `自检 TileEntities 数量 ${gotTE.length} ≠ ${wantTE.length}`); if (r) return r;
+  for (let i = 0; i < wantTE.length; i++) {
+    const te = wantTE[i];
+    const got = gotTE[i] || {};
+    if (got.x !== te.x || got.y !== te.y || got.z !== te.z) {
+      return { ok: false, message: `自检 TileEntities[${i}] 位置 (${got.x},${got.y},${got.z}) ≠ (${te.x},${te.y},${te.z})` };
+    }
+    if (got.id !== te.id) return { ok: false, message: `自检 TileEntities[${i}].id="${got.id}" ≠ "${te.id}"` };
+    if (got.Command !== te.Command) return { ok: false, message: `自检 TileEntities[${i}].Command 不一致` };
+    if (got.auto !== (te.auto ? 1 : 0)) return { ok: false, message: `自检 TileEntities[${i}].auto=${got.auto} ≠ ${te.auto}` };
+    // 该格方块必须与 TE 的 state 一致（命令方块方块 ID 来自 grid）
+    const cell = ids[got.y * size.x * size.z + got.z * size.x + got.x];
+    if (cell === 0 || palette[cell] !== te.state) {
+      return { ok: false, message: `自检 TileEntities[${i}] 所在格方块 "${cell === 0 ? 'air' : palette[cell]}" ≠ "${te.state}"` };
+    }
+  }
+  const wantEnt = opts.entities || [];
+  const gotEnt = region.Entities || [];
+  r = check(gotEnt.length === wantEnt.length,
+    `自检 Entities 数量 ${gotEnt.length} ≠ ${wantEnt.length}`); if (r) return r;
+  for (let i = 0; i < wantEnt.length; i++) {
+    const ent = wantEnt[i];
+    const got = gotEnt[i] || {};
+    if (got.id !== ent.id) return { ok: false, message: `自检 Entities[${i}].id="${got.id}" ≠ "${ent.id}"` };
+    if (!Array.isArray(got.Pos) || got.Pos.length !== 3) {
+      return { ok: false, message: `自检 Entities[${i}].Pos 缺失或长度 ${got.Pos && got.Pos.length} ≠ 3` };
+    }
+    for (let k = 0; k < 3; k++) {
+      if (Math.abs(got.Pos[k] - ent.Pos[k]) > 1e-9) {
+        return { ok: false, message: `自检 Entities[${i}].Pos[${k}]=${got.Pos[k]} ≠ ${ent.Pos[k]}` };
+      }
+    }
+  }
+  return { ok: true, message: '自检通过' };
+}
+
+/* ===== 12 调试钩子 ===== */
+window.__NBS2SCHEMATIC = {
+  get state() { return AppState; },
+  get layoutEditor() { return layoutEditor; },
+  get topPreview() { return topPreview; },
+  get frontPreview() { return frontPreview; },
+  get sidePreview() { return sidePreview; },
+  parseNBS, computeDelays, noteFromKey, baseBlockFor, instrumentNameFor,
+  buildLayout, buildPalette, packBlockStates, buildLitematic,
+  SFX_NAMESPACE, SFX_PARTICLE_CMD, SFX_CB_STATE, SFX_PACKFORMAT, sfxPackFormat, sfxParticleCmd,
+  buildSfxPackMcmeta, buildSfxFunctions, buildZip, zipCrc32, buildSfxDatapackZip,
+  TARGET_VERSIONS, targetEntry, DEFAULT_TARGET_MC,
+  playbackPlan, laneConflictStats, dominantInstrument, mergeSuggestions, packLanesNoConflict,
+  laneTickCounts, unassignedTracks, assignUnassigned, duplicateLane, deleteLane, syncLaneStarts, onLayerToggle,
+  lanePoolMembers, onRefToggle, onRefSoundToggle, onRefLaneTypeChange, refSpecOf,
+  refLanePoolMembers, addToRefLanes, dropToRefLane, syncRefLaneStarts, duplicateRefLane, deleteRefLane, renderRefLaneSection,
+  saveStateNow, loadSavedState, applySavedState, stateKey, fnv1a32,
+  VoxelGrid, NbtWriter, NbtReader, packBlockStates, decodePacked, gzipBytes, gunzipBytes, verifyLitematic, sanitizeFilename, effectiveTickCount, segmentCells,
+};
+
+/* ===== 09 UI 控制器（生成部分：统计、下载、调试导出） ===== */
+async function generate() {
+  clearError();
+  const song = AppState.song;
+  const lanes = AppState.lanes.filter(l => l.tracks.length > 0);
+  const refLanes = AppState.refLanes.filter(l => l.tracks.length > 0);
+  if (lanes.length === 0 && refLanes.length === 0) { showError('没有可生成的车道（请先勾选音轨分配车道，或勾选「节奏参考」分配参考车道）'); return; }
+  const { warnings, errors } = layoutEditor ? layoutEditor.validate() : { warnings: [], errors: [] };
+  if (errors.length > 0) { showError('布局错误：' + errors.join('；')); return; }
+  if (warnings.length > 0) {
+    if (!confirm('布局警告：\n' + warnings.join('\n') + '\n\n仍然生成？')) return;
+  }
+
+  $('genStatus').textContent = '生成中…';
+  await new Promise(r => setTimeout(r, 30)); // 让 UI 刷新
+
+  try {
+    // 防陈旧产物：先清上一次结果（本次失败时下载按钮不得亮着旧字节）
+    AppState.result = null;
+    AppState.litematicBytes = null;
+    AppState.sfxZipBytes = null;
+    $('downloadBtn').hidden = true;
+    $('sfxZipBtn').hidden = true;
+    $('debugBtn').hidden = true;
+    const delays = computeDelays(song.tempo, effectiveTickCount(song)); // 覆盖 songLength 及可能的超出音符；固定挡位全歌恒定
+    // 体积上限预估（Uint16Array 内存 ×2 字节 + 位打包开销）
+    const estX = delays.reduce((s, d) => s + segmentCells(d), 0) + 10;
+    const estY = Math.max(...lanes.map(l => l.start.dy), ...refLanes.map(l => l.start.dy), AppState.lane0.start.dy, 0) + 3;
+    const estZ = Math.max(...lanes.map(l => l.start.dz), ...refLanes.map(l => l.start.dz), AppState.lane0.start.dz, 0) + 5;
+    if (estX * estY * estZ > 40_000_000) {
+      showError(`预估体素 ${estX}×${estY}×${estZ} = ${((estX * estY * estZ) / 1e6).toFixed(0)}M 格，超过 4000 万格上限，请减少音轨或缩短歌曲`);
+      $('genStatus').textContent = '';
+      return;
+    }
+    const result = buildLayout(song,
+      lanes.map(l => ({ layers: l.tracks })), lanes.map(l => l.start),
+      delays, AppState.settings, AppState.lane0.start,
+      refLanes.map(l => ({ tracks: [...l.tracks], type: l.type || 'independent', start: { ...l.start } })),
+      AppState.refLayers);
+    const palette = buildPalette(result.grid);
+    const packed = packBlockStates(result.grid.data, palette.length);
+    let totalBlocks = 0;
+    for (const id of result.grid.data) if (id !== 0) totalBlocks++;
+    const size = { x: result.grid.sx, y: result.grid.sy, z: result.grid.sz };
+    const nowMs = BigInt(Date.now());
+    const target = targetEntry(AppState.settings.targetVersion);
+    const nbtBytes = buildLitematic(song, palette, packed, size, totalBlocks, nowMs, target.dataVersion,
+      { tileEntities: result.tileEntities, entities: result.entities });
+    const gz = await gzipBytes(nbtBytes);
+
+    // 产物自检：解码刚生成的 NBT 与内存网格逐格比对（失败不亮下载按钮）
+    const verify = verifyLitematic(nbtBytes, {
+      grid: result.grid, palette, size, totalBlocks,
+      dataVersion: target.dataVersion, packed,
+      tileEntities: result.tileEntities, entities: result.entities,
+    });
+    if (!verify.ok) {
+      showError('产物自检失败：' + verify.message);
+      $('genStatus').textContent = '';
+      return;
+    }
+    // gzip 往返：解压产物与未压缩 NBT 逐字节一致（浏览器压缩流自检）
+    if (typeof DecompressionStream !== 'undefined') {
+      try {
+        const roundtrip = await gunzipBytes(gz);
+        if (roundtrip.length !== nbtBytes.length) {
+          showError(`产物自检失败：gzip 解压后长度 ${roundtrip.length} ≠ NBT 长度 ${nbtBytes.length}`);
+          $('genStatus').textContent = '';
+          return;
+        }
+        for (let i = 0; i < nbtBytes.length; i++) {
+          if (roundtrip[i] !== nbtBytes[i]) {
+            showError(`产物自检失败：gzip 往返字节 ${i} 不一致`);
+            $('genStatus').textContent = '';
+            return;
+          }
+        }
+      } catch (e) {
+        showError(`产物自检失败：gzip 解压异常（${e.message}）`);
+        $('genStatus').textContent = '';
+        return;
+      }
+    }
+
+    AppState.result = { result, palette, packed, size, totalBlocks, nbtBytes, lanes };
+    AppState.litematicBytes = gz;
+    // 节奏参考粒子数据包：有参考声道时生成完整数据包 zip（命名空间 nbs2sfx）；
+    // 逐 tick 粒子行取 result.sfxTickList（与产物命令方块严格一致：绑定型按轨道排布偏移、独立型按音高偏移）
+    AppState.sfxZipBytes = null;
+    if (AppState.refLayers.size > 0) {
+      const { bytes } = buildSfxDatapackZip(song, AppState.refLayers, AppState.settings.targetVersion, result.sfxTickList);
+      AppState.sfxZipBytes = bytes;
+      $('sfxZipBtn').hidden = false;
+    } else {
+      $('sfxZipBtn').hidden = true;
+    }
+    $('downloadBtn').hidden = false;
+    $('debugBtn').hidden = false;
+    $('genStatus').textContent = `完成（NBT ${(nbtBytes.length / 1024).toFixed(1)} KB → gzip ${(gz.length / 1024).toFixed(1)} KB，自检通过）`;
+    renderStats();
+    renderPreviews();
+  } catch (err) {
+    showError(err.message || String(err), err);
+    $('genStatus').textContent = '';
+  }
+}
+
+function renderStats() {
+  const { result, stats } = AppState.result.result;
+  const { size, totalBlocks } = AppState.result;
+  const song = AppState.song;
+  const seconds = song.songLength / song.tempo;
+  const cards = [
+    ['包围盒', `${size.x} × ${size.y} × ${size.z}`],
+    ['总方块数', totalBlocks.toLocaleString()],
+    ['音乐时长', `${seconds.toFixed(1)} 秒`],
+    ['车道（链）数', `轨道 0 + ${AppState.lanes.filter(l => l.tracks.length > 0).length} 条`
+      + (AppState.refLanes.filter(l => l.tracks.length > 0).length > 0
+        ? ` + ${AppState.refLanes.filter(l => l.tracks.length > 0).length} 条参考` : '')],
+    ['音符盒数', stats.noteBlocks],
+    ['已放置音符', stats.notesPlaced],
+    ['中继器数', stats.repeaters],
+    ['红石线数', stats.wires],
+    ...(stats.commandBlocks > 0 ? [['节奏参考 CB', `${stats.commandBlocks}（轨道 0）· 粒子 ${stats.sfxNotes}`]] : []),
+  ];
+  $('statsPanel').innerHTML = cards.map(([k, v]) =>
+    `<div class="stat-card"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
+  $('statsPanel').hidden = false;
+
+  const warns = [];
+  const errs = [];
+  const g = AppState.result.result.geometry;
+  if (g.xMax > 300) warns.push(`X 跨度 ${g.xMax} 格：超过 300 格时部分红石电路可能超出常用模拟距离（128-512 格），远端可能不播放`);
+  if (g.xMax > 2000) errs.push(`X 跨度 ${g.xMax} 格过大，超出合理模拟距离`);
+  if (stats.notesDiscarded > 0) {
+    warns.push(`丢弃了 ${stats.notesDiscarded} 个音符（车道内同 tick 超过 3 个音符盒位、或音高超出音符盒音域 key 33-57），详见调试包`);
+  }
+  const wEl = $('warnings');
+  wEl.innerHTML = '';
+  warns.forEach(w => { const d = document.createElement('div'); d.className = 'w'; d.textContent = '⚠ ' + w; wEl.appendChild(d); });
+  errs.forEach(w => { const d = document.createElement('div'); d.className = 'e'; d.textContent = '✖ ' + w; wEl.appendChild(d); });
+}
+
+function downloadLitematic() {
+  if (!AppState.litematicBytes) return;
+  const name = sanitizeFilename(AppState.song.songName || AppState.song.sourceFileName.replace(/\.nbs$/i, '')) + '.litematic';
+  const blob = new Blob([AppState.litematicBytes], { type: 'application/octet-stream' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+function downloadSfxDatapack() {
+  if (!AppState.sfxZipBytes) return;
+  const base = sanitizeFilename(AppState.song.songName || AppState.song.sourceFileName.replace(/\.nbs$/i, ''));
+  const blob = new Blob([AppState.sfxZipBytes], { type: 'application/zip' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${base}.sfx-datapack.zip`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+function exportDebugBundle() {
+  const { result, palette, size, totalBlocks } = AppState.result;
+  const bundle = {
+    format: 'NBS2schematic-debug-v1',
+    song: {
+      name: AppState.song.songName, tempo: AppState.song.tempo,
+      songLength: AppState.song.songLength, version: AppState.song.version,
+      timeSignature: AppState.song.timeSignature,
+    },
+    settings: {
+      targetVersion: AppState.settings.targetVersion,
+      customInstrumentMap: [...AppState.settings.customInstrumentMap.entries()],
+    },
+    groups: AppState.lanes,
+    groupStarts: AppState.lanes.map(l => l.start),
+    refLanes: AppState.refLanes,
+    lane0Start: AppState.lane0 ? { ...AppState.lane0.start } : null,
+    refLayers: [...AppState.refLayers.entries()],
+    sfx: AppState.refLayers.size > 0
+      ? {
+          namespace: SFX_NAMESPACE,
+          dir: sfxPackFormat(AppState.settings.targetVersion).dir,
+          particleCmd: SFX_PARTICLE_CMD,
+          pitchStep: AppState.settings.sfxPitchStep,
+          // 逐 tick 粒子行（构建时按轨道排布计算的相对偏移，与产物命令方块一一对应）
+          functions: buildSfxFunctions(AppState.song, AppState.refLayers, result.sfxTickList),
+        }
+      : null,
+    geometry: result.geometry,
+    size, totalBlocks,
+    palette,
+    grid: Array.from(result.grid.data),
+    stats: result.stats,
+  };
+  const blob = new Blob([JSON.stringify(bundle)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = sanitizeFilename(AppState.song.songName || 'debug') + '.debug.json';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+/* ===== 事件绑定 ===== */
+$('fileBtn').addEventListener('click', () => $('fileInput').click());
+$('fileInput').addEventListener('change', (e) => {
+  const f = e.target.files[0];
+  if (f) loadFile(f);
+});
+const dz = $('dropzone');
+dz.addEventListener('dragover', (e) => { e.preventDefault(); dz.classList.add('dragover'); });
+dz.addEventListener('dragleave', () => dz.classList.remove('dragover'));
+dz.addEventListener('drop', (e) => {
+  e.preventDefault();
+  dz.classList.remove('dragover');
+  const f = e.dataTransfer.files[0];
+  if (f && f.name.toLowerCase().endsWith('.nbs')) loadFile(f);
+  else showError('请拖入 .nbs 文件');
+});
+
+function loadFile(file) {
+  clearError();
+  const reader = new FileReader();
+  reader.onerror = () => showError('读取文件失败');
+  reader.onload = () => {
+    try {
+      const bytes = new Uint8Array(reader.result);
+      const song = parseNBS(bytes);
+      song.sourceFileName = file.name;
+      onSongLoaded(song, bytes);
+    } catch (err) {
+      showError(err.message || String(err), err);
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+$('selectAllBtn').addEventListener('click', () => {
+  const song = AppState.song;
+  song.layers.forEach((l, i) => AppState.selectedLayers.add(i));
+  // 参考声道发声默认勾（若处于不发声状态，主全选时恢复发声 = 进车道池；类型保持不变）
+  for (const [i, spec] of AppState.refLayers) AppState.refLayers.set(i, { ...refSpecOf(spec), sound: true });
+  // 参考车道池整体重建（每 3 条参考成员一车道），与音轨车道独立
+  const refPool = refLanePoolMembers(AppState.song);
+  AppState.refLanes = [];
+  for (let i = 0; i < refPool.length; i += 3) AppState.refLanes.push({ tracks: refPool.slice(i, i + 3), type: 'independent' });
+  syncRefLaneStarts();
+  renderLayerList();
+  rebuildLanesAuto(); // 整体重建（每 3 轨一车道），含参考+发声声道
+  renderLaneSection();
+  renderRefLaneSection();
+  scheduleStateSave();
+});
+$('selectNoneBtn').addEventListener('click', () => {
+  AppState.selectedLayers.clear();
+  AppState.refLayers.clear(); // 参考状态一并清除（♪ 标记消失）
+  AppState.lanes = []; // 彻底清空车道（含手动的空车道）
+  AppState.refLanes = []; // 参考车道一并清空
+  renderLayerList();
+  syncLaneStarts();
+  renderLaneSection();
+  renderRefLaneSection();
+  scheduleStateSave();
+});
+$('layerList').addEventListener('change', (e) => {
+  const check = e.target.closest('.layer-check');
+  if (check) {
+    const i = parseInt(check.dataset.i, 10);
+    onLayerToggle(i, check.checked);
+    renderLayerList(); // 参考框/发声框显隐可能随状态变化
+    return;
+  }
+  const ref = e.target.closest('.layer-ref');
+  if (ref) {
+    onRefToggle(parseInt(ref.dataset.i, 10), ref.checked);
+    return;
+  }
+  const snd = e.target.closest('.layer-sound');
+  if (snd) {
+    onRefSoundToggle(parseInt(snd.dataset.i, 10), snd.checked);
+    renderLayerList();
+    return;
+  }
+});
+$('autoGroupBtn').addEventListener('click', () => { rebuildLanesAuto(); renderLaneSection(); scheduleStateSave(); });
+$('addLaneBtn').addEventListener('click', () => {
+  AppState.lanes.push({ tracks: [] });
+  syncLaneStarts();
+  renderLaneSection();
+  scheduleStateSave();
+});
+$('applyPackBtn').addEventListener('click', () => {
+  const song = AppState.song;
+  const pool = lanePoolMembers(song);
+  if (!song || pool.length === 0) return;
+  const packed = packLanesNoConflict(song, pool);
+  if (!confirm(`应用无冲突打包：${packed.length} 条车道（将替换当前分配，手动重复分配会丢失）？`)) return;
+  AppState.lanes = packed.map(tracks => ({ tracks }));
+  syncLaneStarts();
+  renderLaneSection();
+  scheduleStateSave();
+});
+$('assignRestBtn').addEventListener('click', () => {
+  if (!AppState.song) return;
+  const n = assignUnassigned(AppState.song);
+  if (n > 0) $('genStatus').textContent = `已自动并入 ${n} 条未分配音轨（无冲突优先并入现有车道）`;
+  scheduleStateSave();
+});
+
+// 音轨池拖拽：dragstart 记录音轨下标
+$('layerList').addEventListener('dragstart', (e) => {
+  const row = e.target.closest('.layer-row');
+  if (!row || !e.dataTransfer) return;
+  e.dataTransfer.setData('text/plain', String(parseInt(row.dataset.dragLayer, 10)));
+  e.dataTransfer.effectAllowed = 'copy';
+});
+// 车道放置区：拖入音轨即分配（允许重复拖入同一音轨 = 占多个音符盒位齐响）
+$('groupList').addEventListener('dragover', (e) => {
+  const dz = e.target.closest('.lane-drop');
+  if (!dz) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'copy';
+  dz.classList.add('drop-active');
+});
+$('groupList').addEventListener('dragleave', (e) => {
+  const dz = e.target.closest('.lane-drop');
+  if (!dz) return;
+  dz.classList.remove('drop-active');
+});
+$('groupList').addEventListener('drop', (e) => {
+  const dz = e.target.closest('.lane-drop');
+  if (!dz) return;
+  e.preventDefault();
+  dz.classList.remove('drop-active');
+  const li = parseInt(dz.dataset.li, 10);
+  const t = parseInt(e.dataTransfer.getData('text/plain'), 10);
+  const lane = AppState.lanes[li];
+  if (!lane || !Number.isInteger(t) || !AppState.song.layers[t]) return;
+  // 拖入即视为参与转换：普通声道 = 主勾选；参考声道 = 发声框勾选（默认勾）+ 进车道池
+  if (AppState.refLayers.has(t)) {
+    if (refSpecOf(AppState.refLayers.get(t)).sound !== true) onRefSoundToggle(t, true);
+    else AppState.selectedLayers.add(t);
+  } else {
+    AppState.selectedLayers.add(t);
+  }
+  lane.tracks.push(t);
+  renderLayerList();
+  renderLaneSection();
+  scheduleStateSave();
+});
+$('groupList').addEventListener('click', (e) => {
+  const tag = e.target.closest('.lane-tag');
+  if (tag) {
+    const li = parseInt(tag.dataset.li, 10);
+    const ti = parseInt(tag.dataset.ti, 10);
+    const lane = AppState.lanes[li];
+    if (lane && Number.isInteger(ti) && ti >= 0 && ti < lane.tracks.length) {
+      lane.tracks.splice(ti, 1);
+      renderLaneSection();
+      scheduleStateSave();
+    }
+    return;
+  }
+  const dup = e.target.closest('.lane-dup');
+  if (dup) {
+    duplicateLane(parseInt(dup.dataset.li, 10));
+    return;
+  }
+  const btn = e.target.closest('.lane-del');
+  if (!btn) return;
+  deleteLane(parseInt(btn.dataset.li, 10));
+});
+
+// 参考车道池：新增（空车道，起点默认单行接续）+ 标签✕移除成员 / ⧉复制 / ✕删除
+$('addRefLaneBtn').addEventListener('click', () => {
+  AppState.refLanes.push({ tracks: [] });
+  syncRefLaneStarts();
+  renderRefLaneSection();
+  scheduleStateSave();
+});
+$('refLaneList').addEventListener('click', (e) => {
+  const tag = e.target.closest('.ref-lane-tag');
+  if (tag) {
+    const li = parseInt(tag.dataset.li, 10);
+    const ti = parseInt(tag.dataset.ti, 10);
+    const lane = AppState.refLanes[li];
+    if (lane && Number.isInteger(ti) && ti >= 0 && ti < lane.tracks.length) {
+      lane.tracks.splice(ti, 1);
+      renderRefLaneSection();
+      scheduleStateSave();
+    }
+    return;
+  }
+  const dup = e.target.closest('.ref-lane-dup');
+  if (dup) {
+    duplicateRefLane(parseInt(dup.dataset.li, 10));
+    return;
+  }
+  const btn = e.target.closest('.ref-lane-del');
+  if (!btn) return;
+  deleteRefLane(parseInt(btn.dataset.li, 10));
+});
+// 节奏形参考车道池拖放：镜像车道池的 dragover/dragleave/drop（投放区 = 卡片底部 .ref-lane-drop）
+$('refLaneList').addEventListener('dragover', (e) => {
+  const dz = e.target.closest('.ref-lane-drop');
+  if (!dz) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'copy';
+  dz.classList.add('drop-active');
+});
+$('refLaneList').addEventListener('dragleave', (e) => {
+  const dz = e.target.closest('.ref-lane-drop');
+  if (!dz) return;
+  dz.classList.remove('drop-active');
+});
+$('refLaneList').addEventListener('drop', (e) => {
+  const dz = e.target.closest('.ref-lane-drop');
+  if (!dz) return;
+  e.preventDefault();
+  dz.classList.remove('drop-active');
+  const t = parseInt(e.dataTransfer.getData('text/plain'), 10);
+  if (!Number.isInteger(t)) return;
+  dropToRefLane(t, parseInt(dz.dataset.li, 10));
+});
+
+// 音轨池侧边栏折叠/展开（用户要求）：展开 = 680px（当前版本 340px 的 2 倍）；
+// 折叠 = 侧栏整体隐藏（不留窄条），展开入口移到右侧顶部 #main-topbar 的「▶ 展开音轨池」按钮；
+// 状态存全局 UI 键（与按歌存档的 nbs2schematic:v1:* 分离，跨歌保留）
+const SIDEBAR_UI_KEY = 'nbs2schematic:ui';
+function setSidebarState(collapsed) {
+  $('content').classList.toggle('sidebar-collapsed', collapsed);
+  try {
+    const ui = JSON.parse(localStorage.getItem(SIDEBAR_UI_KEY) || '{}');
+    ui.sidebarCollapsed = collapsed;
+    localStorage.setItem(SIDEBAR_UI_KEY, JSON.stringify(ui));
+  } catch { /* 存储不可用时仅本次会话生效 */ }
+}
+(function initSidebar() {
+  try {
+    const ui = JSON.parse(localStorage.getItem(SIDEBAR_UI_KEY) || '{}');
+    if (ui.sidebarCollapsed) $('content').classList.add('sidebar-collapsed');
+  } catch { /* 忽略损坏载荷 */ }
+  $('sidebarToggle').addEventListener('click', () => setSidebarState(true));   // 侧栏顶栏 ◀ = 收起
+  $('sidebarOpenBtn').addEventListener('click', () => setSidebarState(false)); // 右侧顶部 ▶ = 展开
+})();
+
+$('targetVersion').addEventListener('change', (e) => {
+  AppState.settings.targetVersion = e.target.value;
+  const entry = targetEntry(e.target.value);
+  $('targetVersionHint').textContent =
+    `DataVersion ${entry.dataVersion} · Litematica 分支 ${entry.branch}`;
+  scheduleStateSave();
+});
+$('customInstSelects').addEventListener('change', (e) => {
+  const sel = e.target.closest('.custom-inst-select');
+  if (!sel) return;
+  AppState.settings.customInstrumentMap.set(parseInt(sel.dataset.instId, 10), parseInt(sel.value, 10));
+  scheduleStateSave();
+});
+$('sfxPitchStep').addEventListener('change', (e) => {
+  let v = parseInt(e.target.value, 10);
+  if (!Number.isFinite(v)) v = 1;
+  v = Math.max(0, Math.min(8, v));
+  e.target.value = String(v);
+  AppState.settings.sfxPitchStep = v;
+  scheduleStateSave();
+});
+
+$('generateBtn').addEventListener('click', generate);
+$('downloadBtn').addEventListener('click', downloadLitematic);
+$('sfxZipBtn').addEventListener('click', downloadSfxDatapack);
+$('debugBtn').addEventListener('click', exportDebugBundle);
+
+// 预置布局（用户 2026-09-04 定）：三模板均以 0 号车道（轨道 0）起点为中心对称排布，
+// 同时重排音轨车道 + 参考车道（用户确认参考车道并入预置范围）——0 号不动，一次摆齐不重叠。
+// 排布顺序 = [音轨车道…, 参考车道…]（各池内保序）；第 k 位（0 基）按模板分配（相对中心 c0）：
+//   单行：Z 两侧交替 ±3(k+1)（偶 k 在 +Z 侧），Y 恒为中心行
+//   网格：中间行 k=2m、k+1=2m+1 → Z 由中心外扩 ±3(m+1)，Y 上下交替 ±h·m（首行在上）
+//   放射：候选位 = 环 k（Z=±3k，Y=±h·j，|j|≤floor(k/2)），按到中心欧氏距离升序取前 N 个
+//         （平手：+Z 侧优先、再 +Y 侧优先）——由近及远一圈圈展开
+function presetAllLanes(apply) {
+  const c0 = (AppState.lane0 && AppState.lane0.start) || { dz: 0, dy: 0 };
+  const all = [...AppState.lanes, ...(AppState.refLanes || [])];
+  all.forEach((l, k) => { l.start = apply(c0, k); });
+  layoutEditor && layoutEditor.refresh();
+  scheduleStateSave();
+}
+$('presetLineBtn').addEventListener('click', () => {
+  presetAllLanes((c0, k) => ({ dz: c0.dz + (k % 2 === 0 ? 1 : -1) * 3 * (Math.floor(k / 2) + 1), dy: c0.dy }));
+});
+$('presetGridBtn').addEventListener('click', () => {
+  const h = parseInt($('gridHeight').value, 10) || 5;
+  presetAllLanes((c0, k) => {
+    const m = Math.floor(k / 2);            // 0 基行号（中间行 0，向上下递增）
+    const sgn = k % 2 === 0 ? 1 : -1;       // 偶位 +Z 侧 / 奇位 -Z 侧
+    return { dz: c0.dz + sgn * 3 * (m + 1), dy: c0.dy + sgn * h * m };
+  });
+});
+$('presetRadialBtn').addEventListener('click', () => {
+  const h = parseInt($('gridHeight').value, 10) || 5;
+  const n = AppState.lanes.length + (AppState.refLanes || []).length;
+  if (n === 0) return;
+  const cands = [];
+  for (let k = 1; k <= Math.max(n, 6); k++) {
+    const maxJ = Math.floor(k / 2);
+    for (let j = -maxJ; j <= maxJ; j++) {
+      const d = Math.hypot(3 * k, j * h);
+      cands.push({ dz: 3 * k, dy: j * h, d });
+      cands.push({ dz: -3 * k, dy: j * h, d });
+    }
+  }
+  cands.sort((a, b) => (a.d - b.d) || (b.dz - a.dz) || (b.dy - a.dy));
+  presetAllLanes((c0, k) => {
+    const c = cands[k] || { dz: 3 * (k + 1), dy: 0 };
+    return { dz: c0.dz + c.dz, dy: c0.dy + c.dy };
+  });
+});
+$('fitLayoutBtn').addEventListener('click', () => layoutEditor && layoutEditor.fitView());
+</script>
+</body>
+</html>
