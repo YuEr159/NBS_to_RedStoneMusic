@@ -237,6 +237,7 @@ input[type="number"] { width: 70px; }
       <button id="fitLayoutBtn">缩放到全部</button>
       <span class="hint">点击标记选中；拖拽移动；选中后可用方向键微调（Shift=大步）</span>
     </div>
+    <!-- 初始 640×420：配合 LayoutEditor 初始 zoom/pan（见其构造函数注释）显示默认布局 -->
     <canvas id="layoutCanvas" width="640" height="420"></canvas>
     <div class="layout-info" id="layoutInfo"></div>
   </section>
@@ -435,6 +436,14 @@ class ParseError extends Error {
   constructor(msg) { super(msg); this.name = 'ParseError'; }
 }
 
+// NBS 输入上限（防护线，非格式上限）：NBS 是无魔数的裸二进制，选错文件/损坏文件会解出荒谬值。
+//   · 层数：u16 字段格式上限 65535，真实歌曲在数百内，4096 对任何真实歌曲都足够（防大数组预分配）
+//   · 音符数：200 万 ≈ 数十 MB 音符区，防把多 GB 的错文件全量读入 per-layer Map
+//   · 文件大小：NBS 是 KB~MB 级小文件，256MB 前先在 loadFile 拒绝（readAsArrayBuffer 整读之前）
+const NBS_MAX_LAYERS = 4096;
+const NBS_MAX_NOTES = 2_000_000;
+const NBS_MAX_FILE_BYTES = 256 * 1024 * 1024;
+
 function parseNBS(bytes) {
   if (!bytes || bytes.length < 4) throw new ParseError('文件太小，不是有效的 NBS 文件');
   const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -470,6 +479,8 @@ function parseNBS(bytes) {
 
   // --- Header ---
   const firstShort = u16();
+  // v0 的 song_length=0 无意义（无音符可定位）；若开头为 0x0000 一律按新格式标记读版本号。
+  // （副作用：songLength=0 的 v0 文件按新格式误读——此类文件无实际音乐，可接受）
   let version, defaultInstruments, songLength;
   if (firstShort === 0) {
     // 新格式（v1+）：0x0000 标记 + 版本号
@@ -479,10 +490,28 @@ function parseNBS(bytes) {
   } else {
     // v0 旧格式：开头直接是 song_length
     version = 0;
+    // v0 头部没有 first_custom_index 字段；该时期 NBS Studio 内置乐器恰为 10 个，自定义乐器自 ID 10 起
     defaultInstruments = 10;
     songLength = firstShort;
   }
+  // 格式嗅探：NBS 无魔数，版本只能取 0/4/5/6（1-3 从未被 NBS Studio 写出）。
+  // v6 = NBS 3.12.0-beta 起（nbs_version 6）：字节格式与 v5 一致，仅 first_custom_index 由 16→20
+  //   （新增 4 个内置小号 Trumpet 系，ID 16-19，Minecraft 26.1 引入；目标 MC 1.19.4~1.21.11 的
+  //   note_block 无小号，其音符按未映射乐器回退，见 baseBlockFor）。
+  // 选错文件（.txt/随机二进制）时 version 常落在荒谬值，提前拒绝并给出指向性提示
+  // （否则会继续硬解、直到某次越界才报「文件意外结束」，误导为「文件截断」）。
+  if (version !== 0 && version !== 4 && version !== 5 && version !== 6) {
+    const e = new ParseError(`不是有效的 NBS 文件：未知版本号 ${version}（NBS 支持 v0 旧格式 / v4 / v5 / v6）。请确认选择了 .nbs 文件`);
+    e.offset = off; e.total = totalLen; e.partial = partialSnapshot();
+    throw e;
+  }
   const songLayers = u16();
+  // 规模上限：防损坏/错选文件把 65535 层预分配成大数组
+  if (songLayers > NBS_MAX_LAYERS) {
+    const e = new ParseError(`不是有效的 NBS 文件：声部数 ${songLayers} 超过 ${NBS_MAX_LAYERS} 上限（真实歌曲在数百内）`);
+    e.offset = off; e.total = totalLen; e.partial = partialSnapshot();
+    throw e;
+  }
   const songName = str();
   const songAuthor = str();
   const originalAuthor = str();
@@ -531,6 +560,7 @@ function parseNBS(bytes) {
       while (layers.length <= layer) layers.push({ name: '', lock: false, volume:100, panning:0, notes:new Map() });
       layers[layer].notes.set(tick, { instrument, key, velocity, panning, pitch });
       noteCount++;
+      if (noteCount > NBS_MAX_NOTES) fail(`音符数超过 ${NBS_MAX_NOTES} 上限，不像真实 NBS 文件（请确认文件来源）`);
     }
   }
 
@@ -646,9 +676,6 @@ class VoxelGrid {
   get(x, y, z) { return this.inBounds(x, y, z) ? this.data[this.idx(x, y, z)] : 0; }
 }
 
-// 每 tick 段长度：d≤4 → 2 格（中继器+传导）；d>4 → 2+(d-4) 扩展格
-function segmentCells(d) { return d <= 4 ? 2 : 2 + (d - 4); }
-
 // 默认轨道 0 的顶层雪块导轨周期：每 32 格替换 1 格为赭黄蛙灯（用户风格；蛙灯与雪块同为不透明满方块，
 //   仅装饰差异，不影响命令方块预留空间的几何）。
 const DEFAULT_RAIL_SPACING = 32;
@@ -716,8 +743,8 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
   // --- X 跨度 ---
   // 音符可能出现在 tick == songLength（NBS 的 song_length 即最后一个音符的 tick），循环需覆盖
   const nTicks = delays.length;
-  let xMax = 0;
-  for (let t = 0; t < nTicks; t++) xMax += segmentCells(delays[t]);
+  // 主链恒 1 档：每 tick 占 2 格（中继器格 + 主位传导格）
+  let xMax = nTicks * 2;
   if (chains.length === 0) throw new Error('没有可生成的车道组（默认轨道 0 未启用且无音轨车道）');
 
   // --- 触发区几何（总线/tap/开关）已按用户要求从产物中移除：用户手动放置 ---
@@ -850,7 +877,7 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
   }
   for (let t = 0; t < nTicks; t++) {
     const d = delays[t];
-    const cells = segmentCells(d);
+    const cells = 2; // 主链恒 1 档：每 tick 恒 2 格（中继器格 + 主位传导格）
 
     for (const c of chains) {
       curChain = c; // 绑定型偏移计算用（音符盒所在车道的起点）
@@ -967,12 +994,6 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
             stats.discardedDetails.push(`tick ${t} 组 ${c.groupIndex + 1}：第3位音高 key=${s3.note.key} 超出音符盒音域 [33,57]，跳过该音`);
             sfxBoundDiscard(t, s3.layerIdx);
           }
-        }
-        // 扩展格（d>4）：1 档中继器链
-        for (let e = 0; e < d - 4; e++) {
-          W(xCur + 2 + e, ySig, zc, 'minecraft:repeater[facing=west,delay=1,locked=false,powered=false]');
-          W(xCur + 2 + e, yb, zc, 'minecraft:snow_block');
-          stats.repeaters++;
         }
       }
     }
@@ -1161,6 +1182,11 @@ function buildSfxDatapackZip(song, refLayers, targetMc, sfxTickList = null) {
   for (const { tick, lines } of buildSfxFunctions(song, refLayers, sfxTickList)) {
     files.push({ name: `data/${SFX_NAMESPACE}/${pf.dir}/${tick}.mcfunction`, data: new TextEncoder().encode(lines.join('\n') + '\n') });
   }
+  // zip 中央目录条目数是 u16（PKZIP 规范），>65535 会回绕为 0 产出坏 zip；
+  // 本包每 tick 一个 .mcfunction（+1 个 pack.mcmeta），参考声道音符 tick 数达上限即拒绝
+  if (files.length > 0xFFFF) {
+    throw new Error(`粒子数据包条目数 ${files.length} 超过 zip u16 上限 65535（参考声道去重 tick 数 ${files.length - 1} 过多），请减少参考声道或缩短歌曲`);
+  }
   return { bytes: buildZip(files), fileCount: files.length };
 }
 
@@ -1336,7 +1362,7 @@ function buildLitematic(song, palette, packed, size, totalBlocks, nowMs, dataVer
       }
       // BlockStates: LongArray
       w.longArray(packed.longs, 'BlockStates');
-      // TileEntities：通用序列化（当前恒为空列表；字段格式保留以兼容未来需要 TE 的产物）
+      // TileEntities：节奏参考命令方块写入（全部在轨道 0 主位底座）；无参考声道时为空列表
       w.tagHeader(9, 'TileEntities');
       w.u8(10);
       w.i32(extras.tileEntities.length);
@@ -1443,6 +1469,7 @@ function effectiveTickCount(song) {
 
 function sanitizeFilename(name) {
   const cleaned = (name || 'redstone_music').replace(/[\\/:*?"<>|\x00-\x1f]/g, '_').trim();
+  // 截断 120 字符：下载文件名含原曲名 + 后缀，过长会超文件系统/浏览器路径上限（Windows MAX_PATH 260）
   return (cleaned || 'redstone_music').slice(0, 120);
 }
 
@@ -1517,6 +1544,7 @@ function showError(msg, err) {
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
+      // 5s 后释放 blob URL：a.click() 触发下载后延迟释放，兼容浏览器异步读取流
       setTimeout(() => URL.revokeObjectURL(url), 5000);
     });
     details.appendChild(btn);
@@ -1536,6 +1564,14 @@ function formatTime(song) {
 }
 
 function renderSongInfo(song) {
+  // v6 小号音符：NBS ID 16-19（MC 26.1 新增 Trumpet 系）；目标 MC 1.19.4~1.21.11 的 note_block
+  // 无小号音色，这些音符按未映射乐器回退为 harp（雪块底座），此处提前告知用户
+  let trumpetNotes = 0;
+  if (song.version >= 6) {
+    for (const layer of song.layers)
+      for (const n of layer.notes.values())
+        if (n.instrument >= 16 && n.instrument <= 19) trumpetNotes++;
+  }
   const rows = [
     ['名称', song.songName || '(未命名)'],
     ['作者', song.songAuthor || '(无)'],
@@ -1548,8 +1584,13 @@ function renderSongInfo(song) {
       ? song.customInstruments.map(c => c.name).join('、') : '(无)'],
     ['循环', song.loop ? (song.maxLoopCount === 0 ? '是（无限）' : `是（${song.maxLoopCount} 次）`) : '否'],
   ];
+  let extra = '';
+  if (trumpetNotes > 0) {
+    extra = '<div class="advice-line advice-warn">⚠ 本曲（NBS v6）含 <b>' + trumpetNotes + '</b> 个小号（Trumpet）音符，'
+      + '目标 MC 版本（1.19.4~1.21.11）的音符盒尚无小号音色，将回退为 <b>harp（雪块底座）</b>播放</div>';
+  }
   $('songInfo').innerHTML = '<table class="info">' +
-    rows.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('') + '</table>';
+    rows.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('') + '</table>' + extra;
   $('song-section').hidden = false;
 }
 
@@ -1605,15 +1646,15 @@ function renderTempoAdvice() {
   const song = AppState.song;
   const tempo = song.tempo;
   const plan = playbackPlan(tempo);
-  const D = plan.delay;
+  const D = plan.delay; // 恒 1（主链 1 档）
   const R = plan.tickRate;
   const rStr = String(Math.round(R * 100) / 100);
-  const cellsPerTick = segmentCells(D);
+  const cellsPerTick = 2; // 主链恒 1 档：每 tick 占 2 格（中继器格 + 主位传导格）
   const speed = cellsPerTick * tempo;      // 链推进速度（块/秒，校正后）
   const perTick = cellsPerTick / D;        // 每游戏 tick 前进格数（tp 步长）
   const estX = Math.round(effectiveTickCount(song) * cellsPerTick);
   const lines = [];
-  lines.push(`NBS tempo <b>${tempo}</b> ticks/秒 → 主链每 tick 固定 <b>1 档中继器</b>（周期 2 游戏刻${D > 1 ? `（tempo>20，每 tick 占 ${D} 档扩展格）` : ''}，零抖动）；本曲最接近的标准 tps 为 ${plan.assumedTps}（仅参考）。`);
+  lines.push(`NBS tempo <b>${tempo}</b> ticks/秒 → 主链每 tick 固定 <b>1 档中继器</b>（周期 2 游戏刻，零抖动）；本曲最接近的标准 tps 为 ${plan.assumedTps}（仅参考）。`);
   if (Math.abs(R - 20) < 0.005) {
     lines.push(`✅ 需要的游戏速率 R = 2 × tempo = <b>${rStr}</b> ≈ 20：<b>保持默认 20tps 即可</b>，无需任何调整。`);
   } else {
@@ -1624,6 +1665,7 @@ function renderTempoAdvice() {
   }
   lines.push(`⚠ <code>/tick rate</code> 改变整个世界速度（实体/玩家/昼夜），建议每次进世界后重新执行；无管理员权限的服务器请让服主执行。`);
   lines.push(`🏃 <b>跟随播放</b>：音符盒可听约 48 格，链以 <b>${(Math.round(speed * 100) / 100)}</b> 块/秒 沿 +X 推进（本曲全长约 ${estX} 格）。`);
+  // 10.5 = 创造飞行速度 10.9 块/秒留 4% 余量：低于它才能靠飞行紧跟链头
   if (speed <= 10.5) {
     lines.push(`　• 可<b>创造飞行</b>跟随（约 10.9 块/秒）：F3 将 facing 对齐 0° 后按住 W 直飞。`);
   } else {
@@ -1726,6 +1768,7 @@ let stateSaveTimer = null;
 function scheduleStateSave() {
   if (typeof localStorage === 'undefined' || !AppState.song) return;
   if (stateSaveTimer) clearTimeout(stateSaveTimer);
+  // 300ms 防抖：勾选/拖拽等高频操作合并为一次 localStorage 写入
   stateSaveTimer = setTimeout(() => { stateSaveTimer = null; saveStateNow(); }, 300);
 }
 // 读取并校验已存状态；返回 {selectedLayers, lanes, settings} 或 null（任何一项不合法即整体放弃）
@@ -2292,6 +2335,8 @@ function dropToRefLane(t, li) {
 
 // 参考车道起点补缺：缺 start 的参考车道找空位——从 dz=i*3+6 起每 +3 扫描（行 dy=0，放不下抬 dy+1），
 // 避开全部既有起点（音轨车道/参考车道/轨道 0），避免默认布局相互重叠（重叠会被布局校验阻断生成）
+// i*3+6：每车道步进 3 格（与音轨车道 syncLaneStarts 的 i*3+3 同步进），参考车道整体再右移 3
+//   （+6 而非 +3），使默认排布中参考车道列错开于音轨车道列之后
 function syncRefLaneStarts() {
   const taken = new Set();
   for (const l of AppState.lanes) if (l.start && Number.isFinite(l.start.dz) && Number.isFinite(l.start.dy)) taken.add(l.start.dz + ',' + l.start.dy);
@@ -2573,6 +2618,8 @@ class LayoutEditor {
   constructor(canvas) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
+    // 初始视图参数：zoom 22 px/格 下 640×420 画布可见约 29×19 格，
+    // panX/panY 把原点对准 (50,210)，使默认多车道布局（dz 约 0~30、dy 0~1）居中可见
     this.zoom = 22;
     this.panX = 50;
     this.panY = 210;
@@ -2666,6 +2713,7 @@ class LayoutEditor {
     cv.addEventListener('pointercancel', end);
     cv.addEventListener('wheel', (e) => {
       e.preventDefault();
+      // 1.15 = 每滚轮档缩放倍率（手感值）；夹紧 [6, 60] px/格，防缩到不可用
       const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
       const w = this.s2w(e.offsetX, e.offsetY);
       this.zoom = Math.min(60, Math.max(6, this.zoom * factor));
@@ -2733,6 +2781,7 @@ class LayoutEditor {
     const zs = starts.map(s => s.dz), ys = starts.map(s => s.dy);
     const minZ = Math.min(...zs), maxZ = Math.max(...zs);
     const minY = Math.min(...ys), maxY = Math.max(...ys);
+    // +3 = 四周各留 1 格余量；-80/40 = 画布四周 40px 边距；zoom 夹紧 [8, 40] px/格
     const spanZ = Math.max(2, maxZ - minZ + 3), spanY = Math.max(2, maxY - minY + 3);
     this.zoom = Math.min(40, Math.max(8,
       Math.min((this.canvas.width - 80) / spanZ, (this.canvas.height - 80) / spanY)));
@@ -2854,7 +2903,7 @@ class PreviewView {
     this.off = null;         // 离屏 canvas（每格 1px 投影）
     this.offX = 0; this.offY = 0;
     this.viewX = 0; this.viewY = 0; // 显示偏移
-    this.px = 4;             // 显示缩放 px/格
+    this.px = 4;             // 显示缩放 px/格（初始值；滚轮可在 [1, 24] 内缩放）
     this.drag = null;
     this.hoverInfo = null;
     this.bindEvents();
@@ -2900,6 +2949,8 @@ class PreviewView {
     if (axis === 'top') { ox = size.x; oy = size.z; }
     else if (axis === 'front') { ox = size.x; oy = size.y; }
     else { ox = size.z; oy = size.y; }
+    // 16000 = 预览画布尺寸上限：createImageData 按宽高平方分配像素缓冲，
+    //   超大截面（长链）会产出数百 MB 的 ImageData；超过则按比例缩小显示
     off.width = Math.min(ox, 16000);
     off.height = Math.min(oy, 16000);
     const ctx = off.getContext('2d');
@@ -3013,6 +3064,7 @@ function renderPreviews() {
     topPreview = new PreviewView($('topView'));
     frontPreview = new PreviewView($('frontView'));
     sidePreview = new PreviewView($('sideView'));
+    // 内部分辨率 900px（CSS 显示宽度 100%，高按各投影的宽高比：顶视 3:1、正视 900×240、侧视 900×260）
     $('topView').width = 900; $('topView').height = 300;
     $('frontView').width = 900; $('frontView').height = 240;
     $('sideView').width = 900; $('sideView').height = 260;
@@ -3231,7 +3283,7 @@ window.__NBS2SCHEMATIC = {
   get frontPreview() { return frontPreview; },
   get sidePreview() { return sidePreview; },
   parseNBS, computeDelays, noteFromKey, baseBlockFor, instrumentNameFor,
-  buildLayout, buildPalette, packBlockStates, buildLitematic,
+  buildLayout, buildPalette, buildLitematic,
   SFX_NAMESPACE, SFX_PARTICLE_CMD, SFX_CB_STATE, SFX_PACKFORMAT, sfxPackFormat, sfxParticleCmd,
   buildSfxPackMcmeta, buildSfxFunctions, buildZip, zipCrc32, buildSfxDatapackZip,
   TARGET_VERSIONS, targetEntry, DEFAULT_TARGET_MC,
@@ -3240,7 +3292,7 @@ window.__NBS2SCHEMATIC = {
   lanePoolMembers, onRefToggle, onRefSoundToggle, onRefLaneTypeChange, refSpecOf,
   refLanePoolMembers, addToRefLanes, dropToRefLane, syncRefLaneStarts, duplicateRefLane, deleteRefLane, renderRefLaneSection,
   saveStateNow, loadSavedState, applySavedState, stateKey, fnv1a32,
-  VoxelGrid, NbtWriter, NbtReader, packBlockStates, decodePacked, gzipBytes, gunzipBytes, verifyLitematic, sanitizeFilename, effectiveTickCount, segmentCells,
+  VoxelGrid, NbtWriter, NbtReader, packBlockStates, decodePacked, gzipBytes, gunzipBytes, verifyLitematic, sanitizeFilename, effectiveTickCount,
 };
 
 /* ===== 09 UI 控制器（生成部分：统计、下载、调试导出） ===== */
@@ -3268,10 +3320,15 @@ async function generate() {
     $('sfxZipBtn').hidden = true;
     $('debugBtn').hidden = true;
     const delays = computeDelays(song.tempo, effectiveTickCount(song)); // 覆盖 songLength 及可能的超出音符；固定挡位全歌恒定
-    // 体积上限预估（Uint16Array 内存 ×2 字节 + 位打包开销）
-    const estX = delays.reduce((s, d) => s + segmentCells(d), 0) + 10;
+    // 体积上限预估（Uint16Array 内存 ×2 字节 + 位打包开销）；主链恒 1 档：每 tick 恒 2 格
+    // 余量来源：+10 = X 向安全余量（buildLayout 的 xMax = ticks×2 恰为链尾）；
+    //   +3 = 与 buildLayout 的 sy = maxYb + 3 一致（顶层赭黄蛙灯导轨在 yb+2）；
+    //   +5 = Z 向估计上限（buildLayout 的 sz = zMax + zOffset + 2，zOffset ≥ 1；起点为负时实际更大，
+    //   本预估偏大是安全方向——只用于拒绝超限，不用于产物尺寸）
+    const estX = delays.length * 2 + 10;
     const estY = Math.max(...lanes.map(l => l.start.dy), ...refLanes.map(l => l.start.dy), AppState.lane0.start.dy, 0) + 3;
     const estZ = Math.max(...lanes.map(l => l.start.dz), ...refLanes.map(l => l.start.dz), AppState.lane0.start.dz, 0) + 5;
+    // 4000 万格：Uint16Array 2 字节/格 ≈ 80MB 网格 + 调色板/位打包/产物 NBT 开销，防止浏览器内存打爆
     if (estX * estY * estZ > 40_000_000) {
       showError(`预估体素 ${estX}×${estY}×${estZ} = ${((estX * estY * estZ) / 1e6).toFixed(0)}M 格，超过 4000 万格上限，请减少音轨或缩短歌曲`);
       $('genStatus').textContent = '';
@@ -3376,6 +3433,7 @@ function renderStats() {
   const errs = [];
   const g = AppState.result.result.geometry;
   if (g.xMax > 300) warns.push(`X 跨度 ${g.xMax} 格：超过 300 格时部分红石电路可能超出常用模拟距离（128-512 格），远端可能不播放`);
+  // 2000 格 = 硬报错阈值：远超任何模拟距离档位（最高档也仅数百格），再长的链实际不可玩，直接拦截
   if (g.xMax > 2000) errs.push(`X 跨度 ${g.xMax} 格过大，超出合理模拟距离`);
   if (stats.notesDiscarded > 0) {
     warns.push(`丢弃了 ${stats.notesDiscarded} 个音符（车道内同 tick 超过 3 个音符盒位、或音高超出音符盒音域 key 33-57），详见调试包`);
@@ -3397,6 +3455,7 @@ function downloadLitematic() {
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
+  // 5s 后释放 blob URL：a.click() 触发下载后延迟释放，兼容浏览器异步读取流
   setTimeout(() => URL.revokeObjectURL(url), 5000);
 }
 
@@ -3411,6 +3470,7 @@ function downloadSfxDatapack() {
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
+  // 5s 后释放 blob URL：a.click() 触发下载后延迟释放，兼容浏览器异步读取流
   setTimeout(() => URL.revokeObjectURL(url), 5000);
 }
 
@@ -3456,6 +3516,7 @@ function exportDebugBundle() {
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
+  // 5s 后释放 blob URL：a.click() 触发下载后延迟释放，兼容浏览器异步读取流
   setTimeout(() => URL.revokeObjectURL(url), 5000);
 }
 
@@ -3478,6 +3539,8 @@ dz.addEventListener('drop', (e) => {
 
 function loadFile(file) {
   clearError();
+  // 规模上限前置：NBS 是 KB~MB 级小文件，readAsArrayBuffer 整读之前先拒超大文件（防内存打爆）
+  if (file.size > NBS_MAX_FILE_BYTES) { showError(`文件 ${(file.size / 1024 / 1024).toFixed(0)}MB 超过 256MB 上限，不像 NBS 文件（NBS 通常为 KB~MB 级），请确认选择了 .nbs 文件`); return; }
   const reader = new FileReader();
   reader.onerror = () => showError('读取文件失败');
   reader.onload = () => {

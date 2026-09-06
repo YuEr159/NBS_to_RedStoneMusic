@@ -749,4 +749,23 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
   check(Array.isArray(st.refLanes) && st.refLanes.length === 0, '旧存档恢复：refLanes = 空池');
 }
 
+// 7) v6 小号回退提示：NBS ID 16-19 = MC 26.1 Trumpet 系，目标 MC 1.19.4~1.21.11 note_block 无小号音色
+const trumpBuf = Buffer.from(makeNbs({ tempoTps: 10, songLength: 8, noteSpecs: [
+  { tick: 0, layer: 0, instrument: 16, key: 40 },
+  { tick: 2, layer: 0, instrument: 17, key: 42 },
+  { tick: 4, layer: 0, instrument: 18, key: 44 },
+  { tick: 6, layer: 0, instrument: 19, key: 45 },
+]}));
+trumpBuf[2] = 6; trumpBuf[3] = 20; // 改写头部为 v6（nbs_version 6 + first_custom_index 20，字节格式与 v5 一致）
+context.onSongLoaded(context.parseNBS(new Uint8Array(trumpBuf)), null);
+let infoHtml = elements.get('songInfo').innerHTML;
+check(infoHtml.includes('<b>4</b>') && infoHtml.includes('小号') && infoHtml.includes('harp'),
+  'v6 歌曲含 4 个小号音符：歌曲信息区提示回退 harp（雪块底座）');
+const v5Buf = makeNbs({ tempoTps: 10, songLength: 4, noteSpecs: [
+  { tick: 0, layer: 0, instrument: 16, key: 40 },
+]});
+context.onSongLoaded(context.parseNBS(new Uint8Array(v5Buf)), null);
+infoHtml = elements.get('songInfo').innerHTML;
+check(!infoHtml.includes('小号'), 'v5 歌曲：ID 16 是自定义乐器而非内置小号，不触发小号提示');
+
 process.exit(failed ? 1 : 0);
