@@ -94,8 +94,8 @@ table.info td:first-child { color: var(--text-dim); white-space: nowrap; }
 select, input[type="number"], input[type="text"] { background: var(--panel2); color: var(--text);
   border: 1px solid var(--border); border-radius: 4px; padding: 4px 8px; font-size: 13px; }
 input[type="number"] { width: 70px; }
-#layoutCanvas { border: 1px solid var(--border); border-radius: 6px; background: #12151a; cursor: grab; touch-action: none; }
-#layoutCanvas.dragging { cursor: grabbing; }
+#layoutCanvas, #refLaneCanvas { border: 1px solid var(--border); border-radius: 6px; background: #12151a; cursor: grab; touch-action: none; }
+#layoutCanvas.dragging, #refLaneCanvas.dragging { cursor: grabbing; }
 .layout-tools { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
 .layout-info { color: var(--text-dim); font-size: 12px; margin-top: 6px; }
 #statsPanel { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px; margin-bottom: 12px; }
@@ -118,6 +118,9 @@ input[type="number"] { width: 70px; }
 .lane-drop.drop-active { border-color: #4caf50; color: #4caf50; background: rgba(76, 175, 80, 0.08); }
 .lane-tag { display: inline-block; background: #2d3a4a; border-radius: 3px; padding: 1px 6px; margin: 1px 2px; font-size: 11px; color: var(--text); cursor: pointer; user-select: none; }
 .lane-tag:hover { background: #7a4050; color: #ffd9d9; }
+/* 参考车道「静音」成员（未勾选发声 = 仅节奏/音高参考，用户 2026-09-07 提醒措施）：琥珀色标记 */
+.lane-tag.ref-lane-tag-muted { background: #4a3a1e; color: #e0a33c; }
+.lane-tag.ref-lane-tag-muted:hover { background: #7a5a20; color: #ffd98c; }
 .lane-conflict-ok { font-size: 11px; color: #6fbf73; margin-left: 6px; }
 .lane-conflict-warn { font-size: 11px; color: #e0a33c; margin-left: 6px; font-weight: 700; }
 .merge-advice { background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; margin-bottom: 8px; font-size: 12px; }
@@ -200,13 +203,20 @@ input[type="number"] { width: 70px; }
   </section>
 
   <section id="refLane-section" hidden>
-    <h2>节奏型参考车道池（每条参考车道 = 一条独立物理链 + 3 个音符盒位；成员在左侧音轨池勾选「节奏参考」，或直接拖入下方卡片）</h2>
+    <h2>节奏型参考车道池（纯节奏/音高参考，不生成任何物理结构；成员在左侧音轨池勾选「节奏参考」，或直接拖入下方卡片）</h2>
     <div class="toolbar">
       <button id="addRefLaneBtn">＋ 新增参考车道</button>
       <span class="hint" id="refGroupCount"></span>
-      <span class="hint">勾选音轨池的「节奏参考」→ 默认并入第一条无冲突参考车道、放不下自动新建；也可把左侧音轨池的音轨直接拖入卡片（拖入即登记为节奏参考并入该车道，允许重复拖入占多个盒位齐响）；想让参考声道同时在普通轨道发声（齐响加倍）= 把音轨拖入「车道池」卡片（两套盒都发声，允许重叠）；每条参考车道可选类型（独立型/绑定型，作用于该车道全部成员）——绑定型粒子只锚定本池内该声道的盒</span>
+      <span class="hint">勾选音轨池的「节奏参考」→ 默认并入第一条参考车道、放不下自动新建；也可把左侧音轨池的音轨直接拖入卡片（拖入即登记为节奏参考并入该车道，允许重复拖入）；参考车道**不生成任何方块**，只作为粒子特效的节奏/音高参考——想让参考声道同时在普通轨道发声 = 勾选其行内「发声」（建一条普通车道）或把音轨拖入「车道池」卡片；每条参考车道可选类型（独立型/绑定型，作用于该车道全部成员）——绑定型粒子锚定本车道虚拟盒位、独立型锚定轨道 0 按音高偏移；粒子恒产生（与「发声」无关）</span>
     </div>
     <div id="refLaneList"></div>
+    <h3>参考车道起点布局（Y-Z 截面，独立窗口；参考车道可拖，普通车道为半透明背景、不可移动）</h3>
+    <div class="layout-tools">
+      <button id="fitRefLayoutBtn">缩放到全部</button>
+      <span class="hint">拖拽移动参考车道（虚拟位置，仅作粒子锚点）；普通车道（灰）与轨道 0 仅作空间参照、不可移动；参考车道不参与物理碰撞校验，可与普通车道任意并排</span>
+    </div>
+    <canvas id="refLaneCanvas" width="640" height="420"></canvas>
+    <div class="layout-info" id="refLayoutInfo"></div>
   </section>
 
   <section id="settings-section" hidden>
@@ -228,14 +238,14 @@ input[type="number"] { width: 70px; }
   </section>
 
   <section id="layout-section" hidden>
-    <h2>车道起点布局（Y-Z 截面，可拖拽）</h2>
+    <h2>普通车道起点布局（Y-Z 截面，可拖拽；参考车道为虚拟背景、不可拖——参考车道在上方「参考车道池」的独立窗口中拖拽）</h2>
     <div class="layout-tools">
       <button id="presetLineBtn">预置：单行</button>
       <button id="presetGridBtn">预置：网格</button>
       <button id="presetRadialBtn">预置：放射</button>
       <label class="hint">网格/放射行距(格) <input type="number" id="gridHeight" min="3" max="30" value="5"></label>
       <button id="fitLayoutBtn">缩放到全部</button>
-      <span class="hint">点击标记选中；拖拽移动；选中后可用方向键微调（Shift=大步）</span>
+      <span class="hint">点击标记选中；拖拽移动；选中后可用方向键微调（Shift=大步）；预置模板只重排普通车道</span>
     </div>
     <!-- 初始 640×420：配合 LayoutEditor 初始 zoom/pan（见其构造函数注释）显示默认布局 -->
     <canvas id="layoutCanvas" width="640" height="420"></canvas>
@@ -690,13 +700,15 @@ const DEFAULT_RAIL_LIGHT = 'minecraft:ochre_froglight';
 // 触发区（总线/下降 tap/启动开关）已按用户要求从产物中移除：链头输入侧（X=0 的
 //   中继器输入端）留空，由用户手动铺设总线与开关（用户确认）。
 // refLayers：节奏参考声道 Map<声部下标, {type, sound}>（双类型，用户批准设计 v2）
-//   · 绑定型 bound：必须发声（sound 恒 true，车道池强制含该声道）；粒子以该声道所属车道
-//     的每个音符盒为中心，音符盒发声的同 tick 各触发一次；
-//   · 独立型 independent：sound 可 false（普通轨道不放盒；但参考车道链的盒恒发声，仍是声源与绑定粒子锚点）；
-//     粒子中心锚定轨道 0 链上、与 CB 同高，Z 向按音高线性偏移 (note−12)×sfxPitchStep（用户定：以 12 为中点）。
+//   · 绑定型 bound：粒子锚定所属参考车道的虚拟盒位（参考车道不生成任何物理结构，仅保留假定
+//     起点 + 3 盒位槽位作粒子锚点几何）；粒子恒产生（不受 sound 影响，2026-09-07 参考车道虚拟化后，
+//     用户确认「粒子恒产生（参考意义）」，绑定型不再强制发声）；
+//   · 独立型 independent：粒子中心锚定轨道 0 链上、与 CB 同高，Z 向按音高线性偏移 (note−12)×sfxPitchStep
+//     （用户定：以 12 为中点）；同样恒产生。
+//   sound 对所有类型均为「在普通轨道也发声」显式开关（2026-09-07 起统一语义）。
 // refMode（参考车道池启用后，用户批准设计）：
-//   绑定型粒子只锚定参考车道池（refLanes）内该声道的音符盒——参考车道链上放置该声道时才算数；
-//   声道若在音轨车道池还有盒（允许重叠），那些盒不触发粒子。参考车道未含该绑定型声道 → 粒子整体跳过（空 tick 回退还原 CB）。
+//   绑定型粒子只锚定参考车道池（refLanes）内该声道的虚拟盒位——按 tracks 顺序占槽 0/1/2
+//   （对应 Z +0/+1/−1，同 tick >3 音符丢弃）。参考车道未含该绑定型声道 → 粒子整体跳过（空 tick 回退还原 CB）。
 // 触发几何：所有参考 CB 统一放轨道 0 —— 该 tick 有任意参考音符 → 轨道 0 主位底座
 //   （X_t+1, Yb）雪块换命令方块 (facing=up)，Command = function nbs2sfx:<tick>（0 基 NBS tick）。
 //   轨道 0 无音符 → 主位信号层恒红石粉，粉在机制正上方按红石规则激活下方方块（wiki Redstone power），
@@ -714,7 +726,8 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
 
   // --- 链几何 ---
   // 默认轨道 0 恒存在（即使所有音轨未分配），放在组下标 0 的位置，与音轨车道共享同一套链结构。
-  // 参考车道池（refLanes）作为追加的独立物理链：每条 = 3 个音符盒位，成员来自参考勾选（允许与音轨车道重叠）。
+  // 参考车道池（refLanes）作为追加的**虚拟参考链**（2026-09-07 虚拟化：不生成任何物理结构，
+  //   仅保留虚拟 (zc,yb) 起点 + 3 盒位槽位作为绑定型粒子锚点几何；成员来自参考勾选，可与音轨车道任意重叠）。
   // refLanes 元素与 lanes 同构（{ tracks, start }）。
   const refGroups = (refLanes || []).map(l => ({ layers: l.tracks }));
   const refStarts = (refLanes || []).map(l => l.start);
@@ -753,12 +766,15 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
 
   // --- 网格尺寸 ---
   // 起点允许负 Y/Z（布局编辑器可拖到负坐标）：网格整体平移保证非负——
-  //   yOffset = −min(0, 各链 yb)（底座行平移到网格 y≥0；全非负起点时 =0，与旧行为一致）
-  //   zOffset = 1 − min(0, 各链 zc)（第 3 音符盒占 zc−1；全非负起点时 =1，与旧行为一致）
+  //   yOffset = −min(0, 各真实链 yb)（底座行平移到网格 y≥0；全非负起点时 =0，与旧行为一致）
+  //   zOffset = 1 − min(0, 各真实链 zc)（第 3 音符盒占 zc−1；全非负起点时 =1，与旧行为一致）
   // 只在最小值确为负时平移：全非负布局产物与旧版逐字节一致（gen-example 参考产物回归保护）。
-  // W 内嵌两个偏移；TE 坐标 = 网格坐标；绑定型粒子偏移是两链坐标差，平移对其无影响。
-  const zcList = chains.map(c => c.zc);
-  const ybList = chains.map(c => c.yb);
+  // W 内嵌两个偏移；TE 坐标 = 网格坐标；绑定型粒子偏移是虚拟参考车道与轨道 0 的坐标差，平移对其无影响。
+  // 2026-09-07 参考车道虚拟化：参考车道不生成任何物理结构 → 尺寸/平移只由真实链（轨道 0 + 音轨车道）决定，
+  //   参考车道的虚拟起点即使超出网格范围也不影响产物（它只是粒子锚点几何，不占格）。
+  const realChains = chains.filter(c => !c.isRefLane);
+  const zcList = realChains.map(c => c.zc);
+  const ybList = realChains.map(c => c.yb);
   const zMax = Math.max(...zcList);
   const zOffset = 1 - Math.min(0, ...zcList);
   const maxYb = Math.max(...ybList);
@@ -781,9 +797,10 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
     discardedDetails: [],
   };
   // 节奏参考声道双类型（用户批准设计 v2）；类型选型按参考车道（用户 2026-09-04 定）：
-  //   绑定型 bound（强制发声）：粒子中心 = 所属参考车道音符盒，偏移在放置时按轨道排布求解；
+  //   绑定型 bound：粒子中心 = 所属参考车道的虚拟盒位（参考车道 2026-09-07 起纯虚拟、不生成结构，
+  //     偏移按虚拟 (zc,yb) 与轨道 0 的坐标差求解；粒子恒产生，不受 sound 影响）；
   //   独立型 independent：粒子中心 = 轨道 0 链上同高点，Z 按音高 (note−12)×sfxPitchStep。
-  // refTypeOf：某声道在某条链上的类型——refMode 且链为参考车道 → 取该参考车道的 lane.type；
+  // refTypeOf：某声道的类型——refMode 且声道在任一参考车道内 → 取车道类型（多车道绑定优先）；
   //   否则回退该声道 refLayers 的类型（旧行为/旧调用 refLanes=null 时按声道取）。
   const refTypeOf = (li, laneType) => {
     if (refMode && laneType) return laneType;
@@ -819,7 +836,7 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
       }
     }
   }
-  // 绑定型参考声道在参考车道池无盒（refMode 下）→ 无音符盒可锚定：粒子整体跳过并警告（空 tick 回退会还原 CB）。
+  // 绑定型参考声道不在任何参考车道（refMode 下）→ 无虚拟锚点：粒子整体跳过并警告（空 tick 回退会还原 CB）。
   // 旧模式（refLanes 未传）保持原语义：看音轨车道是否含该声道。
   const layerAnchor = new Set();
   for (const c of chains) {
@@ -829,7 +846,9 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
   for (const li of boundRefLayers) {
     if (!layerAnchor.has(li)) {
       stats.sfxDiscarded += (song.layers[li] && song.layers[li].notes.size) || 0;
-      stats.discardedDetails.push(`绑定型参考声道 #${li} 未分配车道（参考车道池无该声道）：其粒子全部跳过（绑定型必须发声，请在参考车道池分配）`);
+      stats.discardedDetails.push(refMode
+        ? `绑定型参考声道 #${li} 未分配参考车道（无虚拟锚点）：其粒子全部跳过（请在参考车道池分配）`
+        : `绑定型参考声道 #${li} 未分配车道：其粒子跳过（请在车道池分配）`);
     }
   }
   const tileEntities = []; // 命令方块（节奏参考触发，全部在轨道 0）；无参考声道时为空数组
@@ -837,24 +856,26 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
   const sfxCbs = new Map(); // tick → 已放 CB 记录（空 tick 回退用：该 tick 无粒子行 → 还原雪块 + 移除 TE）
   let xCur = 0; // 段首 X（全局）
 
-  // --- 绑定型参考：随音符盒放置逐音符计算粒子行（偏移 = 音符盒坐标 − 轨道 0 CB 坐标，轨道排布求解） ---
-  // refMode（参考车道池启用）下只锚定参考车道链（isRefLane）上的盒：音轨车道上同一声道的重叠盒不触发粒子
+  // --- 绑定型参考：粒子行（偏移 = 所属参考车道虚拟盒位 − 轨道 0 CB 坐标） ---
+  // 2026-09-07 参考车道虚拟化后，绑定行不再随放置产生，改由放置循环后的独立段按参考车道虚拟槽位生成（恒产生）。
+  // 此处保留的 sfxBoundNoteLine 仅供**非 refMode**（refLanes 未传的旧调用/旧行为）随放置路径使用；
+  // refMode 下音轨车道上的盒静默跳过（粒子只锚定参考车道虚拟位置）。
   const railChain = chains.find(c => c.isDefaultRail);
   let curChain = null; // 当前遍历的链（同一声道重复分配到多链时，偏移按实际放置的链算）
   function sfxBoundNoteLine(t, li, slotZ) {
     if (boundRefLayers.indexOf(li) < 0) return;
     const lane = curChain; // 音符盒就放在当前链（curChain 已在链循环入口更新）
     if (refTypeOf(li, lane ? lane.refLaneType : null) !== 'bound') return; // 独立型不产绑定行（双保险）
+    if (refMode) return; // refMode：绑定行由虚拟参考车道段统一生成，放置路径不产
     if (!lane) {
       // 理论上不可达（本函数只由车道放置路径调用）；保险：无链 → 跳过并一次性警告
       if (!refBoundWarned.has(li)) {
         refBoundWarned.add(li);
-        stats.discardedDetails.push(`绑定型参考声道 #${li} 未分配车道：其粒子跳过（绑定型必须发声，请在参考车道池分配）`);
+        stats.discardedDetails.push(`绑定型参考声道 #${li} 未分配车道：其粒子跳过（请在参考车道池分配）`);
       }
       stats.sfxDiscarded++;
       return;
     }
-    if (refMode && !lane.isRefLane) return; // 允许重叠：音轨车道上的重叠盒不产粒子行（静默跳过）
     if (!railChain) return; // 无轨道 0（极端布局）→ 无 CB，粒子行无处附着
     const dx = 0; // 信号前沿同 tick 扫到所有链的同一 X
     const dy = (lane.yb + 1) - railChain.yb;   // 音符盒层 − 轨道 0 底座层
@@ -880,19 +901,20 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
     const cells = 2; // 主链恒 1 档：每 tick 恒 2 格（中继器格 + 主位传导格）
 
     for (const c of chains) {
-      curChain = c; // 绑定型偏移计算用（音符盒所在车道的起点）
+      // 2026-09-07 参考车道虚拟化：参考车道不生成任何物理结构（无中继器/雪块/音符盒/CB），
+      //   只保留虚拟 (zc,yb) 起点作为绑定型粒子锚点几何（见下方虚拟槽位段）
+      if (c.isRefLane) continue;
+      curChain = c; // 绑定型偏移计算用（非 refMode 旧路径：音符盒所在车道的起点）
       const { zc, yb } = c;
       const ySig = yb + 1;
 
-      // 收集本 tick 组内音符（按层顺序）。参考声道盒位规则（2026-09-06 最终语义）：
-      //   · 参考车道链（isRefLane）：成员恒收集发声——参考车道本身即参考声源（盒 + 粒子锚点），
-      //     「发声」框只控制普通轨道是否也放盒；无 refLayers 记录的手工成员同样发声
-      //   · 音轨车道/轨道 0 链：参考声道仅当「发声」勾选时放置（绑定型 sound 恒 true）；
-      //     sound=false 的参考不进音轨车道，此处再保险
+      // 收集本 tick 组内音符（按层顺序）。参考声道盒位规则（2026-09-07 最终语义）：
+      //   · 参考车道纯虚拟（上面已 continue），发声唯一来源 = 普通车道/轨道 0 的真实音符盒
+      //   · 音轨车道/轨道 0 链：参考声道仅当「发声」勾选时放置（sound=false 不进音轨车道，此处再保险）
       const notes = [];
       for (const li of c.layers) {
         const spec = refLayers && refLayers.has(li) ? normRef(refLayers.get(li)) : null;
-        if (!c.isRefLane && spec && spec.sound === false) continue;
+        if (spec && spec.sound === false) continue;
         const note = song.layers[li] && song.layers[li].notes.get(t);
         if (note) notes.push({ layerIdx: li, note });
       }
@@ -997,6 +1019,33 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
     xCur += cells;
   }
 
+  // --- 绑定型参考（refMode）：粒子行按参考车道**虚拟槽位**生成（2026-09-07 参考车道虚拟化） ---
+  // 参考车道不生成物理盒，粒子锚定其假定的盒位：槽位规则与真实链一致（lane.tracks 顺序 → 槽 0/1/2 → Z +0/+1/−1，
+  //   同刻 >3 个成员音符按序丢弃），偏移 = (参考车道虚拟盒 − 轨道 0 CB)。**恒产生**，不受 sound 影响（参考意义）。
+  // 行序：按参考车道（refLanes 顺序）逐 tick 追加，与旧版「车道放置顺序」一致；独立行随后，整体仍是绑定在前。
+  if (refMode && railChain) {
+    for (const r of chains.filter(c => c.isRefLane)) {
+      if (r.refLaneType !== 'bound') continue; // 独立型车道不产绑定行（粒子走轨道 0 音高偏移路径）
+      for (let t = 0; t < nTicks; t++) {
+        // 按 lane.tracks 顺序收集本 tick 成员音符（允许重复成员 = 多槽位齐响）
+        const hit = [];
+        for (const li of r.layers) {
+          const note = song.layers[li] && song.layers[li].notes.get(t);
+          if (note) hit.push({ li, note });
+        }
+        hit.forEach((h, i) => {
+          if (i >= 3) { stats.sfxDiscarded++; return; } // 超 3 位丢弃（与真实链规则一致）
+          if (boundRefLayers.indexOf(h.li) < 0) return; // 该声道非绑定型（多车道绑定优先已由 refTypeOf 处理）
+          const slotZ = [0, 1, -1][i];
+          const dy = (r.yb + 1) - railChain.yb;     // 虚拟盒层 − 轨道 0 底座层
+          const dz = (r.zc + slotZ) - railChain.zc; // 槽位 Z
+          if (!sfxTickLines.has(t)) sfxTickLines.set(t, []);
+          sfxTickLines.get(t).push(sfxParticleCmd(0, dy, dz));
+          stats.sfxBoundNotes++;
+        });
+      }
+    }
+  }
   // --- 独立型参考：粒子行汇总（粒子中心锚定轨道 0 链、与 CB 同高，Z 按音高偏移） ---
   // 独立型不依赖音符盒放置，仅要求轨道 0 存在（有 CB 可触发）；行序 = 声部升序，与绑定行互不交叉
   if (railChain) {
@@ -1476,17 +1525,19 @@ const AppState = {
   fileBytes: null,
   selectedLayers: new Set(),   // 音轨池：勾选的声部下标
   // 节奏参考声道：Map<声部下标, {type, sound}>（双类型，用户批准设计 v2）。
-  //   type='bound' 绑定型：强制发声（sound 恒 true），粒子以所属车道音符盒为中心，偏移按轨道排布求解；
-  //   type='independent' 独立型：sound 可 false（普通轨道不放盒；参考车道链的盒恒发声），粒子中心锚定轨道 0、与 CB 同高，
-  //     Z 向按音高 (note−12)×settings.sfxPitchStep。
+  //   type='bound' 绑定型：粒子锚定所属参考车道的虚拟盒位（参考车道不生成任何物理结构）；粒子恒产生；
+  //   type='independent' 独立型：粒子中心锚定轨道 0、与 CB 同高，
+  //     Z 向按音高 (note−12)×settings.sfxPitchStep；同样恒产生。
+  //   sound = 「在普通轨道也发声」显式开关（对所有类型统一，2026-09-07 起绑定型也可取消）。
   // 触发：轨道 0 主位底座命令方块 + nbs2sfx 数据包（buildSfxDatapackZip）；旧存档 bool 值按独立型迁移。
   refLayers: new Map(),
   lanes: [],             // 车道池：[{ tracks: [layerIdx...], start: {dz, dy} }]，每条车道 = 一条物理链
                          // start = 该链起点在 Y-Z 截面的偏移，随车道对象同生共死（删除/复制/插入不会错位）
-  // 参考车道池：与 lanes 同构（{ tracks, start }），每条参考车道 = 一条独立物理链（3 个音符盒位）。
+  // 参考车道池：与 lanes 同构（{ tracks, start }），每条参考车道 = 一条虚拟参考（不生成任何物理结构，
+  //   2026-09-07 虚拟化：start + 3 盒位槽位仅作为粒子锚点几何与拖拽占位，可与普通车道任意并排、不参与碰撞校验）。
   // 成员 = 勾选了「节奏参考」的声道，用勾选式并入（onRefToggle → 第一条无冲突参考车道，放不下新建），
-  // 与车道池的拖拽分配不同；允许与车道池重叠（同一声道两套盒都发声，用户批准设计）。
-  // 绑定型粒子只锚定参考车道内该声道的音符盒（buildLayout refMode）。
+  // 与车道池的拖拽分配不同；允许与车道池成员重叠（同一声道在普通车道放真实盒 + 参考车道提供粒子参考）。
+  // 绑定型粒子只锚定参考车道内该声道的虚拟盒位（buildLayout refMode 虚拟绑定行段）。
   refLanes: [],
   lane0: { start: { dz: 0, dy: 0 } }, // 默认轨道 0（顶层雪块导轨 + 每 32 格赭黄蛙灯；
                          // 同时承载节奏参考粒子命令方块——触发链，起点可拖拽，持久化在 localStorage）
@@ -1602,8 +1653,7 @@ function renderLayerList() {
       .map(id => id < 16 ? INSTRUMENT_NAMES_CN[id] : `自定#${id}`).join('+');
     const isRef = AppState.refLayers.has(i);
     const spec = isRef ? refSpecOf(AppState.refLayers.get(i)) : null;
-    const refOn = spec ? spec.sound : false; // 发声（独立型默认勾；绑定型恒勾）
-    const isBound = spec && spec.type === 'bound';
+    const refOn = spec ? spec.sound : false; // 「在普通轨道也发声」开关（对所有类型统一）
     const row = document.createElement('div');
     row.className = 'layer-row';
     row.draggable = true;                    // 可拖到车道池分配
@@ -1621,8 +1671,8 @@ function renderLayerList() {
           <span>节奏参考</span>
         </label>
         ${isRef ? `
-        <label class="layer-sound-cell" title="在普通轨道也发声：勾选 = 在「车道池」也放该声道的音符盒（与参考车道的盒齐响加倍）；取消 = 只有参考车道的盒、普通轨道不放。绑定型恒勾选">
-          <input type="checkbox" class="layer-sound" data-i="${i}" ${refOn ? 'checked' : ''} ${isBound ? 'disabled' : ''}>
+        <label class="layer-sound-cell" title="在普通轨道也发声：勾选 = 在「车道池」放该声道的真实音符盒（普通车道发声）；取消 = 普通轨道无盒，只留参考车道的节奏/音高参考（粒子恒产生）。对所有类型统一">
+          <input type="checkbox" class="layer-sound" data-i="${i}" ${refOn ? 'checked' : ''}>
           <span>发声</span>
         </label>` : ''}
       </span>`;
@@ -1852,8 +1902,8 @@ function refSpecOf(v) {
 //   · 普通声道：参与 ⇔ 主勾选（selectedLayers）
 //   · 参考声道：不进入本池——由参考车道池管理；勾选「节奏参考」不再自动复制一份进音轨车道
 //     （用户 2026-09-06 反馈的多余副本），自动分配/打包建议也不应替它入位。
-//     想让参考声道在普通轨道也发声（齐响加倍）= 显式把音轨拖入「车道池」卡片（两套盒都发声，允许重叠，用户批准设计）。
-// 参考+不发声（sound=false）= 普通轨道无盒，但参考车道链的盒恒发声（仍是声源）。
+//     想让参考声道在普通轨道也发声 = 显式把音轨拖入「车道池」卡片（普通车道放真实盒，允许与参考车道成员重叠）。
+// 参考+不发声（sound=false）= 普通轨道无盒，纯节奏/音高参考（参考车道不生成任何结构，粒子仍恒产生）。
 function lanePoolMembers(song) {
   const out = [];
   song.layers.forEach((_, i) => {
@@ -1921,8 +1971,8 @@ function placeInLanesIfAbsent(i) {
 // 参考框勾选/取消（用户 2026-09-06 反馈后的最终语义）：
 // 勾选 = 登记为节奏参考声道（默认独立型、sound=false）+ 勾选式并入参考车道池（第一条无冲突、否则新建）
 //   —— 不再自动在「车道池」复制一份盒（旧版无提示地双份放置被用户反馈为多余）；
-//   参考车道是独立物理链，其盒恒发声 + 粒子；想同时在普通轨道也放盒（齐响加倍）= 勾行内「发声」框
-//   （或把音轨拖入「车道池」卡片，显式操作，允许重叠两套盒）。
+//   参考车道纯虚拟（不生成任何结构）：勾选参考 = 普通轨道无盒，只留节奏/音高参考 + 粒子（恒产生）；
+//   想让它在普通轨道也发声（真实音符盒）= 勾行内「发声」框（或把音轨拖入「车道池」卡片，显式操作，允许重叠）。
 // 取消 = 移出参考状态（「发声」框一并移除）+ 从参考车道池移除；若「发声」在（普通轨道有盒）则盒一并移除；
 //   主勾选标记与参考状态同进退（勾选时加、取消时删）
 function onRefToggle(i, checked) {
@@ -1947,8 +1997,8 @@ function onRefToggle(i, checked) {
 }
 
 // 参考车道类型下拉（选型按参考车道）：一条参考车道的全部成员声道共用同一类型，存 lane.type。
-// 切绑定型：全部成员强制发声（refLayers type=bound、sound=true、确保在音轨车道池；未分配者并入本车道）；
-// 切独立型：成员 refLayers type=independent（sound 保持当前——绑定型恒 true，独立型可再取消发声）。
+// 2026-09-07 参考车道虚拟化后：切换类型只改 lane.type + 成员 refLayers 的 type 字段（sound 保持原值——
+// 绑定型不再强制发声、也不再自动进音轨车道池；「在普通轨道发声」仍由行内「发声」框显式控制）。
 // 边界：同一成员分属多条参考车道时类型冲突，refLayers 按「绑定优先」合并（构建侧取车道级类型，绑定语义更强）。
 function onRefLaneTypeChange(li, type) {
   const lane = AppState.refLanes[li];
@@ -1961,16 +2011,13 @@ function onRefLaneTypeChange(li, type) {
     if (!AppState.refLayers.has(i)) continue; // 非参考成员（手工加入）：无 refLayers 记录可写
     const cur = refSpecOf(AppState.refLayers.get(i));
     if (type === 'bound') {
-      if (cur.type === 'bound' && cur.sound === true) continue;
-      AppState.refLayers.set(i, { type: 'bound', sound: true });
-      AppState.selectedLayers.add(i);
-      // 绑定型：行内「发声」置位 → 音轨车道池也放一份盒（普通轨道齐响）；已在某车道（齐响）则不重复
-      placeInLanesIfAbsent(i);
+      if (cur.type === 'bound') continue;
+      AppState.refLayers.set(i, { type: 'bound', sound: cur.sound }); // sound 保持原值（不强制发声）
     } else {
       AppState.refLayers.set(i, { type: 'independent', sound: cur.sound });
       // 其他参考车道仍绑定该成员 → 绑定优先，不随本车道降级
       const stillBound = AppState.refLanes.some(l => l !== lane && (l.type || 'independent') === 'bound' && l.tracks.includes(i));
-      if (stillBound) AppState.refLayers.set(i, { type: 'bound', sound: true });
+      if (stillBound) AppState.refLayers.set(i, { type: 'bound', sound: cur.sound });
     }
   }
   renderLayerList();
@@ -1980,19 +2027,19 @@ function onRefLaneTypeChange(li, type) {
 }
 
 // 发声框勾选/取消（参考声道的「在普通轨道也发声」开关，用户 2026-09-06 起语义）：
-//   勾选 = 在音轨车道池放置该声道的盒（两套盒都发声 = 齐响，显式操作、允许重叠）；
-//   取消 = 从音轨车道池移除该声道的盒（参考车道盒与粒子时序保留 = 「只参考车道发声」）；
-//   绑定型强制发声（框禁用）。参考车道池成员资格与发声框无关（勾选参考/拖入即登记）。
+//   勾选 = 在音轨车道池放置该声道的盒（普通车道真实发声；参考车道恒虚拟，粒子锚点不变）；
+//   取消 = 从音轨车道池移除该声道的盒（参考车道不生成任何结构，粒子仍恒产生 = 「纯节奏/音高参考」）；
+//   2026-09-07 参考车道虚拟化后：绑定型不再强制发声（框对绑定型也可自由开关）；
+//   参考车道池成员资格与发声框无关（勾选参考/拖入即登记）。
 function onRefSoundToggle(i, soundOn) {
   const spec = AppState.refLayers.get(i) !== undefined ? refSpecOf(AppState.refLayers.get(i)) : null;
   if (!spec) return;
-  if (spec.type === 'bound') soundOn = true; // 绑定型强制发声
   AppState.refLayers.set(i, { type: spec.type, sound: soundOn });
   if (soundOn) {
     AppState.selectedLayers.add(i);
-    placeInLanesIfAbsent(i); // 进音轨车道池（已在某车道则跳过 = 齐响不重复入位）
+    placeInLanesIfAbsent(i); // 进音轨车道池（已在某车道则跳过 = 不重复入位）
   } else {
-    // 「只参考车道发声」：只从音轨车道池移除盒（参考车道盒保留，仍发声）
+    // 「纯节奏/音高参考」：从音轨车道池移除盒（参考车道不生成任何结构，粒子仍恒产生）
     AppState.selectedLayers.delete(i);
     for (const lane of AppState.lanes) {
       lane.tracks = lane.tracks.filter(t => t !== i);
@@ -2259,8 +2306,8 @@ function syncLaneStarts() {
   });
 }
 
-// 参考车道池成员：勾选了「节奏参考」的全部声道（含「不发声」的独立参考——普通轨道不放盒，
-// 但参考车道链的盒恒发声并贡献粒子时序，未分配检查要覆盖它；「在普通轨道也发声」= 声道的 sound 开关，与本池成员资格无关）
+// 参考车道池成员：勾选了「节奏参考」的全部声道（含「不发声」的纯参考——普通轨道无盒，
+// 但粒子恒产生（参考意义），未分配检查要覆盖它；「在普通轨道也发声」= 声道的 sound 开关，与本池成员资格无关）
 function refLanePoolMembers(song) {
   const out = [];
   song.layers.forEach((_, i) => {
@@ -2271,8 +2318,8 @@ function refLanePoolMembers(song) {
 
 // 参考车道成员增量：勾选式并入（onRefToggle 勾选时调用）——
 // 追加到第一条无冲突参考车道（且未含该声道），否则新建一条；取消由 onRefToggle 直接从各条移除。
-// 类型选型随车道：并入绑定型车道 → 成员 refLayers 类型跟随车道（绑定强制发声）；
-// 车道池的入位由调用方随后的 onLayerToggle(i, true) 完成（不在此处，避免重复入位）。
+// 类型选型随车道：并入绑定型车道 → 成员 refLayers 类型跟随车道（sound 保持原值——2026-09-07 虚拟化后
+// 绑定型不再强制发声，「在普通轨道发声」仍由行内「发声」框显式控制）。
 function addToRefLanes(i) {
   const song = AppState.song;
   const layer = song.layers[i];
@@ -2291,31 +2338,32 @@ function addToRefLanes(i) {
   if (!placed) AppState.refLanes.push({ tracks: [i], type: 'independent' });
   const host = AppState.refLanes.find(l => l.tracks.includes(i));
   if (host && (host.type || 'independent') === 'bound' && AppState.refLayers.has(i)) {
-    AppState.refLayers.set(i, { type: 'bound', sound: true });
+    const cur = refSpecOf(AppState.refLayers.get(i));
+    AppState.refLayers.set(i, { type: 'bound', sound: cur.sound }); // sound 保持原值（不强制发声）
   }
   syncRefLaneStarts();
 }
 
-// 拖拽并入指定参考车道（类车道池拖放：允许重复拖入同一音轨 = 占多个音符盒位齐响）：
+// 拖拽并入指定参考车道（类车道池拖放：允许重复拖入同一音轨 = 占多个粒子槽位）：
 // 拖入即登记为节奏参考声道（未勾选参考的音轨默认独立型 + sound=true——行内「发声」框默认勾，
-// 用户可随后取消 = 只留参考车道一份）；
+// 用户可随后取消 = 纯节奏/音高参考，普通轨道无盒；已登记成员保留原 sound 值，不再强制置位）；
 // 从其他参考车道移入本车道（同一成员保留多份 = 重复拖入）；
 // 不进音轨车道池（与勾选「节奏参考」同一规则，用户 2026-09-06 反馈的多余副本；
-//   「发声」框勾选 / 把音轨拖入「车道池」卡片 = 显式让它在普通轨道也发声，两套盒都发声，允许重叠）；
-// 并入绑定型车道 → 成员 refLayers 类型跟随车道。与勾选式并入（addToRefLanes 自动选车道）并存。
+//   「发声」框勾选 / 把音轨拖入「车道池」卡片 = 显式让它在普通轨道发声）；
+// 并入绑定型车道 → 成员 refLayers 类型跟随车道（sound 不动，2026-09-07 绑定型不再强制发声）。与勾选式并入（addToRefLanes 自动选车道）并存。
 function dropToRefLane(t, li) {
   const lane = AppState.refLanes[li];
   const song = AppState.song;
   if (!lane || !Number.isInteger(t) || !song.layers[t]) return;
   const isRef = AppState.refLayers.has(t);
-  if (!isRef) AppState.refLayers.set(t, { type: 'independent', sound: true });
+  if (!isRef) AppState.refLayers.set(t, { type: 'independent', sound: true }); // 新登记默认发声（可随后取消）
   const cur = refSpecOf(AppState.refLayers.get(t));
-  if (cur.sound !== true) AppState.refLayers.set(t, { type: cur.type, sound: true });
-  // 参考车道内移：从其他参考车道移除该音轨（保留本车道内已有的重复份 = 齐响）
+  // 2026-09-07 起不再强制 sound=true：未发声的参考 = 纯节奏/音高参考（提醒见 renderRefLaneSection 的琥珀标记）
+  // 参考车道内移：从其他参考车道移除该音轨（保留本车道内已有的重复份 = 占多个粒子槽位）
   for (const l of AppState.refLanes) if (l !== lane) l.tracks = l.tracks.filter(x => x !== t);
   lane.tracks.push(t);
   lane.tracks.sort((a, b) => a - b);
-  if ((lane.type || 'independent') === 'bound') AppState.refLayers.set(t, { type: 'bound', sound: true });
+  if ((lane.type || 'independent') === 'bound') AppState.refLayers.set(t, { type: 'bound', sound: refSpecOf(AppState.refLayers.get(t)).sound }); // 类型跟随车道，sound 不动
   AppState.selectedLayers.add(t);
   syncRefLaneStarts();
   updateLayerCount();
@@ -2347,7 +2395,7 @@ function syncRefLaneStarts() {
   });
 }
 
-// 复制参考车道：插入原车道之后（两条独立链播放相同参考音轨 = 粒子/齐响加倍）
+// 复制参考车道：插入原车道之后（两条虚拟参考播放相同音轨 = 粒子锚点加倍）
 function duplicateRefLane(li) {
   const src = AppState.refLanes[li];
   if (!src) return false;
@@ -2391,13 +2439,27 @@ function renderRefLaneSection() {
     emptyHint.textContent = '尚无参考车道：在左侧音轨池勾选「节奏参考」即自动创建/并入，或先新增再拖入音轨';
     list.appendChild(emptyHint);
   } else if (pool.length > 0) {
-    // 未分配检查：参考成员未被任何参考车道引用（仅在卡片内移除标签后出现）→ 无盒可锚定
+    // 未分配检查：参考成员未被任何参考车道引用（仅在卡片内移除标签后出现）→ 无锚点
     const unassigned = unassignedTracks(song, pool, AppState.refLanes);
     if (unassigned.length > 0) {
       const warn = document.createElement('div');
       warn.className = 'hint';
       warn.style.color = '#e0a33c';
-      warn.textContent = `⚠ 参考成员未分配参考车道：#${unassigned.join('/#')}（无音符盒；绑定型将无粒子可锚定）`;
+      warn.textContent = `⚠ 参考成员未分配参考车道：#${unassigned.join('/#')}（无锚点，粒子全部跳过；绑定型尤其需要分配）`;
+      list.appendChild(warn);
+    }
+  }
+  // 静音成员提醒（用户 2026-09-07 要求）：未勾「发声」的参考成员 = 普通轨道无盒、仅节奏/音高参考
+  {
+    const muted = pool.filter(t => {
+      const s = AppState.refLayers.get(t) !== undefined ? refSpecOf(AppState.refLayers.get(t)) : null;
+      return !s || s.sound === false;
+    });
+    if (muted.length > 0) {
+      const warn = document.createElement('div');
+      warn.className = 'hint';
+      warn.style.color = '#e0a33c';
+      warn.textContent = `⚠ 以下参考成员未勾选「发声」（标签标琥珀）：#${muted.join('/#')}——普通轨道无盒，仅节奏/音高参考（粒子恒产生）；想同时发声请在左侧音轨池勾选其「发声」`;
       list.appendChild(warn);
     }
   }
@@ -2409,13 +2471,13 @@ function renderRefLaneSection() {
     const nameSpan = document.createElement('span');
     nameSpan.className = 'lane-name';
     nameSpan.textContent = `参考车道 ${li + 1}`;
-    nameSpan.title = '独立物理链：与车道池允许重叠（同一声道两套盒都发声）；绑定型粒子只锚定本池内的盒';
+    nameSpan.title = '纯虚拟参考：不生成任何物理结构，可与普通车道任意并排（不参与碰撞校验）；起点 + 3 盒位槽位仅作粒子锚点几何';
     head.appendChild(nameSpan);
     const dupBtn = document.createElement('button');
     dupBtn.className = 'lane-dup ref-lane-dup';
     dupBtn.textContent = '⧉ 复制';
     dupBtn.dataset.li = String(li);
-    dupBtn.title = '复制本参考车道（音轨相同，生成第二条独立链）';
+    dupBtn.title = '复制本参考车道（音轨相同，第二条虚拟参考 = 粒子锚点加倍）';
     head.appendChild(dupBtn);
     const delBtn = document.createElement('button');
     delBtn.className = 'lane-del ref-lane-del';
@@ -2433,7 +2495,7 @@ function renderRefLaneSection() {
     const typeSel = document.createElement('select');
     typeSel.className = 'ref-lane-type';
     typeSel.dataset.li = String(li);
-    typeSel.title = '本参考车道全部成员声道共用的参考类型（选型按车道）：绑定型 = 粒子以本车道该声道音符盒为中心（成员必须发声）；独立型 = 粒子锚定轨道 0，Z 按音高偏移（可只留参考车道发声、普通轨道不放盒）';
+    typeSel.title = '本参考车道全部成员声道共用的参考类型（选型按车道）：绑定型 = 粒子锚定本车道该声道的虚拟盒位（按槽位偏移）；独立型 = 粒子锚定轨道 0，Z 按音高偏移。参考车道恒为虚拟参考，粒子恒产生（与「发声」无关）';
     typeSel.innerHTML = `<option value="independent" ${laneType === 'independent' ? 'selected' : ''}>独立型</option>
       <option value="bound" ${laneType === 'bound' ? 'selected' : ''}>绑定型</option>`;
     typeSel.addEventListener('change', (e) => onRefLaneTypeChange(li, e.target.value));
@@ -2446,15 +2508,22 @@ function renderRefLaneSection() {
       tag.className = 'lane-tag ref-lane-tag';
       tag.dataset.li = String(li);
       tag.dataset.ti = String(ti);
-      tag.title = '点击移除本次分配（不影响「节奏参考」勾选状态；如需彻底退出参考，取消音轨池的参考勾选）';
-      tag.textContent = `#${t} ${song.layers[t] && song.layers[t].name ? song.layers[t].name : '(未命名)'} ✕`;
+      const sp = AppState.refLayers.get(t) !== undefined ? refSpecOf(AppState.refLayers.get(t)) : null;
+      const muted = !sp || sp.sound === false;
+      if (muted) {
+        tag.classList.add('ref-lane-tag-muted');
+        tag.title = '未勾选「发声」：普通轨道无盒，仅作节奏/音高参考（粒子恒产生）。想同时在普通轨道发声，请在左侧音轨池勾选该声道的「发声」。点击移除本次分配（不影响「节奏参考」勾选状态）';
+      } else {
+        tag.title = '点击移除本次分配（不影响「节奏参考」勾选状态；如需彻底退出参考，取消音轨池的参考勾选）';
+      }
+      tag.textContent = `#${t} ${song.layers[t] && song.layers[t].name ? song.layers[t].name : '(未命名)'}${muted ? '（静音）' : ''} ✕`;
       tags.appendChild(tag);
     });
     row.appendChild(tags);
     const hint = document.createElement('div');
     hint.className = 'lane-drop ref-lane-drop';
     hint.dataset.li = String(li);
-    hint.textContent = '把左侧音轨池的音轨拖到这里即并入本车道（已勾选参考的音轨可重复拖入，占多个盒位齐响）';
+    hint.textContent = '把左侧音轨池的音轨拖到这里即并入本车道（已勾选参考的音轨可重复拖入，占多个粒子槽位；未勾「发声」的成员标签标琥珀 = 仅节奏/音高参考）';
     row.appendChild(hint);
     list.appendChild(row);
   });
@@ -2604,11 +2673,16 @@ function renderSettings() {
   }
 }
 
-/* ===== 10 布局编辑器（Y-Z 截面，拖拽链起点） ===== */
+/* ===== 10 布局编辑器（Y-Z 截面，拖拽链起点） =====
+   2026-09-07 双窗口：mode 'main'（默认，管轨道 0 + 普通车道；参考车道为半透明虚拟背景、不可拖）
+   / mode 'ref'（参考车道专用窗口：参考车道可拖，普通车道 + 轨道 0 半透明背景不可拖）。
+   参考车道 2026-09-07 起纯虚拟（不生成结构），只作粒子锚点几何 → 不参与物理碰撞校验。 */
 class LayoutEditor {
-  constructor(canvas) {
+  constructor(canvas, mode = 'main', infoEl = null) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
+    this.mode = mode;                       // 'main' | 'ref'
+    this.infoEl = infoEl;                   // updateInfo 写入的 DOM 元素（各自窗口独立）
     // 初始视图参数：zoom 22 px/格 下 640×420 画布可见约 29×19 格，
     // panX/panY 把原点对准 (50,210)，使默认多车道布局（dz 约 0~30、dy 0~1）居中可见
     this.zoom = 22;
@@ -2622,21 +2696,41 @@ class LayoutEditor {
     this.fitted = false;
     this.bindEvents();
   }
-  groups() { return AppState.lanes || []; }
-  // 布局标记 = [默认轨道 0, 车道 1, …, 参考车道 R1, …]（轨道 0 恒存在，下标 0 固定；参考车道排在音轨车道之后）
+  // 该窗口「可拖拽」的种类集合
+  dragKinds() { return this.mode === 'ref' ? new Set(['ref']) : new Set(['lane']); }
+  // 布局标记（含 kind 标签）。main = [轨道0, 车道1..n, 参考 R1..]（ref 不可拖）；
+  //   ref  = [参考 R1.., 车道1..n, 轨道0]（ref 可拖、车道/轨道0 背景不可拖）
+  //   缺 start 的车道按 (0,0) 兜底显示（UI 路径 syncLaneStarts/syncRefLaneStarts 恒补 start，
+  //   此处仅为直接改状态的外部调用/测试不致崩溃）
   starts() {
-    const s0 = AppState.lane0 ? AppState.lane0.start : { dz: 0, dy: 0 };
-    return [s0, ...AppState.lanes.map(l => l.start), ...(AppState.refLanes || []).map(l => l.start)];
+    const s0 = () => ({ dz: 0, dy: 0 });
+    if (this.mode === 'ref') {
+      return [
+        ...(AppState.refLanes || []).map(l => ({ start: l.start || s0(), kind: 'ref' })),
+        ...AppState.lanes.map(l => ({ start: l.start || s0(), kind: 'lane' })),
+        { start: AppState.lane0 ? AppState.lane0.start : { dz: 0, dy: 0 }, kind: 'lane0' },
+      ];
+    }
+    // main
+    return [
+      { start: AppState.lane0 ? AppState.lane0.start : { dz: 0, dy: 0 }, kind: 'lane0' },
+      ...AppState.lanes.map(l => ({ start: l.start || s0(), kind: 'lane' })),
+      ...(AppState.refLanes || []).map(l => ({ start: l.start || s0(), kind: 'ref' })),
+    ];
   }
-  refStartsCount() { return (AppState.refLanes || []).length; }
-  // 布局下标 → 所属数组下标（0=轨道 0；1..N=车道池；其后为参考车道池）
+  // 下标 → 起点 {dz,dy}（兼容旧调用 .starts()[i].dz/.dy）
+  startOf(i) { return this.starts()[i].start; }
+  kindOf(i) { return this.starts()[i].kind; }
+  // 下标 → 所属数组下标（kind + j）
   idxKind(i) {
-    if (i === 0) return { kind: 'lane0' };
-    if (i - 1 < AppState.lanes.length) return { kind: 'lane', j: i - 1 };
-    const j = i - 1 - AppState.lanes.length;
-    if (j < (AppState.refLanes || []).length) return { kind: 'ref', j };
+    const k = this.kindOf(i);
+    if (k === 'lane0') return { kind: 'lane0' };
+    if (k === 'lane') return { kind: 'lane', j: this.mode === 'ref'
+      ? i - (AppState.refLanes || []).length : i - 1 };
+    if (k === 'ref') return { kind: 'ref', j: this.mode === 'ref' ? i : i - 1 - AppState.lanes.length };
     return {};
   }
+  refStartsCount() { return (AppState.refLanes || []).length; }
   w2s(z, y) {
     return { x: this.panX + z * this.zoom, y: this.panY - y * this.zoom };
   }
@@ -2644,22 +2738,27 @@ class LayoutEditor {
     return { z: (x - this.panX) / this.zoom, y: (this.panY - y) / this.zoom };
   }
   groupColor(gi) {
-    const g = this.groups()[gi];
+    const g = AppState.lanes[gi];
     if (!g || g.tracks.length === 0) return '#8b94a3';
     const inst = AppState.song.layers[g.tracks[0]].notes.size > 0
       ? AppState.song.layers[g.tracks[0]].notes.values().next().value.instrument : 0;
     return inst < 16 ? NOTE_BLOCK_COLORS[inst] : '#8b94a3';
   }
+  // 该下标标记是否可拖拽（轨道 0 恒不可拖；kind 是否在本窗口 dragKinds 内）
+  draggable(i) {
+    return this.dragKinds().has(this.kindOf(i));
+  }
   bindEvents() {
     const cv = this.canvas;
-    // 布局下标 → 所属数组（布局 0 = 默认轨道 0，不可拖拽；其余车道/参考车道均可拖）
+    // 布局下标 → 所属数组；可拖性由 draggable() 判定（轨道 0 恒不可拖；窗口 mode 决定 lane/ref 谁可拖）
     cv.addEventListener('pointerdown', (e) => {
       cv.setPointerCapture(e.pointerId);
+      activeLayoutEditor = this; // 方向键只作用于最近交互的窗口
       this.lastPointer = { x: e.offsetX, y: e.offsetY };
       const hits = this.hitTest(e.offsetX, e.offsetY);
       if (hits.length > 0) {
         this.selected = hits[hits.length - 1];
-        this.dragIndex = this.selected; // 拖拽在 pointermove 里按 dragIndex>=1 过滤（轨道 0 只选中不拖）
+        this.dragIndex = this.selected; // 拖拽在 pointermove 里按 draggable() 过滤（背景标记只选中不拖）
         cv.classList.add('dragging');
       } else {
         this.selected = -1;
@@ -2672,14 +2771,14 @@ class LayoutEditor {
       const dx = e.offsetX - this.lastPointer.x, dy = e.offsetY - this.lastPointer.y;
       this.lastPointer = { x: e.offsetX, y: e.offsetY };
       const sel = this.idxKind(this.dragIndex);
-      if (this.dragIndex >= 1 && sel.kind === 'lane' && AppState.lanes[sel.j]) {
+      if (this.draggable(this.dragIndex) && sel.kind === 'lane' && AppState.lanes[sel.j]) {
         const w = this.s2w(e.offsetX, e.offsetY);
         const z = Math.round(w.z);   // 允许负坐标（网格生成时整体平移保证非负）
         const y = Math.round(w.y);
         AppState.lanes[sel.j].start = { dz: z, dy: y };
         this.draw(); this.updateInfo();
         scheduleStateSave();
-      } else if (this.dragIndex >= 1 && sel.kind === 'ref' && AppState.refLanes[sel.j]) {
+      } else if (this.draggable(this.dragIndex) && sel.kind === 'ref' && AppState.refLanes[sel.j]) {
         const w = this.s2w(e.offsetX, e.offsetY);
         const z = Math.round(w.z);
         const y = Math.round(w.y);
@@ -2714,11 +2813,13 @@ class LayoutEditor {
       this.draw();
     }, { passive: false });
     window.addEventListener('keydown', (e) => {
+      // 双窗口各绑 window keydown：只让最近交互过的窗口响应（避免两窗口选中项同时被方向键移动）
+      if (activeLayoutEditor && activeLayoutEditor !== this) return;
       if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA')) return;
       if (this.selected < 0) return;
+      if (!this.draggable(this.selected)) return; // 背景标记（轨道 0 / 非本窗口的 kind）不响应方向键
       const sel = this.idxKind(this.selected);
-      const lane = sel.kind === 'lane0' ? AppState.lane0
-        : sel.kind === 'lane' ? AppState.lanes[sel.j]
+      const lane = sel.kind === 'lane' ? AppState.lanes[sel.j]
         : sel.kind === 'ref' ? AppState.refLanes[sel.j] : null;
       if (!lane) return;
       const step = e.shiftKey ? 5 : 1;
@@ -2738,38 +2839,51 @@ class LayoutEditor {
   }
   hitTest(x, y) {
     const hits = [];
-    this.starts().forEach((s, i) => {
+    this.starts().forEach((it, i) => {
+      const s = it.start;
       const p = this.w2s(s.dz, s.dy);
       const half = Math.max(4, this.zoom / 2 - 2);
       if (Math.abs(x - p.x) <= half && Math.abs(y - p.y) <= half) hits.push(i);
     });
     return hits;
   }
+  nameOf(i) {
+    const k = this.kindOf(i);
+    if (k === 'lane0') return '轨道 0';
+    if (k === 'lane') {
+      const j = this.mode === 'ref' ? i - (AppState.refLanes || []).length : i - 1;
+      return `车道 ${j + 1}`;
+    }
+    if (k === 'ref') {
+      const j = this.mode === 'ref' ? i : i - 1 - AppState.lanes.length;
+      return `参考车道 ${j + 1}`;
+    }
+    return `#${i}`;
+  }
+  // 参与碰撞校验的下标对（2026-09-07 参考车道虚拟化：参考车道是虚拟几何、不参与物理碰撞）
+  //   main 窗口：轨道 0 + 普通车道两两校验；ref 窗口：参考车道之间校验（相互重叠仍报错）
   validate() {
     const warnings = [], errors = [];
-    const starts = this.starts();
-    const name = (i) => {
-      const k = this.idxKind(i);
-      if (k.kind === 'lane0') return '轨道 0';
-      if (k.kind === 'lane') return `车道 ${k.j + 1}`;
-      if (k.kind === 'ref') return `参考车道 ${k.j + 1}`;
-      return `#${i}`;
-    };
-    for (let i = 0; i < starts.length; i++) {
-      for (let j = i + 1; j < starts.length; j++) {
-        if (starts[i].dz === starts[j].dz && starts[i].dy === starts[j].dy) {
-          errors.push(`${name(i)} 与 ${name(j)} 的起点重叠`);
-        } else if (Math.abs(starts[i].dz - starts[j].dz) < 3 && Math.abs(starts[i].dy - starts[j].dy) < 3) {
-          warnings.push(`${name(i)} 与 ${name(j)} 的起点过近（Z 差 ${Math.abs(starts[i].dz - starts[j].dz)}、Y 差 ${Math.abs(starts[i].dy - starts[j].dy)}，可能串扰）`);
+    const items = this.starts();
+    const checkIdx = items.map((it, i) => ({ it, i })).filter(x =>
+      this.mode === 'ref' ? x.it.kind === 'ref' : x.it.kind !== 'ref');
+    for (let a = 0; a < checkIdx.length; a++) {
+      for (let b = a + 1; b < checkIdx.length; b++) {
+        const i = checkIdx[a].i, j = checkIdx[b].i;
+        const si = items[i].start, sj = items[j].start;
+        if (si.dz === sj.dz && si.dy === sj.dy) {
+          errors.push(`${this.nameOf(i)} 与 ${this.nameOf(j)} 的起点重叠`);
+        } else if (Math.abs(si.dz - sj.dz) < 3 && Math.abs(si.dy - sj.dy) < 3) {
+          warnings.push(`${this.nameOf(i)} 与 ${this.nameOf(j)} 的起点过近（Z 差 ${Math.abs(si.dz - sj.dz)}、Y 差 ${Math.abs(si.dy - sj.dy)}，可能串扰）`);
         }
       }
     }
     return { warnings, errors };
   }
   fitView() {
-    const starts = this.starts();
-    if (starts.length === 0) return;
-    const zs = starts.map(s => s.dz), ys = starts.map(s => s.dy);
+    const items = this.starts();
+    if (items.length === 0) return;
+    const zs = items.map(it => it.start.dz), ys = items.map(it => it.start.dy);
     const minZ = Math.min(...zs), maxZ = Math.max(...zs);
     const minY = Math.min(...ys), maxY = Math.max(...ys);
     // +3 = 四周各留 1 格余量；-80/40 = 画布四周 40px 边距；zoom 夹紧 [8, 40] px/格
@@ -2820,38 +2934,49 @@ class LayoutEditor {
     // 校验冲突标记
     const { warnings, errors } = this.validate();
     const errorPairs = new Set(), warnPairs = new Set();
-    const starts = this.starts();
-    for (let i = 0; i < starts.length; i++) {
-      for (let j = i + 1; j < starts.length; j++) {
-        const a = starts[i], b = starts[j];
+    const items = this.starts();
+    for (let i = 0; i < items.length; i++) {
+      for (let j = i + 1; j < items.length; j++) {
+        const a = items[i].start, b = items[j].start;
         if (a.dz === b.dz && a.dy === b.dy) { errorPairs.add(i); errorPairs.add(j); }
         else if (Math.abs(a.dz - b.dz) < 3 && Math.abs(a.dy - b.dy) < 3) { warnPairs.add(i); warnPairs.add(j); }
       }
     }
-    // 标记
-    starts.forEach((s, i) => {
+    // 标记（背景 = 非本窗口可拖 kind：半透明淡化，提示「仅作参照、不可移动」）
+    items.forEach((it, i) => {
+      const s = it.start;
       const p = this.w2s(s.dz, s.dy);
       const half = Math.max(5, this.zoom / 2 - 3);
-      const isRail0 = i === 0;
-      const k = this.idxKind(i);
-      // 颜色：轨道 0 琥珀虚线；参考车道紫色；音轨车道按主导乐器色
-      ctx.fillStyle = isRail0 ? '#d9a441' : (k.kind === 'ref' ? '#a06cd5' : this.groupColor(i - 1));
+      const k = it.kind;
+      const isRail0 = k === 'lane0';
+      const isBg = !this.draggable(i); // 背景标记（不可拖）
+      // 颜色：轨道 0 琥珀；参考车道紫；音轨车道按主导乐器色（main 窗口）/ 灰（ref 窗口背景）
+      let fill;
+      if (isRail0) fill = '#d9a441';
+      else if (k === 'ref') fill = '#a06cd5';
+      else fill = (this.mode === 'ref') ? '#5a6472' : this.groupColor(this.idxKind(i).j);
+      ctx.globalAlpha = isBg ? 0.42 : 1;
+      ctx.fillStyle = fill;
       ctx.fillRect(p.x - half, p.y - half, half * 2, half * 2);
+      ctx.globalAlpha = 1;
       if (errorPairs.has(i)) { ctx.strokeStyle = '#e05c5c'; }
       else if (warnPairs.has(i)) { ctx.strokeStyle = '#e0b15c'; }
-      else { ctx.strokeStyle = i === this.selected ? '#ffffff' : (isRail0 ? '#d9a441' : (k.kind === 'ref' ? '#a06cd5' : '#3a4150')); }
+      else { ctx.strokeStyle = i === this.selected ? '#ffffff' : (isRail0 ? '#d9a441' : (k === 'ref' ? '#a06cd5' : '#3a4150')); }
       ctx.lineWidth = i === this.selected ? 2.5 : 1.5;
       // 轨道 0 虚线；参考车道点划线（区别于音轨车道的实线描边）
       if (isRail0) ctx.setLineDash([3, 2]);
-      else if (k.kind === 'ref') ctx.setLineDash([6, 2, 2, 2]);
+      else if (k === 'ref') ctx.setLineDash([6, 2, 2, 2]);
       ctx.strokeRect(p.x - half, p.y - half, half * 2, half * 2);
       ctx.setLineDash([]);
       ctx.fillStyle = '#0b0d10';
       ctx.font = `bold ${Math.min(12, Math.max(8, this.zoom * 0.45))}px sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      // 轨道 0 = 「0」，音轨车道从 1 开始编号，参考车道以 R 前缀
-      const label = isRail0 ? '0' : (k.kind === 'ref' ? 'R' + (i - 1 - AppState.lanes.length) : String(i));
+      // 轨道 0 = 「0」，音轨车道编号（ref 窗口 L 前缀 + 序号），参考车道 R 前缀（ref 窗口 1..n 序号）
+      let label;
+      if (isRail0) label = '0';
+      else if (k === 'ref') label = (this.mode === 'ref') ? String(i + 1) : 'R' + (i - 1 - AppState.lanes.length);
+      else label = (this.mode === 'ref') ? 'L' + (this.idxKind(i).j + 1) : String(i);
       ctx.fillText(label, p.x, p.y);
     });
     ctx.textAlign = 'left';
@@ -2860,18 +2985,17 @@ class LayoutEditor {
   updateInfo() {
     const { warnings, errors } = this.validate();
     const nRef = this.refStartsCount();
-    let txt = `轨道 0 + ${this.groups().length} 条车道` + (nRef > 0 ? ` + ${nRef} 条参考车道（紫）` : '');
+    const nLane = AppState.lanes.length;
+    let txt = this.mode === 'ref'
+      ? `${nRef} 条参考车道（紫，可拖）+ ${nLane} 条普通车道 / 轨道 0（灰背景，仅作参照、不可拖）`
+      : `轨道 0 + ${nLane} 条车道（可拖）` + (nRef > 0 ? ` + ${nRef} 条参考车道（紫背景，虚拟、不可拖）` : '');
     if (this.selected >= 0 && this.starts()[this.selected]) {
-      const s = this.starts()[this.selected];
-      const k = this.idxKind(this.selected);
-      const name = k.kind === 'lane0' ? '轨道 0'
-        : k.kind === 'lane' ? `车道 ${k.j + 1}`
-        : k.kind === 'ref' ? `参考车道 ${k.j + 1}` : `#${this.selected}`;
-      txt += ` ｜ 选中${name}：Z=${s.dz} Y=${s.dy}`;
+      const s = this.startOf(this.selected);
+      txt += ` ｜ 选中${this.nameOf(this.selected)}：Z=${s.dz} Y=${s.dy}`;
     }
     if (errors.length) txt += ` ｜ <span style="color:#e05c5c">${errors.length} 处重叠</span>`;
     if (warnings.length) txt += ` ｜ <span style="color:#e0b15c">${warnings.length} 处过近警告</span>`;
-    $('layoutInfo').innerHTML = txt;
+    if (this.infoEl) this.infoEl.innerHTML = txt;
   }
 }
 
@@ -3042,10 +3166,15 @@ function hexToRgb(hex) {
 
 let topPreview = null, frontPreview = null, sidePreview = null;
 let layoutEditor = null;
+let refLayoutEditor = null;
+let activeLayoutEditor = null; // 最近一次交互的编辑器（方向键只作用于它，避免双窗口同时移动）
 
 function renderLayoutEditor() {
-  if (!layoutEditor) layoutEditor = new LayoutEditor($('layoutCanvas'));
+  if (!layoutEditor) layoutEditor = new LayoutEditor($('layoutCanvas'), 'main', $('layoutInfo'));
   layoutEditor.refresh();
+  // 参考车道独立窗口（2026-09-07）：参考车道可拖、普通车道半透明背景不可拖
+  if (!refLayoutEditor) refLayoutEditor = new LayoutEditor($('refLaneCanvas'), 'ref', $('refLayoutInfo'));
+  refLayoutEditor.refresh();
 }
 
 function renderPreviews() {
@@ -3270,6 +3399,7 @@ function verifyLitematic(nbtBytes, opts) {
 window.__NBS2SCHEMATIC = {
   get state() { return AppState; },
   get layoutEditor() { return layoutEditor; },
+  get refLayoutEditor() { return refLayoutEditor; },
   get topPreview() { return topPreview; },
   get frontPreview() { return frontPreview; },
   get sidePreview() { return sidePreview; },
@@ -3317,8 +3447,9 @@ async function generate() {
     //   +5 = Z 向估计上限（buildLayout 的 sz = zMax + zOffset + 2，zOffset ≥ 1；起点为负时实际更大，
     //   本预估偏大是安全方向——只用于拒绝超限，不用于产物尺寸）
     const estX = delays.length * 2 + 10;
-    const estY = Math.max(...lanes.map(l => l.start.dy), ...refLanes.map(l => l.start.dy), AppState.lane0.start.dy, 0) + 3;
-    const estZ = Math.max(...lanes.map(l => l.start.dz), ...refLanes.map(l => l.start.dz), AppState.lane0.start.dz, 0) + 5;
+    // 2026-09-07 参考车道虚拟化：参考车道不生成任何物理结构 → 体积只由真实链（轨道 0 + 普通车道）决定
+    const estY = Math.max(...lanes.map(l => l.start.dy), AppState.lane0.start.dy, 0) + 3;
+    const estZ = Math.max(...lanes.map(l => l.start.dz), AppState.lane0.start.dz, 0) + 5;
     // 4000 万格：Uint16Array 2 字节/格 ≈ 80MB 网格 + 调色板/位打包/产物 NBT 开销，防止浏览器内存打爆
     if (estX * estY * estZ > 40_000_000) {
       showError(`预估体素 ${estX}×${estY}×${estZ} = ${((estX * estY * estZ) / 1e6).toFixed(0)}M 格，超过 4000 万格上限，请减少音轨或缩短歌曲`);
@@ -3736,6 +3867,12 @@ $('refLaneList').addEventListener('drop', (e) => {
   const t = parseInt(e.dataTransfer.getData('text/plain'), 10);
   if (!Number.isInteger(t)) return;
   dropToRefLane(t, parseInt(dz.dataset.li, 10));
+  // 提醒措施（用户 2026-09-07 要求）：未勾「发声」的音轨被拖入参考车道 → 状态行即时提示
+  const sp = AppState.refLayers.get(t) !== undefined ? refSpecOf(AppState.refLayers.get(t)) : null;
+  if (sp && sp.sound === false) {
+    const gs = $('genStatus');
+    if (gs) { gs.textContent = `⚠ 音轨 #${t} 未勾选「发声」：已并入参考车道（仅节奏/音高参考，普通轨道无盒）；如需发声请在左侧音轨池勾选其「发声」`; gs.style.color = '#e0a33c'; }
+  }
 });
 
 // 音轨池侧边栏折叠/展开（用户要求）：展开 = 680px（当前版本 340px 的 2 倍）；
@@ -3787,17 +3924,19 @@ $('sfxZipBtn').addEventListener('click', downloadSfxDatapack);
 $('debugBtn').addEventListener('click', exportDebugBundle);
 
 // 预置布局（用户 2026-09-04 定）：三模板均以 0 号车道（轨道 0）起点为中心对称排布，
-// 同时重排音轨车道 + 参考车道（用户确认参考车道并入预置范围）——0 号不动，一次摆齐不重叠。
-// 排布顺序 = [音轨车道…, 参考车道…]（各池内保序）；第 k 位（0 基）按模板分配（相对中心 c0）：
+// 只重排音轨车道（2026-09-07 参考车道虚拟化后：参考车道不生成物理结构、不参与碰撞，
+// 其位置由上方「参考车道池」独立窗口单独管理，预置模板不再动它）——0 号不动，一次摆齐不重叠。
+// 排布顺序 = [音轨车道…]（池内保序）；第 k 位（0 基）按模板分配（相对中心 c0）：
 //   单行：Z 两侧交替 ±3(k+1)（偶 k 在 +Z 侧），Y 恒为中心行
 //   网格：中间行 k=2m、k+1=2m+1 → Z 由中心外扩 ±3(m+1)，Y 上下交替 ±h·m（首行在上）
 //   放射：候选位 = 环 k（Z=±3k，Y=±h·j，|j|≤floor(k/2)），按到中心欧氏距离升序取前 N 个
 //         （平手：+Z 侧优先、再 +Y 侧优先）——由近及远一圈圈展开
 function presetAllLanes(apply) {
   const c0 = (AppState.lane0 && AppState.lane0.start) || { dz: 0, dy: 0 };
-  const all = [...AppState.lanes, ...(AppState.refLanes || [])];
+  const all = AppState.lanes; // 只普通车道（参考车道虚拟，位置独立管理）
   all.forEach((l, k) => { l.start = apply(c0, k); });
   layoutEditor && layoutEditor.refresh();
+  refLayoutEditor && refLayoutEditor.refresh(); // 参考窗口背景（普通车道）随之刷新
   scheduleStateSave();
 }
 $('presetLineBtn').addEventListener('click', () => {
@@ -3813,7 +3952,7 @@ $('presetGridBtn').addEventListener('click', () => {
 });
 $('presetRadialBtn').addEventListener('click', () => {
   const h = parseInt($('gridHeight').value, 10) || 5;
-  const n = AppState.lanes.length + (AppState.refLanes || []).length;
+  const n = AppState.lanes.length;
   if (n === 0) return;
   const cands = [];
   for (let k = 1; k <= Math.max(n, 6); k++) {
@@ -3831,6 +3970,7 @@ $('presetRadialBtn').addEventListener('click', () => {
   });
 });
 $('fitLayoutBtn').addEventListener('click', () => layoutEditor && layoutEditor.fitView());
+$('fitRefLayoutBtn').addEventListener('click', () => refLayoutEditor && refLayoutEditor.fitView());
 </script>
 </body>
 </html>

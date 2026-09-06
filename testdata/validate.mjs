@@ -148,7 +148,7 @@ function decodePacked(longs, bits, count) {
 
 // ---------- 端到端流程 ----------
 // refLayers：Map<声部下标, {type:'bound'|'independent', sound:bool}>（节奏参考双类型，旧 bool 值按独立型迁移）；传入后 buildLayout 在轨道 0 生成命令方块
-// refLanes：参考车道池 [{tracks, start}]（独立物理链；传数组即启用 refMode——绑定型粒子只锚定参考车道内该声道的盒）
+// refLanes：参考车道池 [{tracks, start}]（纯虚拟：不生成任何物理结构，2026-09-07 起仅粒子锚点几何；传数组即启用 refMode——绑定型粒子锚定参考车道虚拟槽位）
 function runE2E(nbsFile, { autoGroup = true, groups = null, groupStarts = null, settings = null, targetMc = null, lane0 = null, refLayers = null, refLanes = null } = {}) {
   const bytes = new Uint8Array(readFileSync(path.join(__dirname, nbsFile)));
   const song = parseNBS(bytes);
@@ -404,8 +404,8 @@ function verifyE2E(label, r, { expectedDataVersion } = {}) {
     if (/button|lever|pressure_plate/.test(state) && !state.startsWith('minecraft:note_block')) switchCount++;
   }
   check(switchCount === 0, `触发区已移除：产物中不应有启动开关，实际 ${switchCount} 个`);
-  const heads = result.chains.map(c => atL(0, c.yb + 1, c.zc));
-  check(heads.every(s => s && s.startsWith('minecraft:repeater')),
+  const heads = result.chains.filter(c => !c.isRefLane).map(c => atL(0, c.yb + 1, c.zc));
+  check(heads.length > 0 && heads.every(s => s && s.startsWith('minecraft:repeater')),
     `链头应为 X=0 的中继器（输入侧留空待手动接粉），实际 ${heads.map(s => s || '空').join('、')}`);
 
   if (errors.length) {
@@ -1018,7 +1018,7 @@ try {
 }
 
 // ---------- SFX：节奏参考声道双类型（统一轨道 0 CB + nbs2sfx 数据包 zip，偏移构建时求解） ----------
-// 混合场景（4 层）：layer 0 绑定型（强制发声）、layer 1 独立型静音（不进车道池）、
+// 混合场景（4 层，refLanes 未传 = 旧模式）：layer 0 绑定型（锚定音轨车道盒）、layer 1 独立型静音（不进车道池）、
 //   layer 2 独立型发声、layer 3 普通 —— 三层同组 [0,1,2]（1 车道 dz=3,dy=0）+ layer 3 单独组 [3]（dz=6）
 {
   const { SFX_NAMESPACE, SFX_PARTICLE_CMD, SFX_CB_STATE, buildSfxPackMcmeta,
@@ -1040,7 +1040,7 @@ try {
   const tmpFile = 'synth_sfx.nbs';
   writeFileSync(path.join(__dirname, tmpFile), nbs);
   const ref = new Map([
-    [0, { type: 'bound', sound: true }],       // 绑定型：强制发声
+    [0, { type: 'bound', sound: true }],       // 绑定型（旧模式：锚定音轨车道盒）
     [1, { type: 'independent', sound: false }], // 独立型静音：不进车道池、只贡献粒子时序
     [2, { type: 'independent', sound: true }],  // 独立型发声：进车道池
   ]);
@@ -1292,8 +1292,9 @@ try {
   }
 }
 
-// ---------- 参考车道池：独立物理链 + 允许重叠 + 绑定型仅锚定参考车道盒（用户批准设计） ----------
-// 布局：轨道 0 dz=0/dy=0；音轨车道 dz=3/dy=0；参考车道 dz=6/dy=1（全非负 → zOffset=1、yOffset=0）
+// ---------- 参考车道池：纯虚拟（2026-09-07 虚拟化）——零物理结构 + 绑定粒子锚定虚拟槽位 ----------
+// 布局：轨道 0 dz=0/dy=0；音轨车道 dz=3/dy=0；参考车道 dz=6/dy=1（全非负 → zOffset=1、yOffset=0，
+//   尺寸只由真实链决定）
 {
   const { SFX_NAMESPACE, SFX_CB_STATE, sfxParticleCmd } = context.window.__NBS2SCHEMATIC;
   // layer 0：tick0 key45（音高 12）、tick2 key50（音高 17）
@@ -1304,47 +1305,49 @@ try {
   const tmpFile = 'synth_reflane.nbs';
   writeFileSync(path.join(__dirname, tmpFile), nbs);
   const REF = new Map([[0, { type: 'bound', sound: true }]]);
+  // 期望网格（真实链 = 轨道 0 dz0/dy0 + 音轨车道 dz3/dy0）：sx=16, sy=3, sz=6
+  const GRID = { sx: 18, sy: 3, sz: 6 };
   try {
-    // A) 允许重叠：layer 0 同时在音轨车道（dz=3,dy=0）与参考车道（dz=6,dy=1）→ 两套盒都发声；
-    //    绑定型粒子只锚定参考车道盒：dy=(1+1)−0=2、dz=6−0=6
+    // A) 绑定型 + 参考车道：参考车道零方块（虚拟），音轨车道照常 2 盒；
+    //    绑定粒子行锚定参考车道**虚拟槽位**：dy=(1+1)−0=2、dz=6−0=6（槽 0）
     const rA = runE2E(tmpFile, {
       lane0: { dz: 0, dy: 0 }, refLayers: REF,
       groups: [{ layers: [0] }], groupStarts: [{ dz: 3, dy: 0 }],
       refLanes: [{ tracks: [0], type: 'bound', start: { dz: 6, dy: 1 } }],
     });
-    ok = verifyE2E('参考车道池·重叠+绑定锚定', rA) && ok;
+    ok = verifyE2E('参考车道池·虚拟绑定', rA) && ok;
     const gA = rA.result;
     const palA = rA.palette, gridA = gA.grid;
     const cellA = (x, y, z) => palA[gridA.data[(y * gridA.sz + z) * gridA.sx + x]];
     if (gA.chains.length !== 3) {
-      console.log(`FAIL 参考车道 chains=${gA.chains.length}（期望 轨道0+音轨车道+参考车道=3）`); ok = false;
-    } else console.log('PASS 参考车道为独立物理链（chains=3）');
+      console.log(`FAIL 参考车道 chains=${gA.chains.length}（期望 轨道0+音轨车道+虚拟参考车道=3）`); ok = false;
+    } else console.log('PASS 参考车道为虚拟链（chains=3，含 1 条不产方块的参考链）');
     const statA = gA.stats;
-    if (statA.noteBlocks !== 4) {
-      console.log(`FAIL 参考车道重叠双盒 noteBlocks=${statA.noteBlocks}（期望 2 套×2 tick=4）`); ok = false;
-    } else console.log('PASS 允许重叠：同一声道两套盒都放置（4 音符盒）');
-    // 绑定行偏移 = 参考车道盒 − 轨道 0 CB：(0, 2, 6)，音轨车道盒（dz=3）不产行
+    if (statA.noteBlocks !== 2 || statA.noteBlocks !== statA.notesPlaced) {
+      console.log(`FAIL 参考车道虚拟化 noteBlocks=${statA.noteBlocks}（期望 2：仅音轨车道 2 tick；参考车道零盒）`); ok = false;
+    } else console.log('PASS 参考车道零物理结构：音符盒只剩音轨车道的 2 个（旧版 4 个双盒已消除）');
+    // 网格尺寸只由真实链决定（参考车道 dz=6/dy=1 虚拟起点不扩格）
+    if (gridA.sx !== GRID.sx || gridA.sy !== GRID.sy || gridA.sz !== GRID.sz) {
+      console.log(`FAIL 参考车道网格尺寸 ${gridA.sx}×${gridA.sy}×${gridA.sz}（期望 ${GRID.sx}×${GRID.sy}×${GRID.sz}，参考车道虚拟不扩格）`); ok = false;
+    }
+    // 参考车道零物理结构的硬指标：中继器总数 = 2 条真实链 × 9 tick = 18（旧版含参考链会是 27）
+    if (statA.repeaters !== 18) {
+      console.log(`FAIL 参考车道零物理结构：中继器 ${statA.repeaters} 个（期望 18 = 2 真实链 × 9 tick；参考链不产中继器）`); ok = false;
+    }
+    // 音轨车道盒仍在 (1,1,4)（网格 z=3+1）
+    if (cellA(1, 1, 4) !== 'minecraft:note_block[instrument=harp,note=12,powered=false]') {
+      console.log(`FAIL 音轨车道盒缺失/错位 (1,1,4)=${cellA(1, 1, 4)}`); ok = false;
+    }
+    // 绑定行 = 虚拟槽位 − 轨道 0 CB：(0, 2, 6)；音轨车道重叠不再产行（无盒可锚）
     const P0R = sfxParticleCmd(0, 2, 6);
     const tlbA = gA.sfxTickList;
     if (tlbA.length !== 2 || JSON.stringify(tlbA[0].lines) !== JSON.stringify([P0R])
       || JSON.stringify(tlbA[1].lines) !== JSON.stringify([P0R])) {
-      console.log(`FAIL 参考车道绑定行 ${JSON.stringify(tlbA)}（期望 tick 0/2 各 1 行 ${P0R.slice(0, 40)}…）`); ok = false;
+      console.log(`FAIL 参考车道虚拟绑定行 ${JSON.stringify(tlbA)}（期望 tick 0/2 各 1 行 ${P0R.slice(0, 40)}…）`); ok = false;
     } else if (statA.sfxBoundNotes !== 2 || statA.sfxStandaloneNotes !== 0 || statA.commandBlocks !== 2) {
-      console.log(`FAIL 参考车道统计 bound=${statA.sfxBoundNotes} indep=${statA.sfxStandaloneNotes} CB=${statA.commandBlocks}（期望 2/0/2；音轨车道重叠盒不得产粒子行）`); ok = false;
-    } else console.log('PASS 绑定型仅锚定参考车道盒：dy=2（dy=1 抬升+1 层差）、dz=6 按参考车道起点求解；重叠盒静默');
-    // 网格几何：zOffset=1/yOffset=0；参考车道链头 (0, yb+1, zc)=(0,2,7)、音轨车道盒 (1,1,4)、参考车道盒 (1,2,7)
-    const geoA = gA.geometry;
-    if (geoA.zOffset !== 1 || geoA.yOffset !== 0) {
-      console.log(`FAIL 参考车道网格偏移 zOffset=${geoA.zOffset} yOffset=${geoA.yOffset}（期望 1/0）`); ok = false;
-    }
-    if (cellA(0, 2, 7) !== 'minecraft:repeater[facing=west,delay=1,locked=false,powered=false]'
-      || cellA(1, 2, 7) !== 'minecraft:note_block[instrument=harp,note=12,powered=false]'
-      || cellA(1, 1, 4) !== 'minecraft:note_block[instrument=harp,note=12,powered=false]') {
-      console.log(`FAIL 参考车道网格：链头=${cellA(0, 2, 7)} 参考盒=${cellA(1, 2, 7)} 音轨盒=${cellA(1, 1, 4)}`); ok = false;
-    } else {
-      console.log('PASS 参考车道链头/盒/底座按自身起点放置（音轨车道盒仍在原处）');
-    }
-    // B) 参考车道池为空（refLanes=[]，refMode 生效）：绑定层无盒可锚定 → 粒子全跳 + 空 tick 回退
+      console.log(`FAIL 参考车道统计 bound=${statA.sfxBoundNotes} indep=${statA.sfxStandaloneNotes} CB=${statA.commandBlocks}（期望 2/0/2）`); ok = false;
+    } else console.log('PASS 绑定型锚定参考车道虚拟槽位：dy=2（dy=1 抬升+1 层差）、dz=6 按参考车道起点求解');
+    // B) 参考车道池为空（refLanes=[]，refMode 生效）：绑定层无锚点 → 粒子全跳 + 空 tick 回退
     const rB = runE2E(tmpFile, {
       lane0: { dz: 0, dy: 0 }, refLayers: REF,
       groups: [{ layers: [0] }], groupStarts: [{ dz: 3, dy: 0 }],
@@ -1356,12 +1359,12 @@ try {
       || statB.sfxEmptyTicks !== 2 || statB.sfxDiscarded !== 2 || statB.sfxNotes !== 0) {
       console.log(`FAIL 空参考车道池回退：CB=${statB.commandBlocks} TE=${rB.result.tileEntities.length} empty=${statB.sfxEmptyTicks} disc=${statB.sfxDiscarded}（期望 0/0/2/2）`); ok = false;
     } else if (statB.noteBlocks !== 2 || rB.result.sfxTickList.length !== 0
-      || !statB.discardedDetails.some(d => d.includes('未分配车道'))) {
-      console.log('FAIL 空参考车道池：音轨车道应仍发声（2 盒）、无粒子行、留「未分配车道」警告'); ok = false;
+      || !statB.discardedDetails.some(d => d.includes('未分配参考车道'))) {
+      console.log('FAIL 空参考车道池：音轨车道应仍发声（2 盒）、无粒子行、留「未分配参考车道」警告'); ok = false;
     } else {
       console.log('PASS 参考车道池空 → 绑定粒子整体跳过+空 tick 回退（CB 还原雪块、TE 移除），音轨车道照常发声');
     }
-    // C) 独立型 + 参考车道：盒照常放置（4 个），粒子行恒 (0,0,音高偏移)，与参考车道起点无关
+    // C) 独立型 + 参考车道：参考车道零方块，音轨车道 2 盒；粒子行恒 (0,0,音高偏移)，与参考车道起点无关
     const rC = runE2E(tmpFile, {
       lane0: { dz: 0, dy: 0 },
       refLayers: new Map([[0, { type: 'independent', sound: true }]]),
@@ -1372,15 +1375,15 @@ try {
     const statC = rC.result.stats;
     const tlbC = rC.result.sfxTickList;
     const I12 = sfxParticleCmd(0, 0, 0), I17 = sfxParticleCmd(0, 0, 5);
-    if (statC.noteBlocks !== 4 || statC.sfxStandaloneNotes !== 2 || statC.sfxBoundNotes !== 0
+    if (statC.noteBlocks !== 2 || statC.sfxStandaloneNotes !== 2 || statC.sfxBoundNotes !== 0
       || tlbC.length !== 2 || JSON.stringify(tlbC[0].lines) !== JSON.stringify([I12])
       || JSON.stringify(tlbC[1].lines) !== JSON.stringify([I17])) {
-      console.log(`FAIL 独立型参考车道：盒=${statC.noteBlocks} indep=${statC.sfxStandaloneNotes} 行=${JSON.stringify(tlbC)}（期望 4 盒、tick0 dz=0/tick2 dz=5）`); ok = false;
+      console.log(`FAIL 独立型参考车道：盒=${statC.noteBlocks} indep=${statC.sfxStandaloneNotes} 行=${JSON.stringify(tlbC)}（期望 2 盒、tick0 dz=0/tick2 dz=5）`); ok = false;
     } else {
-      console.log('PASS 独立型：盒照常双套放置，粒子行按音高偏移与参考车道起点无关');
+      console.log('PASS 独立型：参考车道零方块，音轨车道 2 盒，粒子行按音高偏移与参考车道起点无关');
     }
     // D) 类型选型按参考车道：refLayers 记独立型、但参考车道 lane.type='bound' → 绑定语义胜出，
-    //    粒子锚定参考车道盒（dz=6/dy=1 → (0,2,6)）
+    //    粒子锚定参考车道虚拟槽位（dz=6/dy=1 → (0,2,6)）
     const rD = runE2E(tmpFile, {
       lane0: { dz: 0, dy: 0 },
       refLayers: new Map([[0, { type: 'independent', sound: true }]]),
@@ -1394,25 +1397,38 @@ try {
       || tlbD.length !== 2 || JSON.stringify(tlbD[0].lines) !== JSON.stringify([P0R])) {
       console.log(`FAIL 车道级绑定型：bound=${statD.sfxBoundNotes} indep=${statD.sfxStandaloneNotes} 行=${JSON.stringify(tlbD)}（期望 2/0、各 1 行 ${P0R.slice(0, 40)}…）`); ok = false;
     } else {
-      console.log('PASS 类型选型按车道：车道 type=bound 时声道级独立型被覆盖、粒子锚定参考车道盒');
+      console.log('PASS 类型选型按车道：车道 type=bound 时声道级独立型被覆盖、粒子锚定参考车道虚拟槽位');
     }
-    // E) 绑定型车道 + 成员 sound=false（UI 不可达：绑定型强制发声）→ 绑定语义胜出：
-    //    盒照常放置（与声道级绑定型忽略 sound=false 的旧语义一致）、粒子行照常锚定
+    // E) 绑定型车道 + 成员 sound=false（2026-09-07 起可自由取消发声）：
+    //    音轨车道无盒（零发声）但粒子行**恒产生**（参考意义，按虚拟槽位）
     const rE2 = runE2E(tmpFile, {
       lane0: { dz: 0, dy: 0 },
       refLayers: new Map([[0, { type: 'bound', sound: false }]]),
-      groups: [{ layers: [] }], groupStarts: [{ dz: 3, dy: 0 }],
+      groups: [{ layers: [0] }], groupStarts: [{ dz: 3, dy: 0 }],
       refLanes: [{ tracks: [0], type: 'bound', start: { dz: 6, dy: 1 } }],
     });
     const statE2 = rE2.result.stats;
     const tlbE2 = rE2.result.sfxTickList;
-    if (statE2.noteBlocks !== 2 || statE2.sfxBoundNotes !== 2 || statE2.sfxStandaloneNotes !== 0
+    if (statE2.noteBlocks !== 0 || statE2.sfxBoundNotes !== 2 || statE2.sfxStandaloneNotes !== 0
       || statE2.commandBlocks !== 2 || tlbE2.length !== 2
       || JSON.stringify(tlbE2[0].lines) !== JSON.stringify([P0R])) {
-      console.log(`FAIL 绑定车道 sound=false 成员：盒=${statE2.noteBlocks} bound=${statE2.sfxBoundNotes} CB=${statE2.commandBlocks}（期望绑定语义胜出：2/2/2、行 ${P0R.slice(0, 40)}…）`); ok = false;
+      console.log(`FAIL 绑定车道 sound=false 成员：盒=${statE2.noteBlocks} bound=${statE2.sfxBoundNotes} CB=${statE2.commandBlocks}（期望 0 盒、2 绑定行、2 CB——粒子恒产生）`); ok = false;
     } else {
-      console.log('PASS 绑定车道成员 sound=false：绑定语义胜出（盒+粒子行照常，与声道级绑定型忽略 sound 的旧语义一致）');
+      console.log('PASS 绑定型取消发声：普通轨道零盒（纯参考），粒子行恒产生（虚拟槽位锚定）');
     }
+    // F) 参考车道与普通车道同起点（物理并排）：生成不报错（虚拟化后参考车道不参与碰撞；
+    //    网格只含普通车道结构，参考车道虚拟起点不产方块）
+    const rF = runE2E(tmpFile, {
+      lane0: { dz: 0, dy: 0 }, refLayers: REF,
+      groups: [{ layers: [0] }], groupStarts: [{ dz: 3, dy: 0 }],
+      refLanes: [{ tracks: [0], type: 'bound', start: { dz: 3, dy: 0 } }],
+    });
+    const statF = rF.result.stats;
+    const tlbF = rF.result.sfxTickList;
+    if (statF.noteBlocks !== 2 || tlbF.length !== 2
+      || JSON.stringify(tlbF[0].lines) !== JSON.stringify([sfxParticleCmd(0, 1, 3)])) {
+      console.log(`FAIL 参考/普通同起点：盒=${statF.noteBlocks} 行=${JSON.stringify(tlbF)}（期望 2 盒、绑定行按虚拟槽位 (0,1,3)）`); ok = false;
+    } else console.log('PASS 参考车道与普通车道同起点：生成正常（零结构、不参与碰撞、粒子按虚拟槽位）');
   } catch (e) {
     console.log('FAIL 参考车道池异常:', e.stack || e.message);
     ok = false;

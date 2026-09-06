@@ -21,11 +21,12 @@ function makeCtx() {
     createImageData(w, h) { return { data: new Uint8ClampedArray(w * h * 4), width: w, height: h }; },
   };
 }
-// innerHTML 序列化：应用直接赋值 innerHTML 的字符串优先；否则按 children 树序列化
+// innerHTML 序列化：应用直接赋值 innerHTML 的字符串优先；否则按 children 树序列化（叶子 textContent 追加，
+// 桩里元素不会既有子元素又有裸文本，拼接即可模拟真实 DOM 的 text 节点）
 function serEl(e) {
   if (typeof e._html === 'string' && e._html !== '') return e._html;
-  if (Array.isArray(e.children)) return e.children.map(serEl).join('');
-  return e.textContent || '';
+  const kids = Array.isArray(e.children) ? e.children.map(serEl).join('') : '';
+  return kids + (e.textContent || '');
 }
 function makeEl(tag) {
   const el = {
@@ -36,16 +37,18 @@ function makeEl(tag) {
     dispatch(type, evt) { (el.listeners[type] || []).forEach(fn => fn(evt)); },
     hidden: false, textContent: '',
     _html: '',
+    className: '',
     get innerHTML() { return el._html !== '' ? el._html : (el.children.length ? el.children.map(serEl).join('') : ''); },
     set innerHTML(v) { el._html = String(v || ''); el.children = []; },
     style: {}, dataset: {}, value: '', checked: false,
     width: 0, height: 0, options: [],
     _classes: new Set(),
     classList: {
-      add(c) { el._classes.add(c); },
-      remove(c) { el._classes.delete(c); },
-      contains(c) { return el._classes.has(c); },
-      toggle(c) { if (el._classes.has(c)) { el._classes.delete(c); return false; } el._classes.add(c); return true; },
+      // 真实 DOM 中 className 与 classList 同步；桩里 class 操作必须回写 className（断言按 className 收集）
+      add(c) { el._classes.add(c); const old = String(el.className || '').split(/\s+/).filter(Boolean); el.className = [...new Set([...old, c])].join(' '); },
+      remove(c) { el._classes.delete(c); el.className = String(el.className || '').split(/\s+/).filter(x => x && x !== c).join(' '); },
+      contains(c) { return el._classes.has(c) || String(el.className || '').split(/\s+/).includes(c); },
+      toggle(c) { if (el.classList.contains(c)) { el.classList.remove(c); return false; } el.classList.add(c); return true; },
     },
     appendChild(c) { el.children.push(c); return c; },
     removeChild(c) { el.children = el.children.filter(x => x !== c); },
@@ -526,21 +529,21 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
   check(refSpec(0).sound === false && !st.lanes.some(l => l.tracks.includes(0))
     && st.refLanes.some(l => l.tracks.includes(0)),
     '取消发声：静音独立参考（音轨车道盒移除、参考车道盒保留）');
-  // 2) 车道类型下拉切绑定型 → 成员强制发声、发声框禁用
+  // 2) 车道类型下拉切绑定型 → 成员类型跟随（sound 保持原值；2026-09-07 起绑定型不再强制发声、发声框不 disabled）
   onRefLaneTypeChange(0, 'bound');
   check(st.refLanes[0].type === 'bound', '参考车道 lane.type=bound（选型存于车道）');
-  check(JSON.stringify(refSpec(0)) === '{"type":"bound","sound":true}', '成员 refLayers 类型跟随车道：{bound,true}');
-  check(st.lanes.some(l => l.tracks.includes(0)), '绑定型：成员仍在车道池（必须发声）');
+  check(JSON.stringify(refSpec(0)) === '{"type":"bound","sound":false}', '成员 refLayers 类型跟随车道：{bound,false}（sound 保持原值 false）');
   check(refLaneTypeOpts().includes('<option value="bound" selected>绑定型</option>'), '车道类型下拉选中绑定型');
-  check(listHtml().includes('class="layer-sound" data-i="0" checked disabled'), '绑定型成员发声框 checked + disabled');
-  // 3) 绑定型强制发声：取消发声被拒绝
+  check(!listHtml().includes('disabled'), '绑定型成员发声框不再 disabled（2026-09-07 起可自由取消）');
+  // 3) 绑定型可自由取消发声（旧语义「强制发声」已废除）：取消 → sound=false、出普通车道池
   onRefSoundToggle(0, false);
-  check(refSpec(0).sound === true && st.lanes.some(l => l.tracks.includes(0)),
-    '绑定型取消发声被强制恢复（sound 恒 true、仍在车道池）');
+  check(JSON.stringify(refSpec(0)) === '{"type":"bound","sound":false}',
+    '绑定型取消发声：{bound,false}（参考车道虚拟，粒子仍恒产生）');
+  check(!st.lanes.some(l => l.tracks.includes(0)), '绑定型取消发声：普通车道池移除盒（普通轨道静音）');
   // 4) 车道切回独立型 → 发声框可用；取消发声 = 静音参考（出车道池、保留参考）
   onRefLaneTypeChange(0, 'independent');
   check(st.refLanes[0].type === 'independent', '车道切回独立型：lane.type=independent');
-  check(JSON.stringify(refSpec(0)) === '{"type":"independent","sound":true}', '切回独立型：成员保持发声');
+  check(JSON.stringify(refSpec(0)) === '{"type":"independent","sound":false}', '切回独立型：成员 sound 保持 false（绑定阶段已静音）');
   check(!listHtml().includes('checked disabled'), '独立型成员发声框不再禁用');
   onRefSoundToggle(0, false);
   check(JSON.stringify(refSpec(0)) === '{"type":"independent","sound":false}', '取消发声：{independent,false}（静音参考）');
@@ -552,9 +555,10 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
   const liBound = st.refLanes.length;
   st.refLanes.push({ tracks: [1], type: 'independent', start: { dz: 0, dy: 0 } });
   st.refLayers.set(1, { type: 'independent', sound: true }); // 登记参考（模拟勾选，成员直插新车道）
-  onRefLaneTypeChange(liBound, 'bound'); // 车道切绑定 → #1 强制发声并进音轨车道池
-  check(st.refLayers.size === 3 && refSpec(1).type === 'bound' && refSpec(2).type === 'independent',
-    '混合：#0 静音独立、#1 绑定（车道级）、#2 独立发声');
+  onRefLaneTypeChange(liBound, 'bound'); // 车道切绑定 → #1 类型跟随（2026-09-07 起不再强制发声/进池）
+  check(st.refLayers.size === 3 && refSpec(1).type === 'bound' && refSpec(2).type === 'independent'
+    && refSpec(1).sound === true,
+    '混合：#0 静音独立、#1 绑定（车道级，sound 保持）、#2 独立静音（勾选默认）');
   st.lanes.forEach((l, i) => { l.start = { dz: i * 3 + 3, dy: 0 }; });
   st.lane0.start = { dz: 0, dy: 0 };
   // 参考车道起点：绑定车道（#1）放 (6,1)、独立车道（#2）放 (12,1)；空参考车道移除
@@ -592,7 +596,7 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
   check(mixRes.sfxTickList.every(e => e.lines.every(l => l.startsWith('particleex ') && l !== SFX_PARTICLE_CMD)),
     '所有粒子行偏移已计算（无一与逐字原命令相同）');
   check(mixRes.sfxTickList.some(e => e.lines.includes(sfxParticleCmd(0, 2, 6))),
-    '绑定行锚定参考车道盒（refLanes dz=6/dy=1 → ~0 ~2 ~6，而非音轨车道 ~0 ~1 ~3）');
+    '绑定行锚定参考车道虚拟槽位（refLanes dz=6/dy=1 → ~0 ~2 ~6，而非音轨车道 ~0 ~1 ~3）');
   check(mixRes.sfxTickList.every(e => e.lines.every(l => /~(-?\d+) ~(-?\d+) ~(-?\d+) /.test(l))),
     '所有粒子行坐标段为计算偏移 ~dx ~dy ~dz');
   // zip（STORE 无压缩）内容可直读：逐 tick mcfunction 名 + 每行命令逐字出现
@@ -619,15 +623,15 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
   check(elements.get('sfxZipBtn').hidden === true, '无参考声道：zip 按钮隐藏');
   check(st.sfxZipBytes === null, '无参考声道：sfxZipBytes 清空');
   check(st.result.result.stats.commandBlocks === 0, '无参考声道：0 命令方块');
-  // 8) 持久化：绑定型 + sfxPitchStep 往返
-  onRefToggle(0, true); // #0 静音独立 → 重新发声并入（当前参考车道为独立型）
-  onRefLaneTypeChange(0, 'bound'); // 其所在参考车道切绑定
+  // 8) 持久化：绑定型 + sfxPitchStep 往返（#0 当前 sound=false：切绑定不再强制发声，sound 保持）
+  onRefToggle(0, true); // #0 → 重新并入（当前参考车道为独立型、sound 默认 false）
+  onRefLaneTypeChange(0, 'bound'); // 其所在参考车道切绑定（2026-09-07：sound 保持 false）
   st.settings.sfxPitchStep = 3;
   context.saveStateNow();
   const raw = context.localStorage.getItem(context.stateKey(st.song));
   const parsed = raw && JSON.parse(raw);
-  check(!!parsed && JSON.stringify(parsed.refLayers) === '[[0,{"type":"bound","sound":true}]]',
-    '持久化载荷 refLayers=[[0,{type:"bound",sound:true}]]（新对象格式）');
+  check(!!parsed && JSON.stringify(parsed.refLayers) === '[[0,{"type":"bound","sound":false}]]',
+    '持久化载荷 refLayers=[[0,{type:"bound",sound:false}]]（切绑定不强制发声，sound 保持）');
   check(!!parsed && Array.isArray(parsed.refLanes)
     && parsed.refLanes.some(l => l.tracks.includes(0) && l.type === 'bound'),
     '持久化载荷 refLanes 含绑定型车道（lane.type 字段往返）');
@@ -704,43 +708,74 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
   st.refLanes[1].type = 'bound';
   dropToRefLane(i2, 1);   // 重复拖入同一车道
   check(JSON.stringify(st.refLanes[1].tracks) === JSON.stringify([i0, i2, i2]),
-    '拖入：重复拖入同一车道 = 占多个盒位齐响');
+    '拖入：重复拖入同一车道 = 占多个粒子槽位');
   check(JSON.stringify(st.refLayers.get(i2)) === '{"type":"bound","sound":true}',
-    '拖入：并入绑定型车道 → 成员 refLayers 类型跟随车道（bound）');
+    '拖入：并入绑定型车道 → 成员 refLayers 类型跟随车道（bound，sound 保持原值）');
+  // 2026-09-07 虚拟化：绑定型不再强制发声——先取消 sound 再重拖 → 类型跟随、sound 保持 false
+  st.refLayers.set(i2, { type: 'bound', sound: false });
+  dropToRefLane(i2, 1);
+  check(JSON.stringify(st.refLayers.get(i2)) === '{"type":"bound","sound":false}',
+    '拖入绑定型车道：不强制发声（sound 保持 false，粒子仍恒产生）');
+  // 未发声参考成员拖入提醒（用户 2026-09-07 要求）：标签「（静音）」+ 琥珀样式 + 分区提示
+  {
+    const mutedHtml = elements.get('refLaneList').innerHTML;
+    check(mutedHtml.includes('（静音）'), '静音参考成员：卡片标签标「（静音）」');
+    check(classesOf(elements.get('refLaneList')).includes('ref-lane-tag-muted'),
+      '静音参考成员：标签琥珀样式（.ref-lane-tag-muted）');
+    check(mutedHtml.includes('未勾选「发声」'), '参考车道池分区提示：以下参考成员未勾选「发声」');
+  }
   let nLaneI2 = 0; st.lanes.forEach((l) => { nLaneI2 += l.tracks.filter(x => x === i2).length; });
   check(nLaneI2 === 0, '拖入：音轨车道池零份（新语义：拖入参考车道池不进车道池）');
   check(classesOf(elements.get('refLaneList')).includes('ref-lane-drop'), '参考车道卡片渲染拖放区（.ref-lane-drop）');
-  // 4) 布局编辑器：标记含参考车道（紫色 R 前缀、idxKind 映射、validate 命名）
+  // 4) 布局编辑器双窗口（2026-09-07 虚拟化）：main 管轨道 0 + 普通车道（参考车道虚拟背景不可拖）；
+  //    ref 窗口管参考车道（可拖，普通车道 + 轨道 0 半透明背景不可拖）
   st.lanes.push({ tracks: [], start: { dz: 20, dy: 0 } }); // 补一条空音轨车道，验证 idxKind 的 lane 映射
   const ed = context.window.__NBS2SCHEMATIC.layoutEditor;
   check(ed.starts().length === 1 + st.lanes.length + st.refLanes.length,
-    '布局编辑器标记 = 轨道 0 + 音轨车道 + 参考车道');
+    'main 窗口标记 = 轨道 0 + 音轨车道 + 参考车道（背景）');
   check(ed.idxKind(1 + st.lanes.length).kind === 'ref' && ed.idxKind(1 + st.lanes.length).j === 0,
-    'idxKind 将参考车道下标映射到 refLanes[0]');
+    'idxKind 将参考车道下标映射到 refLanes[0]（main 窗口）');
   check(ed.idxKind(1).kind === 'lane' && ed.idxKind(0).kind === 'lane0', 'idxKind 音轨车道/轨道 0 映射');
   const refStart = st.refLanes[0].start;
   refStart.dz = -7; refStart.dy = -3; // 负坐标：布局标记与校验不受影响
   const { errors: vErrs } = ed.validate();
   check(vErrs.every(m => !m.includes('undefined')), 'validate 对参考车道起点命名正常（无 undefined）');
   refStart.dz = 0; refStart.dy = 0;
-  // 4b) 预置模板：以 0 号车道为中心 + 参考车道一并重排
+  // 4a) ref 窗口：参考车道可拖、普通车道/轨道 0 背景不可拖；参考车道与音轨车道同起点 → 无碰撞错误
+  const edRef = context.window.__NBS2SCHEMATIC.refLayoutEditor;
+  check(!!edRef && edRef.mode === 'ref', '参考车道独立窗口已创建（mode=ref）');
+  check(edRef.starts().length === st.refLanes.length + st.lanes.length + 1
+    && edRef.starts()[0].kind === 'ref' && edRef.starts()[edRef.starts().length - 1].kind === 'lane0',
+    'ref 窗口标记 = 参考车道（前）+ 普通车道 + 轨道 0（背景）');
+  check(edRef.draggable(0) === true, 'ref 窗口：参考车道可拖');
+  check(edRef.draggable(st.refLanes.length) === false && edRef.draggable(edRef.starts().length - 1) === false,
+    'ref 窗口：普通车道与轨道 0 为不可拖背景');
+  check(ed.draggable(0) === false && ed.draggable(1) === true && ed.draggable(1 + st.lanes.length) === false,
+    'main 窗口：轨道 0 不可拖、音轨车道可拖、参考车道虚拟背景不可拖');
+  const refStart2 = st.refLanes[0].start;
+  const laneStartX = st.lanes[0].start;
+  refStart2.dz = laneStartX.dz; refStart2.dy = laneStartX.dy; // 参考车道与音轨车道物理同位（用户问题 1 场景）
+  check(ed.validate().errors.length === 0, 'main 窗口：参考车道与普通车道同起点不报碰撞错误（虚拟化后不参与碰撞）');
+  check(edRef.validate().errors.length === 0, 'ref 窗口：参考车道与普通车道同位不报错（只校验参考车道两两）');
+  refStart2.dz = 6; refStart2.dy = 1; // 复原
+  // 4b) 预置模板：以 0 号车道为中心 + 只重排普通车道（2026-09-07 虚拟化：参考车道位置独立管理、不受预置影响）
   const st2 = context.window.__NBS2SCHEMATIC.state;
-  st2.refLanes = [{ tracks: [i0] }]; // 干净已知状态：1 音轨车道 + 1 参考车道
+  st2.refLanes = [{ tracks: [i0], start: { dz: 6, dy: 0 } }]; // 干净已知状态：1 音轨车道 + 1 参考车道（预置不应动它）
   st2.lane0.start = { dz: 2, dy: 3 }; // 非原点中心
   elements.get('presetLineBtn').dispatch('click', {});
   check(st2.lanes[0].start.dz === 5 && st2.lanes[0].start.dy === 3
-    && st2.refLanes[0].start.dz === -1 && st2.refLanes[0].start.dy === 3,
-    '预置单行：音轨车道 (5,3)、参考车道 (-1,3)（以 (2,3) 为中心，Z 两侧交替 ±3）');
+    && st2.refLanes[0].start.dz === 6 && st2.refLanes[0].start.dy === 0,
+    '预置单行：音轨车道 (5,3)、参考车道保持不动 (6,0)（虚拟化：预置只重排普通车道）');
   elements.get('presetGridBtn').dispatch('click', {});
   check(st2.lanes[0].start.dz === 5 && st2.lanes[0].start.dy === 3
-    && st2.refLanes[0].start.dz === -1 && st2.refLanes[0].start.dy === 3,
-    '预置网格：音轨车道 (5,3)、参考车道 (-1,3)（首行两侧，行距未用到）');
+    && st2.refLanes[0].start.dz === 6 && st2.refLanes[0].start.dy === 0,
+    '预置网格：音轨车道 (5,3)、参考车道保持不动 (6,0)');
   st2.lanes = [{ tracks: [i0] }, { tracks: [i1] }];
   elements.get('presetRadialBtn').dispatch('click', {});
   check(st2.lanes[0].start.dz === 5 && st2.lanes[0].start.dy === 3
     && st2.lanes[1].start.dz === -1 && st2.lanes[1].start.dy === 3
-    && st2.refLanes[0].start.dz === 8 && st2.refLanes[0].start.dy === 3,
-    '预置放射：按到中心距离由近及远 (3,0)→(-3,0)→(6,0)（同距取 +Z 侧优先）');
+    && st2.refLanes[0].start.dz === 6 && st2.refLanes[0].start.dy === 0,
+    '预置放射：普通车道由近及远 (3,0)→(-3,0)，参考车道保持不动 (6,0)');
   const { errors: pErrs } = ed.validate();
   check(pErrs.length === 0, '预置放射后布局无重叠错误');
   st2.lanes = [{ tracks: [i0], start: { dz: 3, dy: 0 } }]; st2.refLanes = [{ tracks: [i0] }];
