@@ -155,7 +155,7 @@ input[type="number"] { width: 70px; }
       <span class="sidebar-title">音轨池侧栏</span>
     </div>
     <section id="layer-section" hidden>
-      <h2>音轨池（勾选参与转换的 NBS 音轨；可拖到右侧车道池或节奏形参考车道池分配）</h2>
+      <h2>音轨池（勾选参与转换的 NBS 音轨；可拖到右侧车道池或节奏型参考车道池分配）</h2>
       <div class="toolbar">
         <button id="selectAllBtn">全选</button>
         <button id="selectNoneBtn">全不选</button>
@@ -200,11 +200,11 @@ input[type="number"] { width: 70px; }
   </section>
 
   <section id="refLane-section" hidden>
-    <h2>节奏形参考车道池（每条参考车道 = 一条独立物理链 + 3 个音符盒位；成员在左侧音轨池勾选「节奏参考」，或直接拖入下方卡片）</h2>
+    <h2>节奏型参考车道池（每条参考车道 = 一条独立物理链 + 3 个音符盒位；成员在左侧音轨池勾选「节奏参考」，或直接拖入下方卡片）</h2>
     <div class="toolbar">
       <button id="addRefLaneBtn">＋ 新增参考车道</button>
       <span class="hint" id="refGroupCount"></span>
-      <span class="hint">勾选音轨池的「节奏参考」→ 默认并入第一条无冲突参考车道、放不下自动新建；也可把左侧音轨池的音轨直接拖入卡片（拖入即登记为节奏参考并入该车道，允许重复拖入占多个盒位齐响）；同一声道允许同时存在于两个池（两套盒都发声）；每条参考车道可选类型（独立型/绑定型，作用于该车道全部成员）——绑定型粒子只锚定本池内该声道的盒、成员必须发声</span>
+      <span class="hint">勾选音轨池的「节奏参考」→ 默认并入第一条无冲突参考车道、放不下自动新建；也可把左侧音轨池的音轨直接拖入卡片（拖入即登记为节奏参考并入该车道，允许重复拖入占多个盒位齐响）；想让参考声道同时在普通轨道发声（齐响加倍）= 把音轨拖入「车道池」卡片（两套盒都发声，允许重叠）；每条参考车道可选类型（独立型/绑定型，作用于该车道全部成员）——绑定型粒子只锚定本池内该声道的盒</span>
     </div>
     <div id="refLaneList"></div>
   </section>
@@ -692,7 +692,7 @@ const DEFAULT_RAIL_LIGHT = 'minecraft:ochre_froglight';
 // refLayers：节奏参考声道 Map<声部下标, {type, sound}>（双类型，用户批准设计 v2）
 //   · 绑定型 bound：必须发声（sound 恒 true，车道池强制含该声道）；粒子以该声道所属车道
 //     的每个音符盒为中心，音符盒发声的同 tick 各触发一次；
-//   · 独立型 independent：sound 可 false（静音独立参考不进车道池、无音符盒，只贡献粒子时序）；
+//   · 独立型 independent：sound 可 false（普通轨道不放盒；但参考车道链的盒恒发声，仍是声源与绑定粒子锚点）；
 //     粒子中心锚定轨道 0 链上、与 CB 同高，Z 向按音高线性偏移 (note−12)×sfxPitchStep（用户定：以 12 为中点）。
 // refMode（参考车道池启用后，用户批准设计）：
 //   绑定型粒子只锚定参考车道池（refLanes）内该声道的音符盒——参考车道链上放置该声道时才算数；
@@ -884,18 +884,15 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
       const { zc, yb } = c;
       const ySig = yb + 1;
 
-      // 收集本 tick 组内音符（按层顺序）
+      // 收集本 tick 组内音符（按层顺序）。参考声道盒位规则（2026-09-06 最终语义）：
+      //   · 参考车道链（isRefLane）：成员恒收集发声——参考车道本身即参考声源（盒 + 粒子锚点），
+      //     「发声」框只控制普通轨道是否也放盒；无 refLayers 记录的手工成员同样发声
+      //   · 音轨车道/轨道 0 链：参考声道仅当「发声」勾选时放置（绑定型 sound 恒 true）；
+      //     sound=false 的参考不进音轨车道，此处再保险
       const notes = [];
       for (const li of c.layers) {
-        // 静音参考不进车道池（UI 已排除）：非绑定型且 sound=false → 无音符盒、只贡献粒子时序
-        //   （旧存档/手动分组误含时仍保证「静音参考 → 无音符盒」）；
-        //   绑定型强制发声 → 恒收集（否则无音符盒、算不出「以音符盒为中心」）。
-        //   类型按参考车道（refMode 下取链的 refLaneType），sound 仍按声道 refLayers（UI 已同步）。
-        const type = refTypeOf(li, c.refLaneType);
-        if (type !== 'bound') {
-          const spec = refLayers && refLayers.has(li) ? normRef(refLayers.get(li)) : null;
-          if (spec && spec.sound === false) continue;
-        }
+        const spec = refLayers && refLayers.has(li) ? normRef(refLayers.get(li)) : null;
+        if (!c.isRefLane && spec && spec.sound === false) continue;
         const note = song.layers[li] && song.layers[li].notes.get(t);
         if (note) notes.push({ layerIdx: li, note });
       }
@@ -1480,7 +1477,7 @@ const AppState = {
   selectedLayers: new Set(),   // 音轨池：勾选的声部下标
   // 节奏参考声道：Map<声部下标, {type, sound}>（双类型，用户批准设计 v2）。
   //   type='bound' 绑定型：强制发声（sound 恒 true），粒子以所属车道音符盒为中心，偏移按轨道排布求解；
-  //   type='independent' 独立型：sound 可 false（静音参考不进车道池），粒子中心锚定轨道 0、与 CB 同高，
+  //   type='independent' 独立型：sound 可 false（普通轨道不放盒；参考车道链的盒恒发声），粒子中心锚定轨道 0、与 CB 同高，
   //     Z 向按音高 (note−12)×settings.sfxPitchStep。
   // 触发：轨道 0 主位底座命令方块 + nbs2sfx 数据包（buildSfxDatapackZip）；旧存档 bool 值按独立型迁移。
   refLayers: new Map(),
@@ -1611,7 +1608,7 @@ function renderLayerList() {
     row.className = 'layer-row';
     row.draggable = true;                    // 可拖到车道池分配
     row.dataset.dragLayer = String(i);
-    row.title = '可拖到右侧车道池或节奏形参考车道池的车道卡片中分配';
+    row.title = '可拖到右侧车道池或节奏型参考车道池的车道卡片中分配';
     row.innerHTML = `
       <label>
         <input type="checkbox" class="layer-check" data-i="${i}" ${AppState.selectedLayers.has(i) ? 'checked' : ''}>
@@ -1624,7 +1621,7 @@ function renderLayerList() {
           <span>节奏参考</span>
         </label>
         ${isRef ? `
-        <label class="layer-sound-cell" title="发声：勾选 = 车道池与参考车道池都放该声道的音符盒（允许重叠，两套盒都发声）；取消 = 不放音符盒，只贡献粒子时序（静音参考，仅独立型可用）">
+        <label class="layer-sound-cell" title="在普通轨道也发声：勾选 = 在「车道池」也放该声道的音符盒（与参考车道的盒齐响加倍）；取消 = 只有参考车道的盒、普通轨道不放。绑定型恒勾选">
           <input type="checkbox" class="layer-sound" data-i="${i}" ${refOn ? 'checked' : ''} ${isBound ? 'disabled' : ''}>
           <span>发声</span>
         </label>` : ''}
@@ -1851,16 +1848,16 @@ function refSpecOf(v) {
     ? { type: v.type, sound: !!v.sound }
     : { type: 'independent', sound: !!v };
 }
-// 车道池成员资格（允许重叠设计，用户批准）：
-//   · 非参考声道：参与 ⇔ 主勾选（selectedLayers）
-//   · 参考声道（refLayers 含 i）：参与发声 ⇔ 规格 sound
-//     —— 绑定型 sound 恒 true（必须发声）；独立型 sound=false 时不进车道池、无音符盒、只贡献粒子时序
-// 参考+发声的声道同时属于本池与参考车道池（refLanePoolMembers）——两套盒都发声。
+// 音轨车道池成员资格：
+//   · 普通声道：参与 ⇔ 主勾选（selectedLayers）
+//   · 参考声道：不进入本池——由参考车道池管理；勾选「节奏参考」不再自动复制一份进音轨车道
+//     （用户 2026-09-06 反馈的多余副本），自动分配/打包建议也不应替它入位。
+//     想让参考声道在普通轨道也发声（齐响加倍）= 显式把音轨拖入「车道池」卡片（两套盒都发声，允许重叠，用户批准设计）。
+// 参考+不发声（sound=false）= 普通轨道无盒，但参考车道链的盒恒发声（仍是声源）。
 function lanePoolMembers(song) {
   const out = [];
   song.layers.forEach((_, i) => {
-    const isRef = AppState.refLayers.has(i);
-    if (isRef ? refSpecOf(AppState.refLayers.get(i)).sound : AppState.selectedLayers.has(i)) out.push(i);
+    if (!AppState.refLayers.has(i) && AppState.selectedLayers.has(i)) out.push(i);
   });
   return out.sort((a, b) => a - b);
 }
@@ -1877,13 +1874,13 @@ function rebuildLanesAuto() {
 
 // 勾选/取消勾选音轨：增量增删，保留现有车道分组与起点
 // 勾选 → 追加到第一条无冲突车道，否则新建车道；取消勾选 → 从各车道移除（空车道保留）
-// 仅由主勾选框触发；参考声道的发声框走 onRefSoundToggle（同签名，语义按参考状态分支）
+// 主勾选只表达「参与转换的标记」；参考声道的实际进/出车道池由「发声」框驱动（见 onRefSoundToggle），
+//   避免勾选「节奏参考」自动在车道池复制一份（用户 2026-09-06 反馈）
 function onLayerToggle(i, checked) {
   const isRef = AppState.refLayers.has(i);
-  const spec = isRef ? refSpecOf(AppState.refLayers.get(i)) : null;
-  // 静音参考（独立型 + 不发声）时主勾选是死区：取消主勾选不会把粒子参考从车道池移除（它本就不在），
-  // 重新勾选也不自动进入车道池（发声框才是发声开关）—— 避免与发声框状态打架
-  if (spec && spec.sound === false) {
+  if (isRef) {
+    // 参考声道：主勾选只更新标记，不动车道池（成员资格由参考车道池管理；
+    //   想让它在普通轨道也发声 = 拖入车道卡片，显式操作）
     if (checked) AppState.selectedLayers.add(i); else AppState.selectedLayers.delete(i);
     updateLayerCount();
     scheduleStateSave();
@@ -1891,21 +1888,7 @@ function onLayerToggle(i, checked) {
   }
   if (checked) {
     AppState.selectedLayers.add(i);
-    const song = AppState.song;
-    const layer = song.layers[i];
-    let placed = false;
-    if (layer) {
-      for (const lane of AppState.lanes) {
-        if (lane.tracks.includes(i)) continue;
-        if (laneCanAdd(laneTickCounts(song, lane.tracks), layer)) {
-          lane.tracks.push(i);
-          lane.tracks.sort((a, b) => a - b);
-          placed = true;
-          break;
-        }
-      }
-    }
-    if (!placed) AppState.lanes.push({ tracks: [i] });
+    placeInLanesIfAbsent(i);
   } else {
     AppState.selectedLayers.delete(i);
     for (const lane of AppState.lanes) {
@@ -1918,22 +1901,44 @@ function onLayerToggle(i, checked) {
   scheduleStateSave();
 }
 
-// 参考框勾选/取消（允许重叠设计，用户批准）：
-// 勾选 = 登记为节奏参考声道（默认独立型、发声勾）+ 勾选式并入参考车道池（第一条无冲突、否则新建）
-//   + 主勾选联动进音轨车道池（两套池可同时含该声道，两套盒都发声）；
-// 取消 = 移出参考状态（发声框一并移除）+ 从各参考车道移除（空车道保留），音轨车道池不受影响
+// 放置音轨进音轨车道池：已在某车道则跳过；否则第一条无冲突车道，仍不行新建车道
+// （供主勾选 / 发声框 / 绑定型车道切换 / 拖放复用，保证各入口放置语义一致）
+function placeInLanesIfAbsent(i) {
+  const song = AppState.song;
+  const layer = song.layers[i];
+  if (AppState.lanes.some(l => l.tracks.includes(i))) return;
+  let target = null;
+  if (layer) {
+    for (const lane of AppState.lanes) {
+      if (laneCanAdd(laneTickCounts(song, lane.tracks), layer)) { target = lane; break; }
+    }
+  }
+  if (target) { target.tracks.push(i); target.tracks.sort((a, b) => a - b); }
+  else AppState.lanes.push({ tracks: [i] });
+  syncLaneStarts();
+}
+
+// 参考框勾选/取消（用户 2026-09-06 反馈后的最终语义）：
+// 勾选 = 登记为节奏参考声道（默认独立型、sound=false）+ 勾选式并入参考车道池（第一条无冲突、否则新建）
+//   —— 不再自动在「车道池」复制一份盒（旧版无提示地双份放置被用户反馈为多余）；
+//   参考车道是独立物理链，其盒恒发声 + 粒子；想同时在普通轨道也放盒（齐响加倍）= 勾行内「发声」框
+//   （或把音轨拖入「车道池」卡片，显式操作，允许重叠两套盒）。
+// 取消 = 移出参考状态（「发声」框一并移除）+ 从参考车道池移除；若「发声」在（普通轨道有盒）则盒一并移除；
+//   主勾选标记与参考状态同进退（勾选时加、取消时删）
 function onRefToggle(i, checked) {
   if (checked) {
-    AppState.refLayers.set(i, { type: 'independent', sound: true });
+    AppState.refLayers.set(i, { type: 'independent', sound: false });
     addToRefLanes(i); // 勾选式并入参考车道池
-    AppState.selectedLayers.add(i); // 参考+发声 → 同时进音轨车道池（允许重叠）
-    onLayerToggle(i, true);
+    AppState.selectedLayers.add(i);
   } else {
+    const wasSound = AppState.refLayers.has(i) && refSpecOf(AppState.refLayers.get(i)).sound;
     AppState.refLayers.delete(i);
     for (const lane of AppState.refLanes) lane.tracks = lane.tracks.filter(t => t !== i);
+    if (wasSound) { // 「发声」在 = 普通轨道盒由参考状态承载，参考取消则盒一并移除
+      for (const lane of AppState.lanes) lane.tracks = lane.tracks.filter(t => t !== i);
+    }
+    AppState.selectedLayers.delete(i);
     syncRefLaneStarts();
-    // 主勾选若已取消（参考+不发声期间被取消）→ 车道池不变（onLayerToggle 死区分支）
-    onLayerToggle(i, AppState.selectedLayers.has(i));
   }
   renderLayerList();
   renderLaneSection();
@@ -1958,8 +1963,9 @@ function onRefLaneTypeChange(li, type) {
     if (type === 'bound') {
       if (cur.type === 'bound' && cur.sound === true) continue;
       AppState.refLayers.set(i, { type: 'bound', sound: true });
-      // 绑定型必须发声进音轨车道池；成员已在某车道（参考车道成员恒发声）则不重复加入
-      if (!AppState.lanes.some(l => l.tracks.includes(i))) onLayerToggle(i, true);
+      AppState.selectedLayers.add(i);
+      // 绑定型：行内「发声」置位 → 音轨车道池也放一份盒（普通轨道齐响）；已在某车道（齐响）则不重复
+      placeInLanesIfAbsent(i);
     } else {
       AppState.refLayers.set(i, { type: 'independent', sound: cur.sound });
       // 其他参考车道仍绑定该成员 → 绑定优先，不随本车道降级
@@ -1973,27 +1979,25 @@ function onRefLaneTypeChange(li, type) {
   scheduleStateSave();
 }
 
-// 发声框勾选/取消（允许重叠设计）：切换车道池与参考车道池的成员资格
-// （粒子时序不受影响；绑定型 UI 已禁用，此处再保险拒绝）
+// 发声框勾选/取消（参考声道的「在普通轨道也发声」开关，用户 2026-09-06 起语义）：
+//   勾选 = 在音轨车道池放置该声道的盒（两套盒都发声 = 齐响，显式操作、允许重叠）；
+//   取消 = 从音轨车道池移除该声道的盒（参考车道盒与粒子时序保留 = 「只参考车道发声」）；
+//   绑定型强制发声（框禁用）。参考车道池成员资格与发声框无关（勾选参考/拖入即登记）。
 function onRefSoundToggle(i, soundOn) {
   const spec = AppState.refLayers.get(i) !== undefined ? refSpecOf(AppState.refLayers.get(i)) : null;
   if (!spec) return;
   if (spec.type === 'bound') soundOn = true; // 绑定型强制发声
   AppState.refLayers.set(i, { type: spec.type, sound: soundOn });
   if (soundOn) {
-    addToRefLanes(i); // 勾选式并入参考车道池（已有则跳过）
-    onLayerToggle(i, true); // 同时进音轨车道池
+    AppState.selectedLayers.add(i);
+    placeInLanesIfAbsent(i); // 进音轨车道池（已在某车道则跳过 = 齐响不重复入位）
   } else {
-    // 静音参考：从两池移除（空车道保留）；主勾选与参考状态（♪ 标记）仍在
+    // 「只参考车道发声」：只从音轨车道池移除盒（参考车道盒保留，仍发声）
     AppState.selectedLayers.delete(i);
     for (const lane of AppState.lanes) {
       lane.tracks = lane.tracks.filter(t => t !== i);
     }
-    for (const lane of AppState.refLanes) {
-      lane.tracks = lane.tracks.filter(t => t !== i);
-    }
     syncLaneStarts();
-    syncRefLaneStarts();
   }
   updateLayerCount();
   renderLayerList();
@@ -2255,11 +2259,12 @@ function syncLaneStarts() {
   });
 }
 
-// 参考车道池成员：勾选了「节奏参考」的声道（与车道池允许重叠；sound=false 的静音参考无盒、不占位）
+// 参考车道池成员：勾选了「节奏参考」的全部声道（含「不发声」的独立参考——普通轨道不放盒，
+// 但参考车道链的盒恒发声并贡献粒子时序，未分配检查要覆盖它；「在普通轨道也发声」= 声道的 sound 开关，与本池成员资格无关）
 function refLanePoolMembers(song) {
   const out = [];
   song.layers.forEach((_, i) => {
-    if (AppState.refLayers.has(i) && refSpecOf(AppState.refLayers.get(i)).sound) out.push(i);
+    if (AppState.refLayers.has(i)) out.push(i);
   });
   return out.sort((a, b) => a - b);
 }
@@ -2292,9 +2297,11 @@ function addToRefLanes(i) {
 }
 
 // 拖拽并入指定参考车道（类车道池拖放：允许重复拖入同一音轨 = 占多个音符盒位齐响）：
-// 拖入即登记为节奏参考声道（未勾选参考的音轨默认独立型 + 发声勾）；
-// 强制发声（参考车道成员无盒则绑定型无锚、独立型无盒可齐响——与勾选式并入语义一致）；
-// 从其他参考车道移入本车道（同一成员保留多份 = 重复拖入）；同步进音轨车道池（允许重叠）；
+// 拖入即登记为节奏参考声道（未勾选参考的音轨默认独立型 + sound=true——行内「发声」框默认勾，
+// 用户可随后取消 = 只留参考车道一份）；
+// 从其他参考车道移入本车道（同一成员保留多份 = 重复拖入）；
+// 不进音轨车道池（与勾选「节奏参考」同一规则，用户 2026-09-06 反馈的多余副本；
+//   「发声」框勾选 / 把音轨拖入「车道池」卡片 = 显式让它在普通轨道也发声，两套盒都发声，允许重叠）；
 // 并入绑定型车道 → 成员 refLayers 类型跟随车道。与勾选式并入（addToRefLanes 自动选车道）并存。
 function dropToRefLane(t, li) {
   const lane = AppState.refLanes[li];
@@ -2310,25 +2317,9 @@ function dropToRefLane(t, li) {
   lane.tracks.sort((a, b) => a - b);
   if ((lane.type || 'independent') === 'bound') AppState.refLayers.set(t, { type: 'bound', sound: true });
   AppState.selectedLayers.add(t);
-  if (!AppState.lanes.some(l => l.tracks.includes(t))) {   // 已在某音轨车道则不重复入位（重复份只留在参考车道内）
-    const layer = song.layers[t];
-    let placed = false;
-    for (const l of AppState.lanes) {
-      if (l.tracks.includes(t)) continue;
-      if (laneCanAdd(laneTickCounts(song, l.tracks), layer)) {
-        l.tracks.push(t);
-        l.tracks.sort((a, b) => a - b);
-        placed = true;
-        break;
-      }
-    }
-    if (!placed) AppState.lanes.push({ tracks: [t] });
-  }
-  syncLaneStarts();
   syncRefLaneStarts();
   updateLayerCount();
   renderLayerList();
-  renderLaneSection();
   renderRefLaneSection();
   scheduleStateSave();
 }
@@ -2442,7 +2433,7 @@ function renderRefLaneSection() {
     const typeSel = document.createElement('select');
     typeSel.className = 'ref-lane-type';
     typeSel.dataset.li = String(li);
-    typeSel.title = '本参考车道全部成员声道共用的参考类型（选型按车道）：绑定型 = 粒子以本车道该声道音符盒为中心（成员必须发声）；独立型 = 粒子锚定轨道 0，Z 按音高偏移（可静音参考）';
+    typeSel.title = '本参考车道全部成员声道共用的参考类型（选型按车道）：绑定型 = 粒子以本车道该声道音符盒为中心（成员必须发声）；独立型 = 粒子锚定轨道 0，Z 按音高偏移（可只留参考车道发声、普通轨道不放盒）';
     typeSel.innerHTML = `<option value="independent" ${laneType === 'independent' ? 'selected' : ''}>独立型</option>
       <option value="bound" ${laneType === 'bound' ? 'selected' : ''}>绑定型</option>`;
     typeSel.addEventListener('change', (e) => onRefLaneTypeChange(li, e.target.value));
@@ -3556,18 +3547,19 @@ function loadFile(file) {
   reader.readAsArrayBuffer(file);
 }
 
+// 全选：所有声部主勾选置位 + 参考车道池整体重建（每 3 条参考成员一车道）；
+// 音轨车道池重建只含普通声道——参考声道不参与（不参与自动分配/打包，见 lanePoolMembers）
 $('selectAllBtn').addEventListener('click', () => {
   const song = AppState.song;
   song.layers.forEach((l, i) => AppState.selectedLayers.add(i));
-  // 参考声道发声默认勾（若处于不发声状态，主全选时恢复发声 = 进车道池；类型保持不变）
-  for (const [i, spec] of AppState.refLayers) AppState.refLayers.set(i, { ...refSpecOf(spec), sound: true });
-  // 参考车道池整体重建（每 3 条参考成员一车道），与音轨车道独立
+  // 参考车道池整体重建（每 3 条参考成员一车道），与音轨车道独立；
+  // 参考声道的「在普通轨道也发声」（sound）保持现状——勾选参考不再自动进音轨车道（用户 2026-09-06 反馈）
   const refPool = refLanePoolMembers(AppState.song);
   AppState.refLanes = [];
   for (let i = 0; i < refPool.length; i += 3) AppState.refLanes.push({ tracks: refPool.slice(i, i + 3), type: 'independent' });
   syncRefLaneStarts();
   renderLayerList();
-  rebuildLanesAuto(); // 整体重建（每 3 轨一车道），含参考+发声声道
+  rebuildLanesAuto(); // 整体重建（每 3 轨一车道；参考声道由显式操作进池）
   renderLaneSection();
   renderRefLaneSection();
   scheduleStateSave();
@@ -3657,10 +3649,12 @@ $('groupList').addEventListener('drop', (e) => {
   const t = parseInt(e.dataTransfer.getData('text/plain'), 10);
   const lane = AppState.lanes[li];
   if (!lane || !Number.isInteger(t) || !AppState.song.layers[t]) return;
-  // 拖入即视为参与转换：普通声道 = 主勾选；参考声道 = 发声框勾选（默认勾）+ 进车道池
+  // 拖入即视为参与转换：普通声道 = 主勾选；参考声道 = 「在普通轨道发声」置 true + 进车道池
   if (AppState.refLayers.has(t)) {
-    if (refSpecOf(AppState.refLayers.get(t)).sound !== true) onRefSoundToggle(t, true);
-    else AppState.selectedLayers.add(t);
+    // 直接落位目标车道，不走 onRefSoundToggle 的 placeInLanesIfAbsent（避免先入位一份再 push 双份）
+    const cur = refSpecOf(AppState.refLayers.get(t));
+    AppState.refLayers.set(t, { type: cur.type, sound: true });
+    AppState.selectedLayers.add(t);
   } else {
     AppState.selectedLayers.add(t);
   }
@@ -3721,7 +3715,7 @@ $('refLaneList').addEventListener('click', (e) => {
   if (!btn) return;
   deleteRefLane(parseInt(btn.dataset.li, 10));
 });
-// 节奏形参考车道池拖放：镜像车道池的 dragover/dragleave/drop（投放区 = 卡片底部 .ref-lane-drop）
+// 节奏型参考车道池拖放：镜像车道池的 dragover/dragleave/drop（投放区 = 卡片底部 .ref-lane-drop）
 $('refLaneList').addEventListener('dragover', (e) => {
   const dz = e.target.closest('.ref-lane-drop');
   if (!dz) return;

@@ -506,17 +506,26 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
     && JSON.stringify(refSpecOf({ type: 'bound', sound: true })) === '{"type":"bound","sound":true}'
     && JSON.stringify(refSpecOf(undefined)) === '{"type":"independent","sound":false}',
     'refSpecOf：bool/对象/未定义 归一化为 {type,sound}');
-  // 1) 勾选参考 → 默认独立型、发声勾、进车道池 + 参考车道卡片渲染类型下拉（选型已移至参考车道池，按车道）
+  // 1) 勾选参考 → 默认独立型、sound=false（只进参考车道池；旧版自动在车道池复制一份被用户 2026-09-06 反馈为多余）
+  const lanesBeforeRefToggle = JSON.stringify(st.lanes.map(l => l.tracks));
   onRefToggle(0, true);
-  check(JSON.stringify(refSpec(0)) === '{"type":"independent","sound":true}', '参考框勾选：refLayers[0]={independent,true}（默认独立型）');
-  check(st.selectedLayers.has(0) && st.lanes.some(l => l.tracks.includes(0)) && lanePoolMembers(st.song).includes(0),
-    '参考+发声：进车道池');
+  check(JSON.stringify(refSpec(0)) === '{"type":"independent","sound":false}', '参考框勾选：refLayers[0]={independent,false}（默认独立型、不发声）');
+  check(st.selectedLayers.has(0) && st.refLanes.some(l => l.tracks.includes(0)), '勾选参考：进参考车道池');
+  check(JSON.stringify(st.lanes.map(l => l.tracks)) === lanesBeforeRefToggle,
+    '勾选参考不改动已有车道分配（不再复制一份进车道池——用户反馈的多余副本）');
   check(refLaneClasses().includes('ref-lane-type'), '参考车道卡片渲染类型下拉（选型已从音轨池行移出）');
   check(!listHtml().includes('class="layer-ref-type"'), '音轨池行不再渲染类型下拉');
   check(refLaneTypeOpts().includes('<option value="independent" selected>独立型</option>'), '类型下拉默认选中独立型（按车道）');
-  check(listHtml().includes('class="layer-sound" data-i="0" checked') && !listHtml().includes('data-i="0" checked" disabled'),
-    '独立型发声框渲染且未禁用');
+  check(listHtml().includes('class="layer-sound" data-i="0"') && !listHtml().includes('class="layer-sound" data-i="0" checked'),
+    '独立型发声框渲染且默认未勾选（sound=false）');
   check(listHtml().includes('♪'), '参考声道带 ♪ 标记');
+  // 1b) 勾「发声」= 显式在普通轨道也放盒（齐响加倍）；再取消 = 静音独立参考（只留参考车道一份）
+  onRefSoundToggle(0, true);
+  check(refSpec(0).sound === true && st.lanes.some(l => l.tracks.includes(0)), '勾发声：{independent,true} + 音轨车道池放盒');
+  onRefSoundToggle(0, false);
+  check(refSpec(0).sound === false && !st.lanes.some(l => l.tracks.includes(0))
+    && st.refLanes.some(l => l.tracks.includes(0)),
+    '取消发声：静音独立参考（音轨车道盒移除、参考车道盒保留）');
   // 2) 车道类型下拉切绑定型 → 成员强制发声、发声框禁用
   onRefLaneTypeChange(0, 'bound');
   check(st.refLanes[0].type === 'bound', '参考车道 lane.type=bound（选型存于车道）');
@@ -634,7 +643,7 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
   const stR = context.window.__NBS2SCHEMATIC.state;
   check(stR.refLayers.size === 1 && JSON.stringify(stR.refLayers.get(1)) === '{"type":"independent","sound":true}',
     '旧存档 bool 值迁移：refLayers[1]=true → {independent,true}');
-  check(stR.lanes.some(l => l.tracks.includes(1)), '迁移后的发声参考在车道池');
+  check(!stR.lanes.some(l => l.tracks.includes(1)), '迁移后的参考不自动进音轨车道池（2026-09-06 语义：显式操作才入位）');
   check(stR.settings.sfxPitchStep === 3, 'sfxPitchStep 持久化往返（3 恢复）');
   context.renderSettings();
   check(elements.get('sfxPitchStep').value === '3', '设置区 sfxPitchStep 输入框回填 3');
@@ -652,12 +661,13 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
   check(noteLayers.length >= 2, 'R2 前置：测试曲至少 2 条有声部');
   // 干净状态（R 块遗留的 refLayers/lanes/refLanes 全清）
   st.refLayers = new Map(); st.lanes = []; st.refLanes = [];
-  // 1) 勾选参考 → 勾选式并入参考车道池 + 允许重叠（同时进音轨车道池）
+  // 1) 勾选参考 → 勾选式并入参考车道池；不再自动进音轨车道池（用户 2026-09-06 反馈的多余副本）
   onRefToggle(i0, true);
   check(st.refLanes.length === 1 && st.refLanes[0].tracks.includes(i0),
     '勾选参考：自动并入（新建）第一条参考车道');
-  check(st.lanes.some(l => l.tracks.includes(i0)), '允许重叠：发声参考同时在音轨车道池');
-  check(refLanePoolMembers(song).includes(i0), 'refLanePoolMembers 含发声参考');
+  check(JSON.stringify(st.lanes.map(l => l.tracks)) === '[]',
+    '勾选参考：音轨车道池不变（不复制一份——用户反馈的多余副本已消除）');
+  check(refLanePoolMembers(song).includes(i0), 'refLanePoolMembers 含参考成员');
   onRefToggle(i1, true);
   check(st.refLanes.some(l => l.tracks.includes(i1)), '第二条参考并入参考车道池（无冲突同车道或新建）');
   // 2) 卡片渲染：名称/复制/删除/成员标签/计数（DOM 桩无 className 属性 → 按 children 树收集 className 检查）
@@ -675,7 +685,8 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
   deleteRefLane(1);
   check(st.refLanes.length === nBefore && JSON.stringify(st.refLanes[0].tracks) === srcTracks,
     '删除：复制出的车道移除、源车道保留');
-  // 3b) 拖拽：dropToRefLane = 登记参考 + 移入目标车道 + 进音轨车道池 + 绑定型跟随（允许重复拖入齐响）
+  // 3b) 拖拽：dropToRefLane = 登记参考 + 移入目标车道 + 绑定型跟随（允许重复拖入齐响）；
+  //      不再自动进音轨车道池（2026-09-06 语义：显式拖入车道卡片才让参考在普通轨道发声）
   const { dropToRefLane } = context.window.__NBS2SCHEMATIC;
   st.refLayers = new Map(); st.refLanes = [];
   st.refLanes.push({ tracks: [], type: 'independent', start: { dz: 30, dy: 2 } });
@@ -684,7 +695,7 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
   check(JSON.stringify(st.refLayers.get(i2)) === '{"type":"independent","sound":true}'
     && JSON.stringify(st.refLanes[0].tracks) === JSON.stringify([i2]),
     '拖入：未勾选参考的音轨拖入 → 登记为参考（独立+发声）并入目标车道');
-  check(st.lanes.some(l => l.tracks.includes(i2)), '拖入：发声参考同时进音轨车道池（允许重叠）');
+  check(!st.lanes.some(l => l.tracks.includes(i2)), '拖入：不自动进音轨车道池（需显式拖入车道卡片才在普通轨道发声）');
   check(refLanePoolMembers(song).includes(i2), '拖入：refLanePoolMembers 含该音轨');
   st.refLanes.push({ tracks: [i0], type: 'independent', start: { dz: 40, dy: 2 } });
   dropToRefLane(i2, 1);
@@ -697,9 +708,10 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
   check(JSON.stringify(st.refLayers.get(i2)) === '{"type":"bound","sound":true}',
     '拖入：并入绑定型车道 → 成员 refLayers 类型跟随车道（bound）');
   let nLaneI2 = 0; st.lanes.forEach((l) => { nLaneI2 += l.tracks.filter(x => x === i2).length; });
-  check(nLaneI2 === 1, '拖入：音轨车道池不重复入位（仍 1 份）');
+  check(nLaneI2 === 0, '拖入：音轨车道池零份（新语义：拖入参考车道池不进车道池）');
   check(classesOf(elements.get('refLaneList')).includes('ref-lane-drop'), '参考车道卡片渲染拖放区（.ref-lane-drop）');
   // 4) 布局编辑器：标记含参考车道（紫色 R 前缀、idxKind 映射、validate 命名）
+  st.lanes.push({ tracks: [], start: { dz: 20, dy: 0 } }); // 补一条空音轨车道，验证 idxKind 的 lane 映射
   const ed = context.window.__NBS2SCHEMATIC.layoutEditor;
   check(ed.starts().length === 1 + st.lanes.length + st.refLanes.length,
     '布局编辑器标记 = 轨道 0 + 音轨车道 + 参考车道');
