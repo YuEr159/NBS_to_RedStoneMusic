@@ -471,7 +471,7 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
   check(!!raw, `saveStateNow 写入 localStorage（key=${key}）`);
   if (raw) {
     const parsed = JSON.parse(raw);
-    check(parsed.v === 1 && parsed.lanes.length === st9.lanes.length && parsed.selectedLayers.join(',') === '0'
+    check(parsed.v === 2 && parsed.lanes.length === st9.lanes.length && parsed.selectedLayers.join(',') === '0'
       && parsed.settings.targetVersion === '1.20.4'
       && parsed.lane0Start && typeof parsed.lane0Start.dz === 'number' && typeof parsed.lane0Start.dy === 'number',
       '持久化载荷含 v/lanes/selectedLayers/settings（含 targetVersion）/lane0Start');
@@ -575,11 +575,12 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
     '混合：#0 静音独立、#1 绑定（车道级，sound 保持）、#2 独立静音（勾选默认）');
   st.lanes.forEach((l, i) => { l.start = { dz: i * 3 + 3, dy: 0 }; });
   st.lane0.start = { dz: 0, dy: 0 };
-  // 参考车道起点：绑定车道（#1）放 (6,1)、独立车道（#2）放 (12,1)；空参考车道移除
-  // （手动设定起点，模拟用户拖拽避让；重叠会被布局校验阻断生成）
+  // 参考车道起点：绑定车道（#1）放 (6,1)；独立车道（#2）放 (0,0) = 缺省中心基准（2026-09-07 独立中心可拖：
+  //   独立型 start 语义=粒子中心基准，默认不排布、不避让）；空参考车道移除
+  // （手动设定起点，模拟用户拖拽；ref 窗口虚拟几何不做碰撞校验）
   st.refLanes = st.refLanes.filter(l => l.tracks.length > 0);
   st.refLanes.forEach((l) => {
-    l.start = l.tracks.includes(1) ? { dz: 6, dy: 1 } : { dz: 12, dy: 1 };
+    l.start = l.tracks.includes(1) ? { dz: 6, dy: 1 } : ((l.type || 'independent') === 'bound' ? { dz: 12, dy: 1 } : { dz: 0, dy: 0 });
   });
   check(st.refLanes.some(l => l.tracks.includes(1) && (l.type || 'independent') === 'bound'
     && l.start.dz === 6 && l.start.dy === 1), '混合布局：绑定车道（#1）起点 (6,1)');
@@ -898,16 +899,26 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
   check(edRef.starts().length === st.refLanes.length + st.lanes.length + 1
     && edRef.starts()[0].kind === 'ref' && edRef.starts()[edRef.starts().length - 1].kind === 'lane0',
     'ref 窗口标记 = 参考车道（前）+ 普通车道 + 轨道 0（背景）');
-  check(edRef.draggable(0) === true, 'ref 窗口：参考车道可拖');
+  check(edRef.draggable(0) === true, 'ref 窗口：独立型参考车道可拖（粒子中心基准）');
+  // 4a-2) 独立型/绑定型分治（2026-09-07 独立中心可拖）：独立型=可拖 ref 标记在前，绑定型=ref-bg 背景不可拖
+  const idxBoundRef = edRef.starts().findIndex(it => it.kind === 'ref-bg');
+  const bgIt = edRef.starts()[idxBoundRef];
+  check(idxBoundRef > 0 && st.refLanes[bgIt.laneIdx] && (st.refLanes[bgIt.laneIdx].type || 'independent') === 'bound',
+    'ref 窗口：绑定型参考车道标记 kind=ref-bg（laneIdx 映射到绑定车道）');
+  check(edRef.draggable(idxBoundRef) === false, 'ref 窗口：绑定型参考车道不可拖（虚拟盒位背景）');
+  const ikRef0 = edRef.idxKind(0), ikBg = edRef.idxKind(idxBoundRef);
+  check(ikRef0.kind === 'ref' && ikRef0.j === 0
+    && ikBg.kind === 'ref-bg' && ikBg.j === bgIt.laneIdx,
+    'idxKind：ref 窗口 ref/ref-bg 标记经 laneIdx 映射到 refLanes 真实下标（独立型在前排序后 i ≠ 下标）');
   check(edRef.draggable(st.refLanes.length) === false && edRef.draggable(edRef.starts().length - 1) === false,
     'ref 窗口：普通车道与轨道 0 为不可拖背景');
   check(ed.draggable(0) === false && ed.draggable(1) === true && ed.draggable(1 + st.lanes.length) === false,
     'main 窗口：轨道 0 不可拖、音轨车道可拖、参考车道虚拟背景不可拖');
   const refStart2 = st.refLanes[0].start;
   const laneStartX = st.lanes[0].start;
-  refStart2.dz = laneStartX.dz; refStart2.dy = laneStartX.dy; // 参考车道与音轨车道物理同位（用户问题 1 场景）
+  refStart2.dz = laneStartX.dz; refStart2.dy = laneStartX.dy; // 独立型中心与音轨车道物理同位
   check(ed.validate().errors.length === 0, 'main 窗口：参考车道与普通车道同起点不报碰撞错误（虚拟化后不参与碰撞）');
-  check(edRef.validate().errors.length === 0, 'ref 窗口：参考车道与普通车道同位不报错（只校验参考车道两两）');
+  check(edRef.validate().errors.length === 0, 'ref 窗口：独立型中心与音轨车道同位/独立型互相重叠均不报错（虚拟几何，重叠=粒子叠放）');
   refStart2.dz = 6; refStart2.dy = 1; // 复原
   // 4b) 预置模板：以 0 号车道为中心 + 只重排普通车道（2026-09-07 虚拟化：参考车道位置独立管理、不受预置影响）
   const st2 = context.window.__NBS2SCHEMATIC.state;

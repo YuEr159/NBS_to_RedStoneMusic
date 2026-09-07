@@ -168,8 +168,11 @@ function runE2E(nbsFile, { autoGroup = true, groups = null, groupStarts = null, 
     buttonType: 'minecraft:oak_button', customInstrumentMap: new Map(),
     ...(settings || {}),
   };
-  // refLanes 与 UI 同构（{tracks, type, start, effects?, sfxParams?}）；缺省 type=independent、start 按单行 +6 接续（syncRefLaneStarts 默认）；effects 缺省 = 全选（不传该键）；sfxParams 缺省 = 默认命令（不传该键）
-  const refGroups = (refLanes || []).map((l, i) => ({ tracks: [...l.tracks], type: l.type || 'independent', start: l.start || { dz: i * 3 + 6, dy: 0 },
+  // refLanes 与 UI 同构（{tracks, type, start, effects?, sfxParams?}）；缺省 type=independent；
+  //   start 缺省镜像 syncRefLaneStarts 分流（2026-09-07 独立中心可拖）：独立型=(0,0)（粒子中心基准默认），绑定型=单行 i*3+6 接续；
+  //   effects 缺省 = 全选（不传该键）；sfxParams 缺省 = 默认命令（不传该键）
+  const refGroups = (refLanes || []).map((l, i) => ({ tracks: [...l.tracks], type: l.type || 'independent',
+    start: l.start || ((l.type || 'independent') === 'independent' ? { dz: 0, dy: 0 } : { dz: i * 3 + 6, dy: 0 }),
     ...(Array.isArray(l.effects) ? { effects: [...l.effects] } : {}),
     ...(l.sfxParams && typeof l.sfxParams === 'object' ? { sfxParams: { ...l.sfxParams } } : {}) }));
   const result = buildLayout(song, groups2, starts, delays, s, lane0,
@@ -1366,12 +1369,13 @@ try {
     } else {
       console.log('PASS 参考车道池空 → 绑定粒子整体跳过+空 tick 回退（CB 还原雪块、TE 移除），音轨车道照常发声');
     }
-    // C) 独立型 + 参考车道：参考车道零方块，音轨车道 2 盒；粒子行恒 (0,0,音高偏移)，与参考车道起点无关
+    // C) 独立型 + 参考车道：参考车道零方块，音轨车道 2 盒；
+    //    粒子行 = 轨道 0 CB + 所属独立型参考车道 start（中心基准）+ (0,0,音高偏移)——start (0,0) 时行恒 (0,0,音高偏移)
     const rC = runE2E(tmpFile, {
       lane0: { dz: 0, dy: 0 },
       refLayers: new Map([[0, { type: 'independent', sound: true }]]),
       groups: [{ layers: [0] }], groupStarts: [{ dz: 3, dy: 0 }],
-      refLanes: [{ tracks: [0], start: { dz: 9, dy: 0 } }],
+      refLanes: [{ tracks: [0], start: { dz: 0, dy: 0 } }],
     });
     ok = verifyE2E('参考车道池·独立型', rC) && ok;
     const statC = rC.result.stats;
@@ -1382,7 +1386,24 @@ try {
       || JSON.stringify(tlbC[1].lines) !== JSON.stringify([I17])) {
       console.log(`FAIL 独立型参考车道：盒=${statC.noteBlocks} indep=${statC.sfxStandaloneNotes} 行=${JSON.stringify(tlbC)}（期望 2 盒、tick0 dz=0/tick2 dz=5）`); ok = false;
     } else {
-      console.log('PASS 独立型：参考车道零方块，音轨车道 2 盒，粒子行按音高偏移与参考车道起点无关');
+      console.log('PASS 独立型：参考车道零方块，音轨车道 2 盒，粒子行按音高偏移（start=(0,0) 缺省基准）');
+    }
+    // C2) 独立型中心基准平移（2026-09-07 独立中心可拖）：start (dz=4,dy=2) → 行 = (0, 2, 4+音高偏移)
+    const rC2 = runE2E(tmpFile, {
+      lane0: { dz: 0, dy: 0 },
+      refLayers: new Map([[0, { type: 'independent', sound: true }]]),
+      groups: [{ layers: [0] }], groupStarts: [{ dz: 3, dy: 0 }],
+      refLanes: [{ tracks: [0], start: { dz: 4, dy: 2 } }],
+    });
+    ok = verifyE2E('参考车道池·独立型中心平移', rC2) && ok;
+    const statC2 = rC2.result.stats;
+    const tlbC2 = rC2.result.sfxTickList;
+    if (statC2.noteBlocks !== 2 || statC2.sfxStandaloneNotes !== 2 || statC2.sfxBoundNotes !== 0
+      || tlbC2.length !== 2 || JSON.stringify(tlbC2[0].lines) !== JSON.stringify([sfxParticleCmd(0, 2, 4)])
+      || JSON.stringify(tlbC2[1].lines) !== JSON.stringify([sfxParticleCmd(0, 2, 9)])) {
+      console.log(`FAIL 独立型中心平移：盒=${statC2.noteBlocks} indep=${statC2.sfxStandaloneNotes} 行=${JSON.stringify(tlbC2)}（期望 2 盒、(0,2,4)/(0,2,9)）`); ok = false;
+    } else {
+      console.log('PASS 独立型中心平移：start (4,2) → 粒子行 (0,2,4+音高偏移)，中心基准整体平移+音高 Z 展开');
     }
     // D) 类型选型按参考车道：refLayers 记独立型、但参考车道 lane.type='bound' → 绑定语义胜出，
     //    粒子锚定参考车道虚拟槽位（dz=6/dy=1 → (0,2,6)）
