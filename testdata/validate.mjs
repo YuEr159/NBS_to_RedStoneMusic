@@ -147,8 +147,8 @@ function decodePacked(longs, bits, count) {
 }
 
 // ---------- 端到端流程 ----------
-// refLayers：Map<声部下标, {type:'bound'|'independent', sound:bool}>（节奏参考双类型，旧 bool 值按独立型迁移）；传入后 buildLayout 在轨道 0 生成命令方块
-// refLanes：参考车道池 [{tracks, type, start, effects?}]（纯虚拟：不生成任何物理结构，2026-09-07 起仅粒子锚点几何；传数组即启用 refMode——绑定型粒子锚定参考车道虚拟槽位；effects 缺省 = 三类特效全选）
+// refLayers：Map<声部下标, {type:'bound'|'independent', sound:bool}>（节奏参考双类型，旧 bool 值按MIDI式迁移）；传入后 buildLayout 在轨道 0 生成命令方块
+// refLanes：参考车道池 [{tracks, type, start, effects?}]（纯虚拟：不生成任何物理结构，2026-09-07 起仅粒子锚点几何；传数组即启用 refMode——单线式粒子锚定参考车道虚拟槽位；effects 缺省 = 三类特效全选）
 function runE2E(nbsFile, { autoGroup = true, groups = null, groupStarts = null, settings = null, targetMc = null, lane0 = null, refLayers = null, refLanes = null } = {}) {
   const bytes = new Uint8Array(readFileSync(path.join(__dirname, nbsFile)));
   const song = parseNBS(bytes);
@@ -169,7 +169,7 @@ function runE2E(nbsFile, { autoGroup = true, groups = null, groupStarts = null, 
     ...(settings || {}),
   };
   // refLanes 与 UI 同构（{tracks, type, start, effects?, sfxParams?}）；缺省 type=independent；
-  //   start 缺省镜像 syncRefLaneStarts 分流（2026-09-07 独立中心可拖）：独立型=(0,0)（粒子中心基准默认），绑定型=单行 i*3+6 接续；
+  //   start 缺省镜像 syncRefLaneStarts 分流（2026-09-07 独立中心可拖）：MIDI式=(0,0)（粒子中心基准默认），单线式=单行 i*3+6 接续；
   //   effects 缺省 = 全选（不传该键）；sfxParams 缺省 = 默认命令（不传该键）
   const refGroups = (refLanes || []).map((l, i) => ({ tracks: [...l.tracks], type: l.type || 'independent',
     start: l.start || ((l.type || 'independent') === 'independent' ? { dz: 0, dy: 0 } : { dz: i * 3 + 6, dy: 0 }),
@@ -1023,8 +1023,8 @@ try {
 }
 
 // ---------- SFX：节奏参考声道双类型（统一轨道 0 CB + nbs2sfx 数据包 zip，偏移构建时求解） ----------
-// 混合场景（4 层，refLanes 未传 = 旧模式）：layer 0 绑定型（锚定音轨车道盒）、layer 1 独立型静音（不进车道池）、
-//   layer 2 独立型发声、layer 3 普通 —— 三层同组 [0,1,2]（1 车道 dz=3,dy=0）+ layer 3 单独组 [3]（dz=6）
+// 混合场景（4 层，refLanes 未传 = 旧模式）：layer 0 单线式（锚定音轨车道盒）、layer 1 MIDI式静音（不进车道池）、
+//   layer 2 MIDI式发声、layer 3 普通 —— 三层同组 [0,1,2]（1 车道 dz=3,dy=0）+ layer 3 单独组 [3]（dz=6）
 {
   const { SFX_NAMESPACE, SFX_PARTICLE_CMD, SFX_CB_STATE, buildSfxPackMcmeta,
     buildSfxFunctions, buildZip, zipCrc32, buildSfxDatapackZip, sfxParticleCmd } = context.window.__NBS2SCHEMATIC;
@@ -1045,12 +1045,12 @@ try {
   const tmpFile = 'synth_sfx.nbs';
   writeFileSync(path.join(__dirname, tmpFile), nbs);
   const ref = new Map([
-    [0, { type: 'bound', sound: true }],       // 绑定型（旧模式：锚定音轨车道盒）
-    [1, { type: 'independent', sound: false }], // 独立型静音：不进车道池、只贡献粒子时序
-    [2, { type: 'independent', sound: true }],  // 独立型发声：进车道池
+    [0, { type: 'bound', sound: true }],       // 单线式（旧模式：锚定音轨车道盒）
+    [1, { type: 'independent', sound: false }], // MIDI式静音：不进车道池、只贡献粒子时序
+    [2, { type: 'independent', sound: true }],  // MIDI式发声：进车道池
   ]);
   // 期望行（布局：轨道 0 dz=0/dy=0；组1 dz=3/dy=0；组2 dz=6/dy=0；zOffset=1）：
-  //   绑定行 = 音符盒坐标 − 轨道 0 CB 坐标（仅绑定型层产）：本场景只有 layer 0 绑定 → 恒 P0→(0,1,3)
+  //   绑定行 = 音符盒坐标 − 轨道 0 CB 坐标（仅单线式层产）：本场景只有 layer 0 绑定 → 恒 P0→(0,1,3)
   //   独立行 = (0, 0, (clamp(note,0,24)−12)×step)，note=key−33：layer 1/2 逐音符（声部升序，layer 1 在前）
   const P0 = sfxParticleCmd(0, 1, 3);
   const I = k => sfxParticleCmd(0, 0, (Math.max(0, Math.min(24, k - 33)) - 12));
@@ -1093,9 +1093,9 @@ try {
       if (teOk) console.log(`PASS SFX TE 命令逐 tick 正确：function ${SFX_NAMESPACE}:0/2/4/6（auto=false，facing=up）`);
       else ok = false;
     }
-    // 3) 声道去向：绑定型强制发声（4 音）、独立型静音不发声（0 音）、独立型发声（3 音）、普通（1 音）→ 8
-    if (result.stats.notesPlaced !== 8) { console.log(`FAIL SFX 音符放置 ${result.stats.notesPlaced} ≠ 8（静音独立型不应发声，绑定型必须发声）`); ok = false; }
-    else console.log('PASS SFX 音符放置 8（绑定 4 + 独立发声 3 + 普通 1；静音独立型 3 音不发声）');
+    // 3) 声道去向：单线式发声（4 音）、MIDI式静音不发声（0 音）、MIDI式发声（3 音）、普通（1 音）→ 8
+    if (result.stats.notesPlaced !== 8) { console.log(`FAIL SFX 音符放置 ${result.stats.notesPlaced} ≠ 8（静音MIDI式不应发声，单线式发声 4 音）`); ok = false; }
+    else console.log('PASS SFX 音符放置 8（绑定 4 + 独立发声 3 + 普通 1；静音MIDI式 3 音不发声）');
     // 4) 统计拆分：绑定 4 行、独立 6 行、总 10；无丢弃、无空 tick 回退
     if (result.stats.sfxBoundNotes !== 4 || result.stats.sfxStandaloneNotes !== 6 || result.stats.sfxNotes !== 10) {
       console.log(`FAIL SFX 统计拆分 bound=${result.stats.sfxBoundNotes}/indep=${result.stats.sfxStandaloneNotes}/total=${result.stats.sfxNotes}（期望 4/6/10）`); ok = false;
@@ -1243,7 +1243,7 @@ try {
     } finally {
       try { rmSync(tmpZip, { force: true }); rmSync(tmpDir, { recursive: true, force: true }); } catch {}
     }
-    // 11) 纯绑定型场景：粒子行只来自音符盒偏移（无独立行）；组 dy 抬升 → 绑定行 dy 含抬升量
+    // 11) 纯单线式场景：粒子行只来自音符盒偏移（无独立行）；组 dy 抬升 → 绑定行 dy 含抬升量
     {
       const nbs2 = makeNbs({ tempoTps: 20, songLength: 8, layers: 1, noteSpecs: [
         { tick: 0, layer: 0, instrument: 0, key: 45 },
@@ -1267,7 +1267,7 @@ try {
       } else if (rB.result.stats.notesPlaced !== 2) {
         console.log(`FAIL SFX 纯绑定场景 notesPlaced ${rB.result.stats.notesPlaced} ≠ 2`); ok = false;
       } else console.log('PASS SFX 纯绑定场景：dy 抬升(1)+1 层差=2、dz=3 全部按轨道设定求解（非常数）');
-      // 12) 绑定型未分配车道 → 空 tick 回退：CB/TE 移除、统计回退、明细警告
+      // 12) 单线式未分配车道 → 空 tick 回退：CB/TE 移除、统计回退、明细警告
       {
         // groups 不含 layer 0 → boundRefLayers[0] 无车道；sfxEntries 仍有 tick 0/2
         const rE = runE2E(tmpFile, {
@@ -1287,7 +1287,7 @@ try {
           if (cbCount !== 0) { console.log(`FAIL SFX 空 tick 回退后网格仍含 CB ${cbCount} 个（底座应还原雪块）`); ok = false; }
           else if (!rE.result.stats.discardedDetails.some(d => d.includes('未分配车道'))) {
             console.log('FAIL SFX 空 tick 回退缺「未分配车道」警告明细'); ok = false;
-          } else console.log('PASS SFX 绑定型未分配车道 → 空 tick 回退（底座还原雪块、TE 移除、警告留痕）');
+          } else console.log('PASS SFX 单线式未分配车道 → 空 tick 回退（底座还原雪块、TE 移除、警告留痕）');
         }
       }
     }
@@ -1313,7 +1313,7 @@ try {
   // 期望网格（真实链 = 轨道 0 dz0/dy0 + 音轨车道 dz3/dy0）：sx=16, sy=3, sz=6
   const GRID = { sx: 18, sy: 3, sz: 6 };
   try {
-    // A) 绑定型 + 参考车道：参考车道零方块（虚拟），音轨车道照常 2 盒；
+    // A) 单线式 + 参考车道：参考车道零方块（虚拟），音轨车道照常 2 盒；
     //    绑定粒子行锚定参考车道**虚拟槽位**：dy=(1+1)−0=2、dz=6−0=6（槽 0）
     const rA = runE2E(tmpFile, {
       lane0: { dz: 0, dy: 0 }, refLayers: REF,
@@ -1351,7 +1351,7 @@ try {
       console.log(`FAIL 参考车道虚拟绑定行 ${JSON.stringify(tlbA)}（期望 tick 0/2 各 1 行 ${P0R.slice(0, 40)}…）`); ok = false;
     } else if (statA.sfxBoundNotes !== 2 || statA.sfxStandaloneNotes !== 0 || statA.commandBlocks !== 2) {
       console.log(`FAIL 参考车道统计 bound=${statA.sfxBoundNotes} indep=${statA.sfxStandaloneNotes} CB=${statA.commandBlocks}（期望 2/0/2）`); ok = false;
-    } else console.log('PASS 绑定型锚定参考车道虚拟槽位：dy=2（dy=1 抬升+1 层差）、dz=6 按参考车道起点求解');
+    } else console.log('PASS 单线式锚定参考车道虚拟槽位：dy=2（dy=1 抬升+1 层差）、dz=6 按参考车道起点求解');
     // B) 参考车道池为空（refLanes=[]，refMode 生效）：绑定层无锚点 → 粒子全跳 + 空 tick 回退
     const rB = runE2E(tmpFile, {
       lane0: { dz: 0, dy: 0 }, refLayers: REF,
@@ -1369,43 +1369,43 @@ try {
     } else {
       console.log('PASS 参考车道池空 → 绑定粒子整体跳过+空 tick 回退（CB 还原雪块、TE 移除），音轨车道照常发声');
     }
-    // C) 独立型 + 参考车道：参考车道零方块，音轨车道 2 盒；
-    //    粒子行 = 轨道 0 CB + 所属独立型参考车道 start（中心基准）+ (0,0,音高偏移)——start (0,0) 时行恒 (0,0,音高偏移)
+    // C) MIDI式 + 参考车道：参考车道零方块，音轨车道 2 盒；
+    //    粒子行 = 轨道 0 CB + 所属MIDI式参考车道 start（中心基准）+ (0,0,音高偏移)——start (0,0) 时行恒 (0,0,音高偏移)
     const rC = runE2E(tmpFile, {
       lane0: { dz: 0, dy: 0 },
       refLayers: new Map([[0, { type: 'independent', sound: true }]]),
       groups: [{ layers: [0] }], groupStarts: [{ dz: 3, dy: 0 }],
       refLanes: [{ tracks: [0], start: { dz: 0, dy: 0 } }],
     });
-    ok = verifyE2E('参考车道池·独立型', rC) && ok;
+    ok = verifyE2E('参考车道池·MIDI式', rC) && ok;
     const statC = rC.result.stats;
     const tlbC = rC.result.sfxTickList;
     const I12 = sfxParticleCmd(0, 0, 0), I17 = sfxParticleCmd(0, 0, 5);
     if (statC.noteBlocks !== 2 || statC.sfxStandaloneNotes !== 2 || statC.sfxBoundNotes !== 0
       || tlbC.length !== 2 || JSON.stringify(tlbC[0].lines) !== JSON.stringify([I12])
       || JSON.stringify(tlbC[1].lines) !== JSON.stringify([I17])) {
-      console.log(`FAIL 独立型参考车道：盒=${statC.noteBlocks} indep=${statC.sfxStandaloneNotes} 行=${JSON.stringify(tlbC)}（期望 2 盒、tick0 dz=0/tick2 dz=5）`); ok = false;
+      console.log(`FAIL MIDI式参考车道：盒=${statC.noteBlocks} indep=${statC.sfxStandaloneNotes} 行=${JSON.stringify(tlbC)}（期望 2 盒、tick0 dz=0/tick2 dz=5）`); ok = false;
     } else {
-      console.log('PASS 独立型：参考车道零方块，音轨车道 2 盒，粒子行按音高偏移（start=(0,0) 缺省基准）');
+      console.log('PASS MIDI式：参考车道零方块，音轨车道 2 盒，粒子行按音高偏移（start=(0,0) 缺省基准）');
     }
-    // C2) 独立型中心基准平移（2026-09-07 独立中心可拖）：start (dz=4,dy=2) → 行 = (0, 2, 4+音高偏移)
+    // C2) MIDI式中心基准平移（2026-09-07 独立中心可拖）：start (dz=4,dy=2) → 行 = (0, 2, 4+音高偏移)
     const rC2 = runE2E(tmpFile, {
       lane0: { dz: 0, dy: 0 },
       refLayers: new Map([[0, { type: 'independent', sound: true }]]),
       groups: [{ layers: [0] }], groupStarts: [{ dz: 3, dy: 0 }],
       refLanes: [{ tracks: [0], start: { dz: 4, dy: 2 } }],
     });
-    ok = verifyE2E('参考车道池·独立型中心平移', rC2) && ok;
+    ok = verifyE2E('参考车道池·MIDI式中心平移', rC2) && ok;
     const statC2 = rC2.result.stats;
     const tlbC2 = rC2.result.sfxTickList;
     if (statC2.noteBlocks !== 2 || statC2.sfxStandaloneNotes !== 2 || statC2.sfxBoundNotes !== 0
       || tlbC2.length !== 2 || JSON.stringify(tlbC2[0].lines) !== JSON.stringify([sfxParticleCmd(0, 2, 4)])
       || JSON.stringify(tlbC2[1].lines) !== JSON.stringify([sfxParticleCmd(0, 2, 9)])) {
-      console.log(`FAIL 独立型中心平移：盒=${statC2.noteBlocks} indep=${statC2.sfxStandaloneNotes} 行=${JSON.stringify(tlbC2)}（期望 2 盒、(0,2,4)/(0,2,9)）`); ok = false;
+      console.log(`FAIL MIDI式中心平移：盒=${statC2.noteBlocks} indep=${statC2.sfxStandaloneNotes} 行=${JSON.stringify(tlbC2)}（期望 2 盒、(0,2,4)/(0,2,9)）`); ok = false;
     } else {
-      console.log('PASS 独立型中心平移：start (4,2) → 粒子行 (0,2,4+音高偏移)，中心基准整体平移+音高 Z 展开');
+      console.log('PASS MIDI式中心平移：start (4,2) → 粒子行 (0,2,4+音高偏移)，中心基准整体平移+音高 Z 展开');
     }
-    // D) 类型选型按参考车道：refLayers 记独立型、但参考车道 lane.type='bound' → 绑定语义胜出，
+    // D) 类型选型按参考车道：refLayers 记MIDI式、但参考车道 lane.type='bound' → 绑定语义胜出，
     //    粒子锚定参考车道虚拟槽位（dz=6/dy=1 → (0,2,6)）
     const rD = runE2E(tmpFile, {
       lane0: { dz: 0, dy: 0 },
@@ -1413,16 +1413,16 @@ try {
       groups: [{ layers: [0] }], groupStarts: [{ dz: 3, dy: 0 }],
       refLanes: [{ tracks: [0], type: 'bound', start: { dz: 6, dy: 1 } }],
     });
-    ok = verifyE2E('参考车道池·车道级绑定型', rD) && ok;
+    ok = verifyE2E('参考车道池·车道级单线式', rD) && ok;
     const statD = rD.result.stats;
     const tlbD = rD.result.sfxTickList;
     if (statD.sfxBoundNotes !== 2 || statD.sfxStandaloneNotes !== 0
       || tlbD.length !== 2 || JSON.stringify(tlbD[0].lines) !== JSON.stringify([P0R])) {
-      console.log(`FAIL 车道级绑定型：bound=${statD.sfxBoundNotes} indep=${statD.sfxStandaloneNotes} 行=${JSON.stringify(tlbD)}（期望 2/0、各 1 行 ${P0R.slice(0, 40)}…）`); ok = false;
+      console.log(`FAIL 车道级单线式：bound=${statD.sfxBoundNotes} indep=${statD.sfxStandaloneNotes} 行=${JSON.stringify(tlbD)}（期望 2/0、各 1 行 ${P0R.slice(0, 40)}…）`); ok = false;
     } else {
-      console.log('PASS 类型选型按车道：车道 type=bound 时声道级独立型被覆盖、粒子锚定参考车道虚拟槽位');
+      console.log('PASS 类型选型按车道：车道 type=bound 时声道级MIDI式被覆盖、粒子锚定参考车道虚拟槽位');
     }
-    // E) 绑定型车道 + 成员 sound=false（2026-09-07 起可自由取消发声）：
+    // E) 单线式车道 + 成员 sound=false（2026-09-07 起可自由取消发声）：
     //    音轨车道无盒（零发声）但粒子行**恒产生**（参考意义，按虚拟槽位）
     const rE2 = runE2E(tmpFile, {
       lane0: { dz: 0, dy: 0 },
@@ -1437,7 +1437,7 @@ try {
       || JSON.stringify(tlbE2[0].lines) !== JSON.stringify([P0R])) {
       console.log(`FAIL 绑定车道 sound=false 成员：盒=${statE2.noteBlocks} bound=${statE2.sfxBoundNotes} CB=${statE2.commandBlocks}（期望 0 盒、2 绑定行、2 CB——粒子恒产生）`); ok = false;
     } else {
-      console.log('PASS 绑定型取消发声：普通轨道零盒（纯参考），粒子行恒产生（虚拟槽位锚定）');
+      console.log('PASS 单线式取消发声：普通轨道零盒（纯参考），粒子行恒产生（虚拟槽位锚定）');
     }
     // F) 参考车道与普通车道同起点（物理并排）：生成不报错（虚拟化后参考车道不参与碰撞；
     //    网格只含普通车道结构，参考车道虚拟起点不产方块）

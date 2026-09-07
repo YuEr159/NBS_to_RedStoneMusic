@@ -523,18 +523,18 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
     && JSON.stringify(refSpecOf({ type: 'bound', sound: true })) === '{"type":"bound","sound":true}'
     && JSON.stringify(refSpecOf(undefined)) === '{"type":"independent","sound":false}',
     'refSpecOf：bool/对象/未定义 归一化为 {type,sound}');
-  // 1) 勾选参考 → 默认独立型、sound=false（只进参考车道池；旧版自动在车道池复制一份被用户 2026-09-06 反馈为多余）
+  // 1) 勾选参考 → 默认MIDI式、sound=false（只进参考车道池；旧版自动在车道池复制一份被用户 2026-09-06 反馈为多余）
   const lanesBeforeRefToggle = JSON.stringify(st.lanes.map(l => l.tracks));
   onRefToggle(0, true);
-  check(JSON.stringify(refSpec(0)) === '{"type":"independent","sound":false}', '参考框勾选：refLayers[0]={independent,false}（默认独立型、不发声）');
+  check(JSON.stringify(refSpec(0)) === '{"type":"independent","sound":false}', '参考框勾选：refLayers[0]={independent,false}（默认MIDI式、不发声）');
   check(st.selectedLayers.has(0) && st.refLanes.some(l => l.tracks.includes(0)), '勾选参考：进参考车道池');
   check(JSON.stringify(st.lanes.map(l => l.tracks)) === lanesBeforeRefToggle,
     '勾选参考不改动已有车道分配（不再复制一份进车道池——用户反馈的多余副本）');
   check(refLaneClasses().includes('ref-lane-type'), '参考车道卡片渲染类型下拉（选型已从音轨池行移出）');
   check(!listHtml().includes('class="layer-ref-type"'), '音轨池行不再渲染类型下拉');
-  check(refLaneTypeOpts().includes('<option value="independent" selected>独立型</option>'), '类型下拉默认选中独立型（按车道）');
+  check(refLaneTypeOpts().includes('<option value="independent" selected>MIDI式</option>'), '类型下拉默认选中MIDI式（按车道）');
   check(listHtml().includes('class="layer-sound" data-i="0"') && !listHtml().includes('class="layer-sound" data-i="0" checked'),
-    '独立型发声框渲染且默认未勾选（sound=false）');
+    'MIDI式发声框渲染且默认未勾选（sound=false）');
   check(listHtml().includes('♪'), '参考声道带 ♪ 标记');
   // 1b) 勾「发声」= 显式在普通轨道也放盒（齐响加倍）；再取消 = 静音独立参考（只留参考车道一份）
   onRefSoundToggle(0, true);
@@ -543,29 +543,29 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
   check(refSpec(0).sound === false && !st.lanes.some(l => l.tracks.includes(0))
     && st.refLanes.some(l => l.tracks.includes(0)),
     '取消发声：静音独立参考（音轨车道盒移除、参考车道盒保留）');
-  // 2) 车道类型下拉切绑定型 → 成员类型跟随（sound 保持原值；2026-09-07 起绑定型不再强制发声、发声框不 disabled）
+  // 2) 车道类型下拉切单线式 → 成员类型跟随（sound 保持原值；2026-09-07 起单线式不再强制发声、发声框不 disabled）
   onRefLaneTypeChange(0, 'bound');
   check(st.refLanes[0].type === 'bound', '参考车道 lane.type=bound（选型存于车道）');
   check(JSON.stringify(refSpec(0)) === '{"type":"bound","sound":false}', '成员 refLayers 类型跟随车道：{bound,false}（sound 保持原值 false）');
-  check(refLaneTypeOpts().includes('<option value="bound" selected>绑定型</option>'), '车道类型下拉选中绑定型');
-  check(!listHtml().includes('disabled'), '绑定型成员发声框不再 disabled（2026-09-07 起可自由取消）');
-  // 3) 绑定型可自由取消发声（旧语义「强制发声」已废除）：取消 → sound=false、出普通车道池
+  check(refLaneTypeOpts().includes('<option value="bound" selected>单线式</option>'), '车道类型下拉选中单线式');
+  check(!listHtml().includes('disabled'), '单线式成员发声框不再 disabled（2026-09-07 起可自由取消）');
+  // 3) 单线式可自由取消发声（旧语义「强制发声」已废除）：取消 → sound=false、出普通车道池
   onRefSoundToggle(0, false);
   check(JSON.stringify(refSpec(0)) === '{"type":"bound","sound":false}',
-    '绑定型取消发声：{bound,false}（参考车道虚拟，粒子仍恒产生）');
-  check(!st.lanes.some(l => l.tracks.includes(0)), '绑定型取消发声：普通车道池移除盒（普通轨道静音）');
-  // 4) 车道切回独立型 → 发声框可用；取消发声 = 静音参考（出车道池、保留参考）
+    '单线式取消发声：{bound,false}（参考车道虚拟，粒子仍恒产生）');
+  check(!st.lanes.some(l => l.tracks.includes(0)), '单线式取消发声：普通车道池移除盒（普通轨道静音）');
+  // 4) 车道切回MIDI式 → 发声框可用；取消发声 = 静音参考（出车道池、保留参考）
   onRefLaneTypeChange(0, 'independent');
-  check(st.refLanes[0].type === 'independent', '车道切回独立型：lane.type=independent');
-  check(JSON.stringify(refSpec(0)) === '{"type":"independent","sound":false}', '切回独立型：成员 sound 保持 false（绑定阶段已静音）');
-  check(!listHtml().includes('checked disabled'), '独立型成员发声框不再禁用');
+  check(st.refLanes[0].type === 'independent', '车道切回MIDI式：lane.type=independent');
+  check(JSON.stringify(refSpec(0)) === '{"type":"independent","sound":false}', '切回MIDI式：成员 sound 保持 false（绑定阶段已静音）');
+  check(!listHtml().includes('checked disabled'), 'MIDI式成员发声框不再禁用');
   onRefSoundToggle(0, false);
   check(JSON.stringify(refSpec(0)) === '{"type":"independent","sound":false}', '取消发声：{independent,false}（静音参考）');
   check(!st.lanes.some(l => l.tracks.includes(0)) && !lanePoolMembers(st.song).includes(0),
-    '静音独立型：移出车道池（不进车道）');
+    '静音MIDI式：移出车道池（不进车道）');
   check(st.refLayers.has(0) && listHtml().includes('♪'), '静音参考：参考状态保留（♪ 仍在，只贡献粒子时序）');
-  // 5) 混合场景：#1 绑定型（独立绑定车道）+ #2 独立型（#0 仍静音独立型）→ 生成
-  onRefToggle(2, true); // 并入当前空参考车道（独立型）
+  // 5) 混合场景：#1 单线式（独立绑定车道）+ #2 MIDI式（#0 仍静音MIDI式）→ 生成
+  onRefToggle(2, true); // 并入当前空参考车道（MIDI式）
   const liBound = st.refLanes.length;
   st.refLanes.push({ tracks: [1], type: 'independent', start: { dz: 0, dy: 0 } });
   st.refLayers.set(1, { type: 'independent', sound: true }); // 登记参考（模拟勾选，成员直插新车道）
@@ -576,7 +576,7 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
   st.lanes.forEach((l, i) => { l.start = { dz: i * 3 + 3, dy: 0 }; });
   st.lane0.start = { dz: 0, dy: 0 };
   // 参考车道起点：绑定车道（#1）放 (6,1)；独立车道（#2）放 (0,0) = 缺省中心基准（2026-09-07 独立中心可拖：
-  //   独立型 start 语义=粒子中心基准，默认不排布、不避让）；空参考车道移除
+  //   MIDI式 start 语义=粒子中心基准，默认不排布、不避让）；空参考车道移除
   // （手动设定起点，模拟用户拖拽；ref 窗口虚拟几何不做碰撞校验）
   st.refLanes = st.refLanes.filter(l => l.tracks.length > 0);
   st.refLanes.forEach((l) => {
@@ -621,15 +621,15 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
     const linesOk = mixRes.sfxTickList.every(e => e.lines.every(l => zipStr.includes(l)));
     check(ticksOk && linesOk, 'zip 内逐 tick mcfunction 名与全部粒子命令行逐字存在（STORE 直读）');
   }
-  // 6) 纯独立型场景：#1 参考取消（转普通）→ 仅剩独立型 → 0 绑定行
+  // 6) 纯MIDI式场景：#1 参考取消（转普通）→ 仅剩MIDI式 → 0 绑定行
   onRefToggle(1, false);
   await context.generate();
   const indepRes = st.result.result;
   check(indepRes.stats.sfxBoundNotes === 0 && indepRes.stats.sfxStandaloneNotes > 0
     && indepRes.stats.commandBlocks > 0,
-    `纯独立型：绑定行=0、独立行=${indepRes.stats.sfxStandaloneNotes}、CB=${indepRes.stats.commandBlocks}`);
+    `纯MIDI式：绑定行=0、独立行=${indepRes.stats.sfxStandaloneNotes}、CB=${indepRes.stats.commandBlocks}`);
   check(indepRes.sfxTickList.every(e => e.lines.every(l => /^particleex polarparameter minecraft:end_rod ~0 ~0 ~-?\d+ /.test(l))),
-    '独立型行垂直偏移恒 0（~0 ~0 ~<z>，z 按音高）');
+    'MIDI式行垂直偏移恒 0（~0 ~0 ~<z>，z 按音高）');
   // 7) 参考全取消 → 重新生成：zip 隐藏、无 CB
   onRefToggle(0, false);
   onRefToggle(2, false);
@@ -638,8 +638,8 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
   check(elements.get('sfxZipBtn').hidden === true, '无参考声道：zip 按钮隐藏');
   check(st.sfxZipBytes === null, '无参考声道：sfxZipBytes 清空');
   check(st.result.result.stats.commandBlocks === 0, '无参考声道：0 命令方块');
-  // 8) 持久化：绑定型 + sfxPitchStep 往返（#0 当前 sound=false：切绑定不再强制发声，sound 保持）
-  onRefToggle(0, true); // #0 → 重新并入（当前参考车道为独立型、sound 默认 false）
+  // 8) 持久化：单线式 + sfxPitchStep 往返（#0 当前 sound=false：切绑定不再强制发声，sound 保持）
+  onRefToggle(0, true); // #0 → 重新并入（当前参考车道为MIDI式、sound 默认 false）
   onRefLaneTypeChange(0, 'bound'); // 其所在参考车道切绑定（2026-09-07：sound 保持 false）
   st.settings.sfxPitchStep = 3;
   context.saveStateNow();
@@ -649,7 +649,7 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
     '持久化载荷 refLayers=[[0,{type:"bound",sound:false}]]（切绑定不强制发声，sound 保持）');
   check(!!parsed && Array.isArray(parsed.refLanes)
     && parsed.refLanes.some(l => l.tracks.includes(0) && l.type === 'bound'),
-    '持久化载荷 refLanes 含绑定型车道（lane.type 字段往返）');
+    '持久化载荷 refLanes 含单线式车道（lane.type 字段往返）');
   check(!!parsed && parsed.settings.sfxPitchStep === 3, '持久化载荷 settings.sfxPitchStep=3');
   // 8b) 车道级特效勾选（粒子特效独立模块）：取消绑定车道的「触发型」→ 绑定行不生成；恢复/持久化往返
   {
@@ -788,7 +788,7 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
     xbtns2[boundLi].dispatch('click', {});
     check(!elements.get('sfxEffectLanes').innerHTML.includes('① 触发型 · 粒子命令模板'), '收起（▲）：面板行移除');
   }
-  // 9) 旧格式迁移：手工写入旧 bool 载荷 → 重载按独立型迁移
+  // 9) 旧格式迁移：手工写入旧 bool 载荷 → 重载按MIDI式迁移
   if (parsed) {
     parsed.refLayers = [[1, true]];
     context.localStorage.setItem(context.stateKey(st.song), JSON.stringify(parsed));
@@ -841,7 +841,7 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
   deleteRefLane(1);
   check(st.refLanes.length === nBefore && JSON.stringify(st.refLanes[0].tracks) === srcTracks,
     '删除：复制出的车道移除、源车道保留');
-  // 3b) 拖拽：dropToRefLane = 登记参考 + 移入目标车道 + 绑定型跟随（允许重复拖入齐响）；
+  // 3b) 拖拽：dropToRefLane = 登记参考 + 移入目标车道 + 单线式跟随（允许重复拖入齐响）；
   //      不再自动进音轨车道池（2026-09-06 语义：显式拖入车道卡片才让参考在普通轨道发声）
   const { dropToRefLane } = context.window.__NBS2SCHEMATIC;
   st.refLayers = new Map(); st.refLanes = [];
@@ -862,12 +862,12 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
   check(JSON.stringify(st.refLanes[1].tracks) === JSON.stringify([i0, i2, i2]),
     '拖入：重复拖入同一车道 = 占多个粒子槽位');
   check(JSON.stringify(st.refLayers.get(i2)) === '{"type":"bound","sound":true}',
-    '拖入：并入绑定型车道 → 成员 refLayers 类型跟随车道（bound，sound 保持原值）');
-  // 2026-09-07 虚拟化：绑定型不再强制发声——先取消 sound 再重拖 → 类型跟随、sound 保持 false
+    '拖入：并入单线式车道 → 成员 refLayers 类型跟随车道（bound，sound 保持原值）');
+  // 2026-09-07 虚拟化：单线式不再强制发声——先取消 sound 再重拖 → 类型跟随、sound 保持 false
   st.refLayers.set(i2, { type: 'bound', sound: false });
   dropToRefLane(i2, 1);
   check(JSON.stringify(st.refLayers.get(i2)) === '{"type":"bound","sound":false}',
-    '拖入绑定型车道：不强制发声（sound 保持 false，粒子仍恒产生）');
+    '拖入单线式车道：不强制发声（sound 保持 false，粒子仍恒产生）');
   // 未发声参考成员拖入提醒（用户 2026-09-07 要求）：标签「（静音）」+ 琥珀样式 + 分区提示
   {
     const mutedHtml = elements.get('refLaneList').innerHTML;
@@ -884,9 +884,19 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
   st.lanes.push({ tracks: [], start: { dz: 20, dy: 0 } }); // 补一条空音轨车道，验证 idxKind 的 lane 映射
   const ed = context.window.__NBS2SCHEMATIC.layoutEditor;
   check(ed.starts().length === 1 + st.lanes.length + st.refLanes.length,
-    'main 窗口标记 = 轨道 0 + 音轨车道 + 参考车道（背景）');
-  check(ed.idxKind(1 + st.lanes.length).kind === 'ref' && ed.idxKind(1 + st.lanes.length).j === 0,
-    'idxKind 将参考车道下标映射到 refLanes[0]（main 窗口）');
+    'main 窗口标记 = 轨道 0 + 音轨车道 + 参考车道');
+  // 2026-09-07 双类型：main 窗口参考车道按类型分 kind——单线式（bound）= ref-bg 可拖
+  // （虚拟盒位锚点，拖它直接决定绑定粒子行偏移）；MIDI式（independent）= ref 背景不可拖
+  // （其粒子中心基准在 ref 窗口拖）
+  const idxIndepMain = ed.starts().findIndex(it => it.kind === 'ref');
+  const idxBoundMain = ed.starts().findIndex(it => it.kind === 'ref-bg');
+  const boundMainIt = ed.starts()[idxBoundMain];
+  check(idxBoundMain > -1 && st.refLanes[boundMainIt.laneIdx]
+    && (st.refLanes[boundMainIt.laneIdx].type || 'independent') === 'bound',
+    'main 窗口：单线式参考车道标记 kind=ref-bg（laneIdx 映射到单线式车道）');
+  check(ed.idxKind(idxBoundMain).kind === 'ref-bg' && ed.idxKind(idxBoundMain).j === boundMainIt.laneIdx
+    && (idxIndepMain > -1 ? ed.idxKind(idxIndepMain).kind === 'ref' && ed.idxKind(idxIndepMain).j === ed.starts()[idxIndepMain].laneIdx : true),
+    'idxKind：main 窗口 ref/ref-bg 标记经 laneIdx 映射到 refLanes 真实下标');
   check(ed.idxKind(1).kind === 'lane' && ed.idxKind(0).kind === 'lane0', 'idxKind 音轨车道/轨道 0 映射');
   const refStart = st.refLanes[0].start;
   refStart.dz = -7; refStart.dy = -3; // 负坐标：布局标记与校验不受影响
@@ -899,26 +909,28 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
   check(edRef.starts().length === st.refLanes.length + st.lanes.length + 1
     && edRef.starts()[0].kind === 'ref' && edRef.starts()[edRef.starts().length - 1].kind === 'lane0',
     'ref 窗口标记 = 参考车道（前）+ 普通车道 + 轨道 0（背景）');
-  check(edRef.draggable(0) === true, 'ref 窗口：独立型参考车道可拖（粒子中心基准）');
-  // 4a-2) 独立型/绑定型分治（2026-09-07 独立中心可拖）：独立型=可拖 ref 标记在前，绑定型=ref-bg 背景不可拖
+  check(edRef.draggable(0) === true, 'ref 窗口：MIDI式参考车道可拖（粒子中心基准）');
+  // 4a-2) MIDI式/单线式分治（2026-09-07 独立中心可拖）：MIDI式=可拖 ref 标记在前，单线式=ref-bg 背景不可拖
   const idxBoundRef = edRef.starts().findIndex(it => it.kind === 'ref-bg');
   const bgIt = edRef.starts()[idxBoundRef];
   check(idxBoundRef > 0 && st.refLanes[bgIt.laneIdx] && (st.refLanes[bgIt.laneIdx].type || 'independent') === 'bound',
-    'ref 窗口：绑定型参考车道标记 kind=ref-bg（laneIdx 映射到绑定车道）');
-  check(edRef.draggable(idxBoundRef) === false, 'ref 窗口：绑定型参考车道不可拖（虚拟盒位背景）');
+    'ref 窗口：单线式参考车道标记 kind=ref-bg（laneIdx 映射到绑定车道）');
+  check(edRef.draggable(idxBoundRef) === false, 'ref 窗口：单线式参考车道不可拖（虚拟盒位背景）');
   const ikRef0 = edRef.idxKind(0), ikBg = edRef.idxKind(idxBoundRef);
   check(ikRef0.kind === 'ref' && ikRef0.j === 0
     && ikBg.kind === 'ref-bg' && ikBg.j === bgIt.laneIdx,
-    'idxKind：ref 窗口 ref/ref-bg 标记经 laneIdx 映射到 refLanes 真实下标（独立型在前排序后 i ≠ 下标）');
+    'idxKind：ref 窗口 ref/ref-bg 标记经 laneIdx 映射到 refLanes 真实下标（MIDI式在前排序后 i ≠ 下标）');
   check(edRef.draggable(st.refLanes.length) === false && edRef.draggable(edRef.starts().length - 1) === false,
     'ref 窗口：普通车道与轨道 0 为不可拖背景');
-  check(ed.draggable(0) === false && ed.draggable(1) === true && ed.draggable(1 + st.lanes.length) === false,
-    'main 窗口：轨道 0 不可拖、音轨车道可拖、参考车道虚拟背景不可拖');
+  check(ed.draggable(0) === false && ed.draggable(1) === true
+    && ed.draggable(idxBoundMain) === true
+    && (idxIndepMain > -1 ? ed.draggable(idxIndepMain) === false : true),
+    'main 窗口：轨道 0 不可拖、音轨车道可拖、单线式参考车道可拖（虚拟盒位锚点）、MIDI式为不可拖背景（中心基准在 ref 窗口拖）');
   const refStart2 = st.refLanes[0].start;
   const laneStartX = st.lanes[0].start;
-  refStart2.dz = laneStartX.dz; refStart2.dy = laneStartX.dy; // 独立型中心与音轨车道物理同位
+  refStart2.dz = laneStartX.dz; refStart2.dy = laneStartX.dy; // MIDI式中心与音轨车道物理同位
   check(ed.validate().errors.length === 0, 'main 窗口：参考车道与普通车道同起点不报碰撞错误（虚拟化后不参与碰撞）');
-  check(edRef.validate().errors.length === 0, 'ref 窗口：独立型中心与音轨车道同位/独立型互相重叠均不报错（虚拟几何，重叠=粒子叠放）');
+  check(edRef.validate().errors.length === 0, 'ref 窗口：MIDI式中心与音轨车道同位/MIDI式互相重叠均不报错（虚拟几何，重叠=粒子叠放）');
   refStart2.dz = 6; refStart2.dy = 1; // 复原
   // 4b) 预置模板：以 0 号车道为中心 + 只重排普通车道（2026-09-07 虚拟化：参考车道位置独立管理、不受预置影响）
   const st2 = context.window.__NBS2SCHEMATIC.state;

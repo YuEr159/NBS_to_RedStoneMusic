@@ -232,13 +232,13 @@ input[type="number"] { width: 70px; }
     <div class="toolbar">
       <button id="addRefLaneBtn">＋ 新增参考车道</button>
       <span class="hint" id="refGroupCount"></span>
-      <span class="hint">勾选音轨池的「节奏参考」→ 默认并入第一条参考车道、放不下自动新建；也可把左侧音轨池的音轨直接拖入卡片（拖入即登记为节奏参考并入该车道，允许重复拖入）；参考车道**不生成任何方块**，只作为粒子特效的节奏/音高参考——想让参考声道同时在普通轨道发声 = 勾选其行内「发声」（建一条普通车道）或把音轨拖入「车道池」卡片；每条参考车道可选类型（独立型/绑定型，作用于该车道全部成员）——绑定型粒子锚定本车道虚拟盒位、独立型锚定轨道 0 CB + 本车道起点基准（下方独立窗口可拖，缺省 (0,0)）再按音高偏移；粒子恒产生（与「发声」无关）；想关闭本车道粒子 = 在下方「粒子特效总览」模块取消该车道的「触发型」勾选</span>
+      <span class="hint">勾选音轨池的「节奏参考」→ 默认并入第一条参考车道、放不下自动新建；也可把左侧音轨池的音轨直接拖入卡片（拖入即登记为节奏参考并入该车道，允许重复拖入）；参考车道**不生成任何方块**，只作为粒子特效的节奏/音高参考——想让参考声道同时在普通轨道发声 = 勾选其行内「发声」（建一条普通车道）或把音轨拖入「车道池」卡片；每条参考车道可选类型（单线式/MIDI式，作用于该车道全部成员）——单线式粒子锚定本车道虚拟盒位（起点可在下方音轨布局窗口直接拖）、MIDI式锚定轨道 0 CB + 本车道起点基准（下方独立窗口可拖，缺省 (0,0)）再按音高偏移；粒子恒产生（与「发声」无关）；想关闭本车道粒子 = 在下方「粒子特效总览」模块取消该车道的「触发型」勾选</span>
     </div>
     <div id="refLaneList"></div>
-    <h3>参考车道起点布局（Y-Z 截面，独立窗口；独立型参考车道可拖 = 粒子中心基准，绑定型为虚拟盒位背景、不可移动）</h3>
+    <h3>参考车道起点布局（Y-Z 截面，独立窗口；MIDI式参考车道可拖 = 粒子中心基准，单线式为虚拟盒位背景、不可移动——单线式起点在上方音轨布局窗口拖）</h3>
     <div class="layout-tools">
       <button id="fitRefLayoutBtn">缩放到全部</button>
-      <span class="hint">拖拽移动独立型参考车道（其起点 = 粒子中心基准，缺省 (0,0) = 轨道 0 CB 位置）；绑定型参考车道（紫、半透明）显示虚拟盒位几何、不可拖；普通车道（灰）与轨道 0 仅作空间参照、不可移动；参考车道不参与物理碰撞校验（独立型中心重叠 = 粒子有意叠放），可与普通车道任意并排</span>
+      <span class="hint">拖拽移动 MIDI式参考车道（其起点 = 粒子中心基准，缺省 (0,0) = 轨道 0 CB 位置）；单线式参考车道（紫、半透明）显示虚拟盒位几何、在本窗口不可拖（到音轨布局窗口拖）；普通车道（灰）与轨道 0 仅作空间参照、不可移动；参考车道不参与物理碰撞校验（MIDI式中心重叠 = 粒子有意叠放），可与普通车道任意并排</span>
     </div>
     <canvas id="refLaneCanvas" width="640" height="420"></canvas>
     <div class="layout-info" id="refLayoutInfo"></div>
@@ -262,14 +262,14 @@ input[type="number"] { width: 70px; }
       <span class="hint" id="targetVersionHint"></span>
     </div>
     <div class="setting-row">
-      <label>独立型参考 · 音高 Z 步长（格/半音）</label>
+      <label>MIDI式参考 · 音高 Z 步长（格/半音）</label>
       <input type="number" id="sfxPitchStep" min="0" max="8" step="1" value="1">
-      <span class="hint">独立型参考声道：粒子中心 Z 偏移 =（音高 − 12）× 步长；音高 12 居中，默认 1</span>
+      <span class="hint">MIDI式参考声道：粒子中心 Z 偏移 =（音高 − 12）× 步长；音高 12 居中，默认 1</span>
     </div>
   </section>
 
   <section id="layout-section" hidden>
-    <h2>普通车道起点布局（Y-Z 截面，可拖拽；参考车道为虚拟背景、不可拖——参考车道在上方「参考车道池」的独立窗口中拖拽）</h2>
+    <h2>普通车道起点布局（Y-Z 截面，可拖拽；单线式参考车道（紫）也可拖 = 其虚拟盒位锚点、直接决定绑定粒子行偏移，MIDI式参考车道为背景、不可拖——其中心基准在上方「参考车道池」的独立窗口中拖拽）</h2>
     <div class="layout-tools">
       <button id="presetLineBtn">预置：单行</button>
       <button id="presetGridBtn">预置：网格</button>
@@ -764,16 +764,16 @@ const DEFAULT_RAIL_LIGHT = 'minecraft:ochre_froglight';
 // 触发区（总线/下降 tap/启动开关）已按用户要求从产物中移除：链头输入侧（X=0 的
 //   中继器输入端）留空，由用户手动铺设总线与开关（用户确认）。
 // refLayers：节奏参考声道 Map<声部下标, {type, sound}>（双类型，用户批准设计 v2）
-//   · 绑定型 bound：粒子锚定所属参考车道的虚拟盒位（参考车道不生成任何物理结构，仅保留假定
+//   · 单线式 bound：粒子锚定所属参考车道的虚拟盒位（参考车道不生成任何物理结构，仅保留假定
 //     起点 + 3 盒位槽位作粒子锚点几何）；粒子恒产生（不受 sound 影响，2026-09-07 参考车道虚拟化后，
-//     用户确认「粒子恒产生（参考意义）」，绑定型不再强制发声）；
-//   · 独立型 independent：粒子中心 = 轨道 0 链 CB 位置 + 所属独立型参考车道的 start 基准
+//     用户确认「粒子恒产生（参考意义）」，单线式不再强制发声）；
+//   · MIDI式 independent：粒子中心 = 轨道 0 链 CB 位置 + 所属MIDI式参考车道的 start 基准
 //     （ref 窗口可拖，2026-09-07 独立中心可拖需求；未拖过的车道 start=(0,0) = 旧行为：与 CB 同高、
 //     原点中心），Z 再按音高线性偏移 (note−12)×sfxPitchStep（用户定：以 12 为中点）；同样恒产生。
 //   sound 对所有类型均为「在普通轨道也发声」显式开关（2026-09-07 起统一语义）。
 // refMode（参考车道池启用后，用户批准设计）：
-//   绑定型粒子只锚定参考车道池（refLanes）内该声道的虚拟盒位——按 tracks 顺序占槽 0/1/2
-//   （对应 Z +0/+1/−1，同 tick >3 音符丢弃）。参考车道未含该绑定型声道 → 粒子整体跳过（空 tick 回退还原 CB）。
+//   单线式粒子只锚定参考车道池（refLanes）内该声道的虚拟盒位——按 tracks 顺序占槽 0/1/2
+//   （对应 Z +0/+1/−1，同 tick >3 音符丢弃）。参考车道未含该单线式声道 → 粒子整体跳过（空 tick 回退还原 CB）。
 // 触发几何：所有参考 CB 统一放轨道 0 —— 该 tick 有任意参考音符 → 轨道 0 主位底座
 //   （X_t+1, Yb）雪块换命令方块 (facing=up)，Command = function nbs2sfx:<tick>（0 基 NBS tick）。
 //   轨道 0 无音符 → 主位信号层恒红石粉，粉在机制正上方按红石规则激活下方方块（wiki Redstone power），
@@ -792,7 +792,7 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
   // --- 链几何 ---
   // 默认轨道 0 恒存在（即使所有音轨未分配），放在组下标 0 的位置，与音轨车道共享同一套链结构。
   // 参考车道池（refLanes）作为追加的**虚拟参考链**（2026-09-07 虚拟化：不生成任何物理结构，
-  //   仅保留虚拟 (zc,yb) 起点 + 3 盒位槽位作为绑定型粒子锚点几何；成员来自参考勾选，可与音轨车道任意重叠）。
+  //   仅保留虚拟 (zc,yb) 起点 + 3 盒位槽位作为单线式粒子锚点几何；成员来自参考勾选，可与音轨车道任意重叠）。
   // refLanes 元素与 lanes 同构（{ tracks, start }）。
   const refGroups = (refLanes || []).map(l => ({ layers: l.tracks }));
   const refStarts = (refLanes || []).map(l => l.start);
@@ -817,12 +817,12 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
       refLaneEffects: isRef ? (refLanes[i - (defaultStart ? 1 : 0) - nOrd].effects || null) : null,
       // 车道级触发模板（lane.sfxParams，缺省 = 默认命令 SFX_PARTICLE_FIELDS）：绑定行按本车道模板生成
       refLaneParams: isRef ? normSfxParams(refLanes[i - (defaultStart ? 1 : 0) - nOrd].sfxParams) : null,
-      // 独立型粒子中心基准（用户 2026-09-07 需求 5：参考窗口可拖）= 本车道 start（虚拟起点）；
+      // MIDI式粒子中心基准（用户 2026-09-07 需求 5：参考窗口可拖）= 本车道 start（虚拟起点）；
       //   独立行 = 轨道 0 CB + (0, dy, dz) + (0, 0, 音高×sfxPitchStep)；未拖过的车道 start=(0,0)（v1 存档迁移保证）
       refLaneStart: isRef ? (refLanes[i - (defaultStart ? 1 : 0) - nOrd].start || null) : null,
     };
   });
-  // 参考车道池启用 ⇔ 调用方传了 refLanes（UI 恒传数组；旧调用/测试传 undefined → 旧行为：绑定型锚定音轨车道）
+  // 参考车道池启用 ⇔ 调用方传了 refLanes（UI 恒传数组；旧调用/测试传 undefined → 旧行为：单线式锚定音轨车道）
   const refMode = refLanes !== null;
 
   // --- X 跨度 ---
@@ -841,7 +841,7 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
   //   yOffset = −min(0, 各真实链 yb)（底座行平移到网格 y≥0；全非负起点时 =0，与旧行为一致）
   //   zOffset = 1 − min(0, 各真实链 zc)（第 3 音符盒占 zc−1；全非负起点时 =1，与旧行为一致）
   // 只在最小值确为负时平移：全非负布局产物与旧版逐字节一致（gen-example 参考产物回归保护）。
-  // W 内嵌两个偏移；TE 坐标 = 网格坐标；绑定型粒子偏移是虚拟参考车道与轨道 0 的坐标差，平移对其无影响。
+  // W 内嵌两个偏移；TE 坐标 = 网格坐标；单线式粒子偏移是虚拟参考车道与轨道 0 的坐标差，平移对其无影响。
   // 2026-09-07 参考车道虚拟化：参考车道不生成任何物理结构 → 尺寸/平移只由真实链（轨道 0 + 音轨车道）决定，
   //   参考车道的虚拟起点即使超出网格范围也不影响产物（它只是粒子锚点几何，不占格）。
   const realChains = chains.filter(c => !c.isRefLane);
@@ -869,9 +869,9 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
     discardedDetails: [],
   };
   // 节奏参考声道双类型（用户批准设计 v2）；类型选型按参考车道（用户 2026-09-04 定）：
-  //   绑定型 bound：粒子中心 = 所属参考车道的虚拟盒位（参考车道 2026-09-07 起纯虚拟、不生成结构，
+  //   单线式 bound：粒子中心 = 所属参考车道的虚拟盒位（参考车道 2026-09-07 起纯虚拟、不生成结构，
   //     偏移按虚拟 (zc,yb) 与轨道 0 的坐标差求解；粒子恒产生，不受 sound 影响）；
-  //   独立型 independent：粒子中心 = 轨道 0 CB 位置 + 所属独立型参考车道 start（可拖基准），
+  //   MIDI式 independent：粒子中心 = 轨道 0 CB 位置 + 所属MIDI式参考车道 start（可拖基准），
   //   Z 再按音高 (note−12)×sfxPitchStep（2026-09-07 独立中心可拖；缺省 start=(0,0) 为旧行为）。
   // refTypeOf：某声道的类型——refMode 且声道在任一参考车道内 → 取车道类型（多车道绑定优先）；
   //   否则回退该声道 refLayers 的类型（旧行为/旧调用 refLanes=null 时按声道取）。
@@ -881,7 +881,7 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
     return spec ? spec.type : null;
   };
   // 每 tick 参考音符 → 轨道 0 该段主位底座放 CB；<tick>.mcfunction 行在此随放置进度汇总。
-  const boundRefLayers = [];    // 绑定型声道下标（按声部升序）
+  const boundRefLayers = [];    // 单线式声道下标（按声部升序）
   const sfxEntries = new Map(); // tick → [{ kind: 'bound', li, key } | { kind: 'indep', li, key }]
   const sfxTickLines = new Map(); // tick → 命令行数组（放置循环内填充，供数据包导出复用）
   const refBoundWarned = new Set();
@@ -893,7 +893,7 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
       let type = spec.type;
       if (refMode) {
         // 类型选型按参考车道：声道在任一参考车道内 → 取车道类型（分属多车道时绑定优先）；
-        // 未分配任何参考车道 → 保持声道级类型（独立型 → 无行、空 tick 回退；绑定型 → 无锚点、警告）
+        // 未分配任何参考车道 → 保持声道级类型（MIDI式 → 无行、空 tick 回退；单线式 → 无锚点、警告）
         const laneTypes = chains.filter(c => c.isRefLane && c.layers.includes(li)).map(c => c.refLaneType);
         if (laneTypes.length > 0) type = laneTypes.includes('bound') ? 'bound' : 'independent';
       }
@@ -909,7 +909,7 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
       }
     }
   }
-  // 绑定型参考声道不在任何参考车道（refMode 下）→ 无虚拟锚点：粒子整体跳过并警告（空 tick 回退会还原 CB）。
+  // 单线式参考声道不在任何参考车道（refMode 下）→ 无虚拟锚点：粒子整体跳过并警告（空 tick 回退会还原 CB）。
   // 旧模式（refLanes 未传）保持原语义：看音轨车道是否含该声道。
   const layerAnchor = new Set();
   for (const c of chains) {
@@ -920,8 +920,8 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
     if (!layerAnchor.has(li)) {
       stats.sfxDiscarded += (song.layers[li] && song.layers[li].notes.size) || 0;
       stats.discardedDetails.push(refMode
-        ? `绑定型参考声道 #${li} 未分配参考车道（无虚拟锚点）：其粒子全部跳过（请在参考车道池分配）`
-        : `绑定型参考声道 #${li} 未分配车道：其粒子跳过（请在车道池分配）`);
+        ? `单线式参考声道 #${li} 未分配参考车道（无虚拟锚点）：其粒子全部跳过（请在参考车道池分配）`
+        : `单线式参考声道 #${li} 未分配车道：其粒子跳过（请在车道池分配）`);
     }
   }
   const tileEntities = []; // 命令方块（节奏参考触发，全部在轨道 0）；无参考声道时为空数组
@@ -929,13 +929,13 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
   const sfxCbs = new Map(); // tick → 已放 CB 记录（空 tick 回退用：该 tick 无粒子行 → 还原雪块 + 移除 TE）
   let xCur = 0; // 段首 X（全局）
 
-  // --- 绑定型参考：粒子行（偏移 = 所属参考车道虚拟盒位 − 轨道 0 CB 坐标） ---
+  // --- 单线式参考：粒子行（偏移 = 所属参考车道虚拟盒位 − 轨道 0 CB 坐标） ---
   // 2026-09-07 参考车道虚拟化后，绑定行不再随放置产生，改由放置循环后的独立段按参考车道虚拟槽位生成（恒产生）。
   // 此处保留的 sfxBoundNoteLine 仅供**非 refMode**（refLanes 未传的旧调用/旧行为）随放置路径使用；
   // refMode 下音轨车道上的盒静默跳过（粒子只锚定参考车道虚拟位置）。
   const railChain = chains.find(c => c.isDefaultRail);
   let curChain = null; // 当前遍历的链（同一声道重复分配到多链时，偏移按实际放置的链算）
-  // 独立型粒子中心基准（用户 2026-09-07 需求 5：参考窗口可拖）= 成员声道所在**独立型**参考车道的 start；
+  // MIDI式粒子中心基准（用户 2026-09-07 需求 5：参考窗口可拖）= 成员声道所在**MIDI式**参考车道的 start；
   //   未拖过的车道 start=(0,0)（v1 存档迁移保证）→ 偏移 (0,0) = 旧行为；refMode=false（旧调用）恒 (0,0)
   const indepStartOf = (li) => {
     if (!refMode) return null;
@@ -947,13 +947,13 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
   function sfxBoundNoteLine(t, li, slotZ) {
     if (boundRefLayers.indexOf(li) < 0) return;
     const lane = curChain; // 音符盒就放在当前链（curChain 已在链循环入口更新）
-    if (refTypeOf(li, lane ? lane.refLaneType : null) !== 'bound') return; // 独立型不产绑定行（双保险）
+    if (refTypeOf(li, lane ? lane.refLaneType : null) !== 'bound') return; // MIDI式不产绑定行（双保险）
     if (refMode) return; // refMode：绑定行由虚拟参考车道段统一生成，放置路径不产
     if (!lane) {
       // 理论上不可达（本函数只由车道放置路径调用）；保险：无链 → 跳过并一次性警告
       if (!refBoundWarned.has(li)) {
         refBoundWarned.add(li);
-        stats.discardedDetails.push(`绑定型参考声道 #${li} 未分配车道：其粒子跳过（请在参考车道池分配）`);
+        stats.discardedDetails.push(`单线式参考声道 #${li} 未分配车道：其粒子跳过（请在参考车道池分配）`);
       }
       stats.sfxDiscarded++;
       return;
@@ -970,12 +970,12 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
     if (boundRefLayers.indexOf(li) < 0) return;
     stats.sfxDiscarded++;
   }
-  // 独立型参考行：粒子中心 = 轨道 0 CB + 所属独立型参考车道 start（可拖基准，缺省 (0,0) = 旧行为
+  // MIDI式参考行：粒子中心 = 轨道 0 CB + 所属MIDI式参考车道 start（可拖基准，缺省 (0,0) = 旧行为
   //   「与 CB 同高、垂直偏移恒 0」），Z 再按音高 (note−12)×step 展开
   function sfxStandaloneLine(t, key, li) {
     const note = noteFromKey(key);
     const zOff = (Math.max(0, Math.min(24, note)) - 12) * sfxPitchStep;
-    // 中心基准 = 所属独立型参考车道 start（可拖；未拖过的车道 start=(0,0) → (0,0) 旧行为），再叠音高 Z 展开
+    // 中心基准 = 所属MIDI式参考车道 start（可拖；未拖过的车道 start=(0,0) → (0,0) 旧行为），再叠音高 Z 展开
     const st = indepStartOf(li);
     const dy = st ? st.dy : 0;
     const dz = (st ? st.dz : 0) + zOff;
@@ -989,9 +989,9 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
 
     for (const c of chains) {
       // 2026-09-07 参考车道虚拟化：参考车道不生成任何物理结构（无中继器/雪块/音符盒/CB），
-      //   只保留虚拟 (zc,yb) 起点作为绑定型粒子锚点几何（见下方虚拟槽位段）
+      //   只保留虚拟 (zc,yb) 起点作为单线式粒子锚点几何（见下方虚拟槽位段）
       if (c.isRefLane) continue;
-      curChain = c; // 绑定型偏移计算用（非 refMode 旧路径：音符盒所在车道的起点）
+      curChain = c; // 单线式偏移计算用（非 refMode 旧路径：音符盒所在车道的起点）
       const { zc, yb } = c;
       const ySig = yb + 1;
 
@@ -1106,13 +1106,13 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
     xCur += cells;
   }
 
-  // --- 绑定型参考（refMode）：粒子行按参考车道**虚拟槽位**生成（2026-09-07 参考车道虚拟化） ---
+  // --- 单线式参考（refMode）：粒子行按参考车道**虚拟槽位**生成（2026-09-07 参考车道虚拟化） ---
   // 参考车道不生成物理盒，粒子锚定其假定的盒位：槽位规则与真实链一致（lane.tracks 顺序 → 槽 0/1/2 → Z +0/+1/−1，
   //   同刻 >3 个成员音符按序丢弃），偏移 = (参考车道虚拟盒 − 轨道 0 CB)。**恒产生**，不受 sound 影响（参考意义）。
   // 行序：按参考车道（refLanes 顺序）逐 tick 追加，与旧版「车道放置顺序」一致；独立行随后，整体仍是绑定在前。
   if (refMode && railChain) {
     for (const r of chains.filter(c => c.isRefLane)) {
-      if (r.refLaneType !== 'bound') continue; // 独立型车道不产绑定行（粒子走轨道 0 音高偏移路径）
+      if (r.refLaneType !== 'bound') continue; // MIDI式车道不产绑定行（粒子走轨道 0 音高偏移路径）
       // 触发型勾选（lane.effects，缺省 = 全选）：取消勾选 → 本车道绑定粒子行不生成
       if (r.refLaneEffects && !r.refLaneEffects.includes('trigger')) continue;
       // 车道级触发模板（lane.sfxParams，缺省 = 默认命令）：绑定行按本车道模板替换坐标段后生成。
@@ -1136,7 +1136,7 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
         }
         hit.forEach((h, i) => {
           if (i >= 3) { stats.sfxDiscarded++; return; } // 超 3 位丢弃（与真实链规则一致）
-          if (boundRefLayers.indexOf(h.li) < 0) return; // 该声道非绑定型（多车道绑定优先已由 refTypeOf 处理）
+          if (boundRefLayers.indexOf(h.li) < 0) return; // 该声道非单线式（多车道绑定优先已由 refTypeOf 处理）
           const slotZ = [0, 1, -1][i];
           const dy = (r.yb + 1) - railChain.yb;     // 虚拟盒层 − 轨道 0 底座层
           const dz = (r.zc + slotZ) - railChain.zc; // 槽位 Z
@@ -1147,14 +1147,14 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
       }
     }
   }
-  // --- 独立型参考：粒子行汇总（粒子中心 = 轨道 0 CB + 所属独立型参考车道 start 基准，Z 再按音高展开） ---
-  // 独立型不依赖音符盒放置，仅要求轨道 0 存在（有 CB 可触发）；行序 = 声部升序，与绑定行互不交叉
+  // --- MIDI式参考：粒子行汇总（粒子中心 = 轨道 0 CB + 所属MIDI式参考车道 start 基准，Z 再按音高展开） ---
+  // MIDI式不依赖音符盒放置，仅要求轨道 0 存在（有 CB 可触发）；行序 = 声部升序，与绑定行互不交叉
   if (railChain) {
     for (const [t, entries] of [...sfxEntries.entries()].sort((a, b) => a[0] - b[0])) {
       for (const e of entries) if (e.kind === 'indep') sfxStandaloneLine(t, e.key, e.li);
     }
   }
-  // 空 tick 回退：该 tick 有参考音符但无任何粒子行（如绑定型声道未分配车道）→ 无 function 文件可写，
+  // 空 tick 回退：该 tick 有参考音符但无任何粒子行（如单线式声道未分配车道）→ 无 function 文件可写，
   //   底座还原雪块、TE 移除、CB 计数回退（避免产物出现指向不存在 function 的空命令方块）
   for (const t of sfxEntries.keys()) {
     if (sfxTickLines.has(t)) continue;
@@ -1233,7 +1233,7 @@ function buildSfxPackMcmeta(mc, songName) {
   return JSON.stringify({ pack }, null, 2) + '\n';
 }
 
-// 参考声道 → 每 tick 的粒子行（绑定型按音符盒偏移、独立型按音高偏移，构建时逐音符计算）。
+// 参考声道 → 每 tick 的粒子行（单线式按音符盒偏移、MIDI式按音高偏移，构建时逐音符计算）。
 // 行来自 buildLayout 的 sfxTickList（与轨道 0 命令方块逐 tick 一一对应）：
 //   同一 tick 多参考音符 → 文件内每音符一行，绑定行在前（按车道放置顺序）、独立行在后（按声部升序）。
 // 传 sfxTickList 时使用其行（推荐，与产物 CB 严格一致）；缺省时退化为旧行为（每行 SFX_PARTICLE_CMD 原样）。
@@ -1626,11 +1626,11 @@ const AppState = {
   fileBytes: null,
   selectedLayers: new Set(),   // 音轨池：勾选的声部下标
   // 节奏参考声道：Map<声部下标, {type, sound}>（双类型，用户批准设计 v2）。
-  //   type='bound' 绑定型：粒子锚定所属参考车道的虚拟盒位（参考车道不生成任何物理结构）；粒子恒产生；
-  //   type='independent' 独立型：粒子中心 = 轨道 0 CB 位置 + 所属独立型参考车道的 start 基准（可拖，
+  //   type='bound' 单线式：粒子锚定所属参考车道的虚拟盒位（参考车道不生成任何物理结构）；粒子恒产生；
+  //   type='independent' MIDI式：粒子中心 = 轨道 0 CB 位置 + 所属MIDI式参考车道的 start 基准（可拖，
   //     缺省 (0,0) = 与 CB 同高、原点），Z 再按音高 (note−12)×settings.sfxPitchStep；同样恒产生。
-  //   sound = 「在普通轨道也发声」显式开关（对所有类型统一，2026-09-07 起绑定型也可取消）。
-  // 触发：轨道 0 主位底座命令方块 + nbs2sfx 数据包（buildSfxDatapackZip）；旧存档 bool 值按独立型迁移。
+  //   sound = 「在普通轨道也发声」显式开关（对所有类型统一，2026-09-07 起单线式也可取消）。
+  // 触发：轨道 0 主位底座命令方块 + nbs2sfx 数据包（buildSfxDatapackZip）；旧存档 bool 值按MIDI式迁移。
   refLayers: new Map(),
   lanes: [],             // 车道池：[{ tracks: [layerIdx...], start: {dz, dy} }]，每条车道 = 一条物理链
                          // start = 该链起点在 Y-Z 截面的偏移，随车道对象同生共死（删除/复制/插入不会错位）
@@ -1638,7 +1638,7 @@ const AppState = {
   //   2026-09-07 虚拟化：start + 3 盒位槽位仅作为粒子锚点几何与拖拽占位，可与普通车道任意并排、不参与碰撞校验）。
   // 成员 = 勾选了「节奏参考」的声道，用勾选式并入（onRefToggle → 第一条无冲突参考车道，放不下新建），
   // 与车道池的拖拽分配不同；允许与车道池成员重叠（同一声道在普通车道放真实盒 + 参考车道提供粒子参考）。
-  // 绑定型粒子只锚定参考车道内该声道的虚拟盒位（buildLayout refMode 虚拟绑定行段）。
+  // 单线式粒子只锚定参考车道内该声道的虚拟盒位（buildLayout refMode 虚拟绑定行段）。
   refLanes: [],
   // 粒子特效模块：勾选表里哪些参考车道行处于「展开模板参数编辑」状态（li → true，仅 UI 状态、不持久化）
   sfxLanesOpen: new Set(),
@@ -1647,7 +1647,7 @@ const AppState = {
   settings: {
     targetVersion: DEFAULT_TARGET_MC,
     customInstrumentMap: new Map(),
-    sfxPitchStep: 1,     // 独立型参考：音高 → Z 偏移步长（格/半音），默认 1（用户定：以音高 12 为中点线性）
+    sfxPitchStep: 1,     // MIDI式参考：音高 → Z 偏移步长（格/半音），默认 1（用户定：以音高 12 为中点线性）
   },
   result: null,          // 生成结果 { grid, palette, size, ... }
   litematicBytes: null,
@@ -1893,7 +1893,7 @@ function saveStateNow() {
   if (typeof localStorage === 'undefined' || !AppState.song) return;
   try {
     const payload = {
-      v: 2, // v2（2026-09-07 独立型中心可拖）：v1 的独立型 start 是自动排布占位（i×3+6），v2 起其语义=粒子中心基准（默认 (0,0)）
+      v: 2, // v2（2026-09-07 MIDI式中心可拖）：v1 的MIDI式 start 是自动排布占位（i×3+6），v2 起其语义=粒子中心基准（默认 (0,0)）
       savedAt: Date.now(),
       selectedLayers: [...AppState.selectedLayers],
       refLayers: [...AppState.refLayers.entries()],
@@ -1932,11 +1932,11 @@ function loadSavedState(song) {
     const raw = localStorage.getItem(stateKey(song));
     if (!raw) return null;
     const s = JSON.parse(raw);
-    if (!s || (s.v !== 1 && s.v !== 2)) return null; // v2 = 独立型中心可拖后格式（载荷形状同 v1，仅独立型 start 语义变更）
+    if (!s || (s.v !== 1 && s.v !== 2)) return null; // v2 = MIDI式中心可拖后格式（载荷形状同 v1，仅MIDI式 start 语义变更）
     const nLayers = song.layers.length;
     if (!Array.isArray(s.selectedLayers) || !Array.isArray(s.lanes)) return null;
     for (const i of s.selectedLayers) if (!Number.isInteger(i) || i < 0 || i >= nLayers) return null;
-    // refLayers：可选（旧存档无此字段）；值兼容旧格式 bool（=发声与否，按独立型迁移）
+    // refLayers：可选（旧存档无此字段）；值兼容旧格式 bool（=发声与否，按MIDI式迁移）
     //   与新格式 {type:'bound'|'independent', sound:bool}
     if (s.refLayers !== undefined) {
       if (!Array.isArray(s.refLayers)) return null;
@@ -1980,7 +1980,7 @@ function loadSavedState(song) {
 // 应用已存状态到 AppState（调用前须已设置默认值）；返回是否恢复成功
 function applySavedState(song, saved) {
   AppState.selectedLayers = new Set(saved.selectedLayers);
-  // refLayers：旧格式 bool 值迁移为独立型（buildLayout 侧 normRef 同样兜底，双保险）
+  // refLayers：旧格式 bool 值迁移为MIDI式（buildLayout 侧 normRef 同样兜底，双保险）
   AppState.refLayers = new Map((Array.isArray(saved.refLayers) ? saved.refLayers : []).map(([i, spec]) =>
     [i, typeof spec === 'object' && spec !== null
       ? { type: spec.type, sound: !!spec.sound }
@@ -1989,12 +1989,12 @@ function applySavedState(song, saved) {
   if (saved.lane0Start) AppState.lane0 = { start: { dz: saved.lane0Start.dz, dy: saved.lane0Start.dy } };
   AppState.refLanes = (Array.isArray(saved.refLanes) ? saved.refLanes : [])
     .map(l => ({ tracks: [...l.tracks], type: l.type || 'independent',
-      // v1→v2 迁移（2026-09-07 独立型中心可拖）：v1 的独立型 start 是自动排布占位（i×3+6），
-      // 且旧公式粒子恒在原点、不读 start → 重置 (0,0) 使 v1 存档的产物逐位不变；绑定型 start 原样保留
+      // v1→v2 迁移（2026-09-07 MIDI式中心可拖）：v1 的MIDI式 start 是自动排布占位（i×3+6），
+      // 且旧公式粒子恒在原点、不读 start → 重置 (0,0) 使 v1 存档的产物逐位不变；单线式 start 原样保留
       start: (saved.v === 1 && (l.type || 'independent') === 'independent') ? { dz: 0, dy: 0 } : { dz: l.start.dz, dy: l.start.dy },
       effects: Array.isArray(l.effects) ? l.effects : undefined, // 缺省 = 全选（buildLayout 按 undefined 处理）
       sfxParams: (typeof l.sfxParams === 'object' && l.sfxParams !== null) ? { ...l.sfxParams } : undefined }));
-  // 车道级类型迁移（类型选型按参考车道存储）：车道显式含绑定型成员 → 该声道 refLayers 类型跟随车道
+  // 车道级类型迁移（类型选型按参考车道存储）：车道显式含单线式成员 → 该声道 refLayers 类型跟随车道
   for (const l of AppState.refLanes) {
     for (const t of l.tracks) {
       if (AppState.refLayers.has(t)) AppState.refLayers.set(t, { ...AppState.refLayers.get(t), type: l.type });
@@ -2015,7 +2015,7 @@ function applySavedState(song, saved) {
 }
 
 /* ===== 车道池（音轨池 + 车道分配） ===== */
-// 参考声道规格归一化（UI 侧镜像 buildLayout 的 normRef；旧存档 bool 值按独立型迁移）
+// 参考声道规格归一化（UI 侧镜像 buildLayout 的 normRef；旧存档 bool 值按MIDI式迁移）
 function refSpecOf(v) {
   return (typeof v === 'object' && v !== null && (v.type === 'bound' || v.type === 'independent'))
     ? { type: v.type, sound: !!v.sound }
@@ -2075,7 +2075,7 @@ function onLayerToggle(i, checked) {
 }
 
 // 放置音轨进音轨车道池：已在某车道则跳过；否则第一条无冲突车道，仍不行新建车道
-// （供主勾选 / 发声框 / 绑定型车道切换 / 拖放复用，保证各入口放置语义一致）
+// （供主勾选 / 发声框 / 单线式车道切换 / 拖放复用，保证各入口放置语义一致）
 function placeInLanesIfAbsent(i) {
   const song = AppState.song;
   const layer = song.layers[i];
@@ -2092,7 +2092,7 @@ function placeInLanesIfAbsent(i) {
 }
 
 // 参考框勾选/取消（用户 2026-09-06 反馈后的最终语义）：
-// 勾选 = 登记为节奏参考声道（默认独立型、sound=false）+ 勾选式并入参考车道池（第一条无冲突、否则新建）
+// 勾选 = 登记为节奏参考声道（默认MIDI式、sound=false）+ 勾选式并入参考车道池（第一条无冲突、否则新建）
 //   —— 不再自动在「车道池」复制一份盒（旧版无提示地双份放置被用户反馈为多余）；
 //   参考车道纯虚拟（不生成任何结构）：勾选参考 = 普通轨道无盒，只留节奏/音高参考 + 粒子（恒产生）；
 //   想让它在普通轨道也发声（真实音符盒）= 勾行内「发声」框（或把音轨拖入「车道池」卡片，显式操作，允许重叠）。
@@ -2121,7 +2121,7 @@ function onRefToggle(i, checked) {
 
 // 参考车道类型下拉（选型按参考车道）：一条参考车道的全部成员声道共用同一类型，存 lane.type。
 // 2026-09-07 参考车道虚拟化后：切换类型只改 lane.type + 成员 refLayers 的 type 字段（sound 保持原值——
-// 绑定型不再强制发声、也不再自动进音轨车道池；「在普通轨道发声」仍由行内「发声」框显式控制）。
+// 单线式不再强制发声、也不再自动进音轨车道池；「在普通轨道发声」仍由行内「发声」框显式控制）。
 // 边界：同一成员分属多条参考车道时类型冲突，refLayers 按「绑定优先」合并（构建侧取车道级类型，绑定语义更强）。
 function onRefLaneTypeChange(li, type) {
   const lane = AppState.refLanes[li];
@@ -2152,7 +2152,7 @@ function onRefLaneTypeChange(li, type) {
 // 发声框勾选/取消（参考声道的「在普通轨道也发声」开关，用户 2026-09-06 起语义）：
 //   勾选 = 在音轨车道池放置该声道的盒（普通车道真实发声；参考车道恒虚拟，粒子锚点不变）；
 //   取消 = 从音轨车道池移除该声道的盒（参考车道不生成任何结构，粒子仍恒产生 = 「纯节奏/音高参考」）；
-//   2026-09-07 参考车道虚拟化后：绑定型不再强制发声（框对绑定型也可自由开关）；
+//   2026-09-07 参考车道虚拟化后：单线式不再强制发声（框对单线式也可自由开关）；
 //   参考车道池成员资格与发声框无关（勾选参考/拖入即登记）。
 function onRefSoundToggle(i, soundOn) {
   const spec = AppState.refLayers.get(i) !== undefined ? refSpecOf(AppState.refLayers.get(i)) : null;
@@ -2441,8 +2441,8 @@ function refLanePoolMembers(song) {
 
 // 参考车道成员增量：勾选式并入（onRefToggle 勾选时调用）——
 // 追加到第一条无冲突参考车道（且未含该声道），否则新建一条；取消由 onRefToggle 直接从各条移除。
-// 类型选型随车道：并入绑定型车道 → 成员 refLayers 类型跟随车道（sound 保持原值——2026-09-07 虚拟化后
-// 绑定型不再强制发声，「在普通轨道发声」仍由行内「发声」框显式控制）。
+// 类型选型随车道：并入单线式车道 → 成员 refLayers 类型跟随车道（sound 保持原值——2026-09-07 虚拟化后
+// 单线式不再强制发声，「在普通轨道发声」仍由行内「发声」框显式控制）。
 function addToRefLanes(i) {
   const song = AppState.song;
   const layer = song.layers[i];
@@ -2468,12 +2468,12 @@ function addToRefLanes(i) {
 }
 
 // 拖拽并入指定参考车道（类车道池拖放：允许重复拖入同一音轨 = 占多个粒子槽位）：
-// 拖入即登记为节奏参考声道（未勾选参考的音轨默认独立型 + sound=true——行内「发声」框默认勾，
+// 拖入即登记为节奏参考声道（未勾选参考的音轨默认MIDI式 + sound=true——行内「发声」框默认勾，
 // 用户可随后取消 = 纯节奏/音高参考，普通轨道无盒；已登记成员保留原 sound 值，不再强制置位）；
 // 从其他参考车道移入本车道（同一成员保留多份 = 重复拖入）；
 // 不进音轨车道池（与勾选「节奏参考」同一规则，用户 2026-09-06 反馈的多余副本；
 //   「发声」框勾选 / 把音轨拖入「车道池」卡片 = 显式让它在普通轨道发声）；
-// 并入绑定型车道 → 成员 refLayers 类型跟随车道（sound 不动，2026-09-07 绑定型不再强制发声）。与勾选式并入（addToRefLanes 自动选车道）并存。
+// 并入单线式车道 → 成员 refLayers 类型跟随车道（sound 不动，2026-09-07 单线式不再强制发声）。与勾选式并入（addToRefLanes 自动选车道）并存。
 function dropToRefLane(t, li) {
   const lane = AppState.refLanes[li];
   const song = AppState.song;
@@ -2495,10 +2495,10 @@ function dropToRefLane(t, li) {
   scheduleStateSave();
 }
 
-// 参考车道起点补缺（2026-09-07 独立型中心可拖后分流）：
-//   · 绑定型 bound：缺 start 找空位——从 dz=i*3+6 起每 +3 扫描（行 dy=0，放不下抬 dy+1），
+// 参考车道起点补缺（2026-09-07 MIDI式中心可拖后分流）：
+//   · 单线式 bound：缺 start 找空位——从 dz=i*3+6 起每 +3 扫描（行 dy=0，放不下抬 dy+1），
 //     避开全部既有起点（音轨车道/参考车道/轨道 0）；其虚拟盒位几何是粒子锚点，重叠会致锚点错位
-//   · 独立型 independent：缺 start 直接置 (0,0)——中心基准默认=轨道 0 链 CB 位置，多车道的
+//   · MIDI式 independent：缺 start 直接置 (0,0)——中心基准默认=轨道 0 链 CB 位置，多车道的
 //     (0,0) 重叠是合法的粒子叠放（ref 窗口校验已放行），不自动排布（排布会让旧产物偏离）
 // i*3+6：每车道步进 3 格（与音轨车道 syncLaneStarts 的 i*3+3 同步进），参考车道整体再右移 3
 //   （+6 而非 +3），使默认排布中参考车道列错开于音轨车道列之后
@@ -2523,8 +2523,8 @@ function syncRefLaneStarts() {
 }
 
 // 复制参考车道：插入原车道之后（两条虚拟参考播放相同音轨 = 粒子锚点加倍）
-//   · 绑定型：找空位（与源错开 3 格起扫，同旧逻辑）——虚拟盒位几何错开避免锚点重叠
-//   · 独立型：start 从 src 直接复制——「复制」语义=同样中心基准（中心重叠=粒子叠放，合法）
+//   · 单线式：找空位（与源错开 3 格起扫，同旧逻辑）——虚拟盒位几何错开避免锚点重叠
+//   · MIDI式：start 从 src 直接复制——「复制」语义=同样中心基准（中心重叠=粒子叠放，合法）
 function duplicateRefLane(li) {
   const src = AppState.refLanes[li];
   if (!src) return false;
@@ -2594,7 +2594,7 @@ function renderRefLaneSection() {
       const warn = document.createElement('div');
       warn.className = 'hint';
       warn.style.color = '#e0a33c';
-      warn.textContent = `⚠ 参考成员未分配参考车道：#${unassigned.join('/#')}（无锚点，粒子全部跳过；绑定型尤其需要分配）`;
+      warn.textContent = `⚠ 参考成员未分配参考车道：#${unassigned.join('/#')}（无锚点，粒子全部跳过；单线式尤其需要分配）`;
       list.appendChild(warn);
     }
   }
@@ -2644,9 +2644,9 @@ function renderRefLaneSection() {
     const typeSel = document.createElement('select');
     typeSel.className = 'ref-lane-type';
     typeSel.dataset.li = String(li);
-    typeSel.title = '本参考车道全部成员声道共用的参考类型（选型按车道）：绑定型 = 粒子锚定本车道该声道的虚拟盒位（按槽位偏移）；独立型 = 粒子锚定轨道 0 CB + 本车道起点基准（下方布局窗口可拖，缺省 (0,0)），Z 再按音高偏移。参考车道恒为虚拟参考，粒子恒产生（与「发声」无关）';
-    typeSel.innerHTML = `<option value="independent" ${laneType === 'independent' ? 'selected' : ''}>独立型</option>
-      <option value="bound" ${laneType === 'bound' ? 'selected' : ''}>绑定型</option>`;
+    typeSel.title = '本参考车道全部成员声道共用的参考类型（选型按车道）：单线式 = 粒子锚定本车道该声道的虚拟盒位（按槽位偏移）；MIDI式 = 粒子锚定轨道 0 CB + 本车道起点基准（下方布局窗口可拖，缺省 (0,0)），Z 再按音高偏移。参考车道恒为虚拟参考，粒子恒产生（与「发声」无关）';
+    typeSel.innerHTML = `<option value="independent" ${laneType === 'independent' ? 'selected' : ''}>MIDI式</option>
+      <option value="bound" ${laneType === 'bound' ? 'selected' : ''}>单线式</option>`;
     typeSel.addEventListener('change', (e) => onRefLaneTypeChange(li, e.target.value));
     head.appendChild(typeSel);
     row.appendChild(head);
@@ -2683,7 +2683,7 @@ function renderRefLaneSection() {
 
 // 粒子特效总览模块（独立 section，用户 2026-09-07 规划）：3 类框架展示 + 按参考车道勾选涉及的特效。
 //   ① 触发型（已实现）：由音符触发、参数由 1 个音符决定；勾选控制**绑定行生成**
-//     （绑定型车道取消勾选 → 其绑定粒子行不再生成；独立行锚轨道 0 按音高，属声道级、不受车道勾选影响）
+//     （单线式车道取消勾选 → 其绑定粒子行不再生成；独立行锚轨道 0 按音高，属声道级、不受车道勾选影响）
 //   ② 连接型（规划占位）：连接前后两音符、参数由 2 音符决定；勾选仅存状态，暂未实现生成逻辑
 //   ③ 背景型（规划占位）：按乐曲小节间隔激活；勾选仅存状态，暂未实现生成逻辑
 // 勾选存 lane.effects: ['trigger'|'connect'|'background']（缺省 = 全选，向后兼容旧存档），
@@ -2716,8 +2716,8 @@ function renderSfxEffectList() {
   };
   card('① 触发型', 'on',
     '由音符触发，参数由 1 个音符决定。每个参考音符在轨道 0 同 tick 触发一次粒子：' +
-    '绑定型 = 粒子中心锚定所属参考车道的虚拟盒位（起点 + 槽位 Z +0/+1/−1，与「发声」无关、恒产生，' +
-    '可被下方车道勾选关闭）；独立型 = 锚定轨道 0 CB + 所属参考车道的起点基准（「参考车道起点布局」窗口可拖，缺省 (0,0)），再按音高偏移 (音高−12)×sfxPitchStep。' +
+    '单线式 = 粒子中心锚定所属参考车道的虚拟盒位（起点 + 槽位 Z +0/+1/−1，与「发声」无关、恒产生，' +
+    '可被下方车道勾选关闭）；MIDI式 = 锚定轨道 0 CB + 所属参考车道的起点基准（「参考车道起点布局」窗口可拖，缺省 (0,0)），再按音高偏移 (音高−12)×sfxPitchStep。' +
     '当前效果条目：end_rod 螺旋展开（particleex polarparameter minecraft:end_rod：' +
     '20 个粒子、寿命 0.1s、半径 1、角度随 t 扫描的平面螺旋，坐标段由构建时按车道起点/槽位/音高求解替换）。');
   card('② 连接型', 'todo',
@@ -2742,7 +2742,7 @@ function renderSfxEffectLanes() {
   }
   const hint = document.createElement('div');
   hint.className = 'hint';
-  hint.textContent = '按参考车道勾选涉及的特效（默认全选）：「触发型」控制该车道绑定粒子行是否生成（独立型车道不产绑定行、勾选不影响其音高偏移行）；连接型/背景型暂未实现，勾选仅存状态。点行首 ▼ 展开该车道的模板参数编辑（触发型参与生成，仅影响本车道绑定行）';
+  hint.textContent = '按参考车道勾选涉及的特效（默认全选）：「触发型」控制该车道绑定粒子行是否生成（MIDI式车道不产绑定行、勾选不影响其音高偏移行）；连接型/背景型暂未实现，勾选仅存状态。点行首 ▼ 展开该车道的模板参数编辑（触发型参与生成，仅影响本车道绑定行）';
   box.appendChild(hint);
   const table = document.createElement('table');
   table.className = 'sfx-effect-table';
@@ -2780,7 +2780,7 @@ function renderSfxEffectLanes() {
     label.textContent = `参考车道 ${li + 1}`;
     const typeTag = document.createElement('span');
     typeTag.className = 'hint';
-    typeTag.textContent = `（${lane.type === 'bound' ? '绑定型' : '独立型'} · 成员 ${lane.tracks.length ? lane.tracks.map(t => '#' + t).join('/') : '无'}）`;
+    typeTag.textContent = `（${lane.type === 'bound' ? '单线式' : 'MIDI式'} · 成员 ${lane.tracks.length ? lane.tracks.map(t => '#' + t).join('/') : '无'}）`;
     label.appendChild(typeTag);
     tdName.appendChild(label);
     tr.appendChild(tdName);
@@ -2794,7 +2794,7 @@ function renderSfxEffectLanes() {
       cb.dataset.li = String(li);
       cb.dataset.k = t.key;
       cb.title = t.key === 'trigger'
-        ? '触发型：控制本车道绑定粒子行是否生成（独立型车道不产绑定行，勾选无影响）'
+        ? '触发型：控制本车道绑定粒子行是否生成（MIDI式车道不产绑定行，勾选无影响）'
         : `${t.name}：规划占位，暂未实现生成逻辑（勾选仅存状态）`;
       cb.addEventListener('change', onSfxEffectToggle);
       td.appendChild(cb);
@@ -2824,7 +2824,7 @@ function renderSfxLaneParams(lane, li) {
   box.appendChild(h1);
   const tip1 = document.createElement('div');
   tip1.className = 'hint';
-  tip1.textContent = '仅影响本车道**绑定行**（独立型行属声道级，仍用默认命令）。构建时坐标段按车道起点/槽位替换为 ~dx ~dy ~dz；命令头/尾参逐字进入 .mcfunction（模组端自行解释其占位符）。留空任一项 → 按默认命令生成。';
+  tip1.textContent = '仅影响本车道**绑定行**（MIDI式行属声道级，仍用默认命令）。构建时坐标段按车道起点/槽位替换为 ~dx ~dy ~dz；命令头/尾参逐字进入 .mcfunction（模组端自行解释其占位符）。留空任一项 → 按默认命令生成。';
   box.appendChild(tip1);
   const rowHead = document.createElement('div');
   rowHead.className = 'sfx-pf';
@@ -3036,7 +3036,7 @@ function renderSettings() {
     $('targetVersionHint').textContent =
       `DataVersion ${tvEntry.dataVersion} · Litematica 分支 ${tvEntry.branch}`;
   }
-  // 独立型参考音高 Z 步长
+  // MIDI式参考音高 Z 步长
   const stepIn = $('sfxPitchStep');
   if (stepIn && document.activeElement !== stepIn) {
     stepIn.value = String(AppState.settings.sfxPitchStep);
@@ -3072,9 +3072,10 @@ function renderSettings() {
 }
 
 /* ===== 10 布局编辑器（Y-Z 截面，拖拽链起点） =====
-   2026-09-07 双窗口：mode 'main'（默认，管轨道 0 + 普通车道；参考车道为半透明虚拟背景、不可拖）
-   / mode 'ref'（参考车道专用窗口：参考车道可拖，普通车道 + 轨道 0 半透明背景不可拖）。
-   参考车道 2026-09-07 起纯虚拟（不生成结构），只作粒子锚点几何 → 不参与物理碰撞校验。 */
+   2026-09-07 双窗口：mode 'main'（默认，管轨道 0 + 普通车道 + **单线式参考车道可拖**（虚拟盒位锚点，
+   影响粒子绑定行偏移）；MIDI式参考车道为半透明背景、不可拖——其中心基准在 ref 窗口拖）
+   / mode 'ref'（参考车道专用窗口：MIDI式可拖 = 粒子中心基准，单线式为紫色背景参照）。
+   参考车道 2026-09-07 起纯虚拟（不生成结构），只作粒子锚点几何 → 不做物理碰撞校验（两窗口均放行参考车道重叠）。 */
 class LayoutEditor {
   constructor(canvas, mode = 'main', infoEl = null) {
     this.canvas = canvas;
@@ -3095,11 +3096,13 @@ class LayoutEditor {
     this.bindEvents();
   }
   // 该窗口「可拖拽」的种类集合。
-  //   ref 窗口：ref = **独立型**参考车道（可拖 = 粒子中心基准）；ref-bg = 绑定型参考车道
-  //   （紫色背景不可拖——其虚拟盒位几何由参考车道池卡片管理，拖了也不影响产物，2026-09-07 需求 5）
-  dragKinds() { return this.mode === 'ref' ? new Set(['ref']) : new Set(['lane']); }
-  // 布局标记（含 kind 标签）。main = [轨道0, 车道1..n, 参考 R1..]（ref 不可拖）；
-  //   ref  = [独立型参考 I1..（可拖=粒子中心基准）, 绑定型参考 B1..（背景）, 车道1..n, 轨道0]（车道/轨道0 背景不可拖）
+  //   main 窗口：lane（普通车道）+ ref-bg = **单线式**参考车道（可拖 = 虚拟盒位锚点，
+  //   拖了直接改变其绑定粒子行偏移，2026-09-07 用户要求恢复可拖）；
+  //   ref 窗口：ref = **MIDI式**参考车道（可拖 = 粒子中心基准）
+  //   ref（main 窗口里的 MIDI式）/ ref-bg（ref 窗口里的单线式）为各自窗口的不可拖背景
+  dragKinds() { return this.mode === 'ref' ? new Set(['ref']) : new Set(['lane', 'ref-bg']); }
+  // 布局标记（含 kind 标签）。main = [轨道0, 车道1..n, MIDI式参考（背景）, 单线式参考（可拖）]；
+  //   ref  = [MIDI式参考 I1..（可拖=粒子中心基准）, 单线式参考 B1..（背景）, 车道1..n, 轨道0]（车道/轨道0 背景不可拖）
   //   缺 start 的车道按 (0,0) 兜底显示（UI 路径 syncLaneStarts/syncRefLaneStarts 恒补 start，
   //   此处仅为直接改状态的外部调用/测试不致崩溃）
   starts() {
@@ -3107,35 +3110,33 @@ class LayoutEditor {
     if (this.mode === 'ref') {
       const refLanes = AppState.refLanes || [];
       return [
-        // 独立型在前（可拖 = 粒子中心基准）；每条标记带 laneIdx = 该参考车道在 refLanes 的真实下标
+        // MIDI式在前（可拖 = 粒子中心基准）；每条标记带 laneIdx = 该参考车道在 refLanes 的真实下标
         ...refLanes.map((l, j) => ({ start: l.start || s0(), kind: (l.type || 'independent') === 'bound' ? 'ref-bg' : 'ref', laneIdx: j }))
           .sort((a, b) => (a.kind === 'ref' ? 0 : 1) - (b.kind === 'ref' ? 0 : 1) || a.laneIdx - b.laneIdx),
         ...AppState.lanes.map(l => ({ start: l.start || s0(), kind: 'lane' })),
         { start: AppState.lane0 ? AppState.lane0.start : { dz: 0, dy: 0 }, kind: 'lane0' },
       ];
     }
-    // main
+    // main：参考车道按类型分 kind——单线式（bound）= ref-bg 可拖（虚拟盒位锚点）；MIDI式（independent）= ref 背景
     return [
       { start: AppState.lane0 ? AppState.lane0.start : { dz: 0, dy: 0 }, kind: 'lane0' },
       ...AppState.lanes.map(l => ({ start: l.start || s0(), kind: 'lane' })),
-      ...(AppState.refLanes || []).map(l => ({ start: l.start || s0(), kind: 'ref' })),
+      ...(AppState.refLanes || []).map((l, j) => ({ start: l.start || s0(),
+        kind: (l.type || 'independent') === 'bound' ? 'ref-bg' : 'ref', laneIdx: j })),
     ];
   }
   // 下标 → 起点 {dz,dy}（兼容旧调用 .starts()[i].dz/.dy）
   startOf(i) { return this.starts()[i].start; }
   kindOf(i) { return this.starts()[i].kind; }
-  // 下标 → 所属数组下标（kind + j）。ref 窗口的参考车道标记带 laneIdx（独立型在前排序后 i ≠ 车道下标）
+  // 下标 → 所属数组下标（kind + j）。两窗口的参考车道标记均带 laneIdx（真实 refLanes 下标）
   idxKind(i) {
     const k = this.kindOf(i);
     if (k === 'lane0') return { kind: 'lane0' };
     if (k === 'lane') return { kind: 'lane', j: this.mode === 'ref'
       ? i - (AppState.refLanes || []).length : i - 1 };
     if (k === 'ref' || k === 'ref-bg') {
-      if (this.mode === 'ref') {
-        const it = this.starts()[i];
-        return { kind: k, j: (it && it.laneIdx !== undefined) ? it.laneIdx : i };
-      }
-      return { kind: k, j: i - 1 - AppState.lanes.length };
+      const it = this.starts()[i];
+      return { kind: k, j: (it && it.laneIdx !== undefined) ? it.laneIdx : i };
     }
     return {};
   }
@@ -3187,7 +3188,7 @@ class LayoutEditor {
         AppState.lanes[sel.j].start = { dz: z, dy: y };
         this.draw(); this.updateInfo();
         scheduleStateSave();
-      } else if (this.draggable(this.dragIndex) && sel.kind === 'ref' && AppState.refLanes[sel.j]) {
+      } else if (this.draggable(this.dragIndex) && (sel.kind === 'ref' || sel.kind === 'ref-bg') && AppState.refLanes[sel.j]) {
         const w = this.s2w(e.offsetX, e.offsetY);
         const z = Math.round(w.z);
         const y = Math.round(w.y);
@@ -3229,7 +3230,7 @@ class LayoutEditor {
       if (!this.draggable(this.selected)) return; // 背景标记（轨道 0 / 非本窗口的 kind）不响应方向键
       const sel = this.idxKind(this.selected);
       const lane = sel.kind === 'lane' ? AppState.lanes[sel.j]
-        : sel.kind === 'ref' ? AppState.refLanes[sel.j] : null;
+        : (sel.kind === 'ref' || sel.kind === 'ref-bg') ? AppState.refLanes[sel.j] : null;
       if (!lane) return;
       const step = e.shiftKey ? 5 : 1;
       const s = lane.start;
@@ -3256,7 +3257,7 @@ class LayoutEditor {
     });
     return hits;
   }
-  // 命中集合中优先可拖标记（独立型中心 (0,0) 与轨道 0 背景重叠时选可拖的那个）；无可拖时退回原取法
+  // 命中集合中优先可拖标记（单线式中心/普通车道与背景重叠时选可拖的那个）；无可拖时退回原取法
   pickHit(hits, tail) {
     const d = hits.find(h => this.draggable(h));
     return d !== undefined ? d : (tail ? hits[hits.length - 1] : hits[0]);
@@ -3269,7 +3270,7 @@ class LayoutEditor {
       return `车道 ${j + 1}`;
     }
     if (k === 'ref' || k === 'ref-bg') {
-      // ref 窗口的参考车道标记带 laneIdx（独立型在前排序后 i ≠ 车道下标）；main 窗口无 laneIdx
+      // 两窗口的参考车道标记均带 laneIdx（ref 窗口 MIDI式在前排序后 i ≠ 车道下标）
       const it = this.starts()[i];
       const j = (it && it.laneIdx !== undefined) ? it.laneIdx : (i - 1 - AppState.lanes.length);
       return `参考车道 ${j + 1}`;
@@ -3277,14 +3278,14 @@ class LayoutEditor {
     return `#${i}`;
   }
   // 参与碰撞校验的下标对（2026-09-07 参考车道虚拟化：参考车道是虚拟几何、不参与物理碰撞）
-  //   main 窗口：轨道 0 + 普通车道两两校验（参考车道为虚拟背景、不参与）；
-  //   ref 窗口：恒不校验——参考车道标记（独立型粒子中心基准 + 绑定型虚拟盒位）全是虚拟几何，
-  //   独立型中心 (0,0) 默认互相重叠 = 粒子有意叠放（旧行为常态），不可报重叠/过近（2026-09-07 独立中心可拖需求）
+  //   main 窗口：轨道 0 + 普通车道两两校验（MIDI式参考车道 = 不可拖背景、不参与；
+  //     单线式参考车道可拖但属虚拟锚点 → 也不参与碰撞，其起点与普通车道同位是合法的）；
+  //   ref 窗口：恒不校验——参考车道标记全是虚拟几何，MIDI式中心 (0,0) 默认互相重叠 = 粒子有意叠放
   validate() {
     const warnings = [], errors = [];
     const items = this.starts();
     const checkIdx = this.mode === 'ref' ? [] :
-      items.map((it, i) => ({ it, i })).filter(x => x.it.kind !== 'ref');
+      items.map((it, i) => ({ it, i })).filter(x => x.it.kind !== 'ref' && x.it.kind !== 'ref-bg');
     for (let a = 0; a < checkIdx.length; a++) {
       for (let b = a + 1; b < checkIdx.length; b++) {
         const i = checkIdx[a].i, j = checkIdx[b].i;
@@ -3370,7 +3371,7 @@ class LayoutEditor {
       const k = it.kind;
       const isRail0 = k === 'lane0';
       const isBg = !this.draggable(i); // 背景标记（不可拖）
-      // 颜色：轨道 0 琥珀；参考车道（独立型可拖/绑定型背景）紫；音轨车道按主导乐器色（main 窗口）/ 灰（ref 窗口背景）
+      // 颜色：轨道 0 琥珀；参考车道（MIDI式可拖/单线式背景）紫；音轨车道按主导乐器色（main 窗口）/ 灰（ref 窗口背景）
       let fill;
       if (isRail0) fill = '#d9a441';
       else if (k === 'ref' || k === 'ref-bg') fill = '#a06cd5';
@@ -3383,7 +3384,7 @@ class LayoutEditor {
       else if (warnPairs.has(i)) { ctx.strokeStyle = '#e0b15c'; }
       else { ctx.strokeStyle = i === this.selected ? '#ffffff' : (isRail0 ? '#d9a441' : ((k === 'ref' || k === 'ref-bg') ? '#a06cd5' : '#3a4150')); }
       ctx.lineWidth = i === this.selected ? 2.5 : 1.5;
-      // 轨道 0 虚线；参考车道（独立型/绑定型）点划线（区别于音轨车道的实线描边）
+      // 轨道 0 虚线；参考车道（MIDI式/单线式）点划线（区别于音轨车道的实线描边）
       if (isRail0) ctx.setLineDash([3, 2]);
       else if (k === 'ref' || k === 'ref-bg') ctx.setLineDash([6, 2, 2, 2]);
       ctx.strokeRect(p.x - half, p.y - half, half * 2, half * 2);
@@ -3393,7 +3394,7 @@ class LayoutEditor {
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       // 轨道 0 = 「0」，音轨车道编号（ref 窗口 L 前缀 + 序号），参考车道 R 前缀
-      //   （ref 窗口用 laneIdx 序号 = 参考车道池真实下标，独立型在前排序后 i ≠ 下标）
+      //   （ref 窗口用 laneIdx 序号 = 参考车道池真实下标，MIDI式在前排序后 i ≠ 下标）
       let label;
       if (isRail0) label = '0';
       else if (k === 'ref' || k === 'ref-bg') label = (this.mode === 'ref') ? String((it.laneIdx !== undefined ? it.laneIdx : i) + 1) : 'R' + (this.idxKind(i).j + 1);
@@ -3408,8 +3409,8 @@ class LayoutEditor {
     const nRef = this.refStartsCount();
     const nLane = AppState.lanes.length;
     let txt = this.mode === 'ref'
-      ? `${nRef} 条参考车道（紫：独立型可拖 = 粒子中心基准，绑定型为虚拟盒位背景、不可拖）+ ${nLane} 条普通车道 / 轨道 0（灰背景，仅作参照、不可拖）`
-      : `轨道 0 + ${nLane} 条车道（可拖）` + (nRef > 0 ? ` + ${nRef} 条参考车道（紫背景，虚拟、不可拖）` : '');
+      ? `${nRef} 条参考车道（紫：MIDI式可拖 = 粒子中心基准，单线式为虚拟盒位背景、不可拖）+ ${nLane} 条普通车道 / 轨道 0（灰背景，仅作参照、不可拖）`
+      : `轨道 0 + ${nLane} 条车道（可拖）` + (nRef > 0 ? ` + ${nRef} 条参考车道（紫：单线式可拖 = 虚拟盒位锚点，MIDI式为背景、不可拖）` : '');
     if (this.selected >= 0 && this.starts()[this.selected]) {
       const s = this.startOf(this.selected);
       txt += ` ｜ 选中${this.nameOf(this.selected)}：Z=${s.dz} Y=${s.dy}`;
@@ -3934,7 +3935,7 @@ async function generate() {
     AppState.result = { result, palette, packed, size, totalBlocks, nbtBytes, lanes };
     AppState.litematicBytes = gz;
     // 节奏参考粒子数据包：有参考声道时生成完整数据包 zip（命名空间 nbs2sfx）；
-    // 逐 tick 粒子行取 result.sfxTickList（与产物命令方块严格一致：绑定型按轨道排布偏移、独立型按音高偏移）
+    // 逐 tick 粒子行取 result.sfxTickList（与产物命令方块严格一致：单线式按轨道排布偏移、MIDI式按音高偏移）
     AppState.sfxZipBytes = null;
     if (AppState.refLayers.size > 0) {
       const { bytes } = buildSfxDatapackZip(song, AppState.refLayers, AppState.settings.targetVersion, result.sfxTickList);
