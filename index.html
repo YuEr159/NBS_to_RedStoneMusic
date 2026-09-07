@@ -128,6 +128,12 @@ input[type="number"] { width: 70px; }
 .sfx-effect-badge { display: inline-block; border-radius: 3px; padding: 1px 6px; margin-left: 8px; font-size: 11px; font-weight: 600; }
 .sfx-effect-badge.on { background: #1f4a28; color: #9be3a0; }
 .sfx-effect-badge.todo { background: #4a3a1e; color: #e0a33c; }
+/* 粒子特效模块：按参考车道勾选特效的表格 */
+.sfx-effect-table { border-collapse: collapse; margin-top: 8px; font-size: 12px; }
+.sfx-effect-table th, .sfx-effect-table td { border: 1px solid var(--border); padding: 4px 10px; text-align: center; }
+.sfx-effect-table th { background: var(--panel2); color: var(--text-dim); font-weight: 600; }
+.sfx-effect-table td:first-child, .sfx-effect-table th:first-child { text-align: left; }
+.sfx-effect-lane-label { font-weight: 700; color: var(--accent); cursor: default; }
 .lane-conflict-ok { font-size: 11px; color: #6fbf73; margin-left: 6px; }
 .lane-conflict-warn { font-size: 11px; color: #e0a33c; margin-left: 6px; font-weight: 700; }
 .merge-advice { background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; margin-bottom: 8px; font-size: 12px; }
@@ -214,7 +220,7 @@ input[type="number"] { width: 70px; }
     <div class="toolbar">
       <button id="addRefLaneBtn">＋ 新增参考车道</button>
       <span class="hint" id="refGroupCount"></span>
-      <span class="hint">勾选音轨池的「节奏参考」→ 默认并入第一条参考车道、放不下自动新建；也可把左侧音轨池的音轨直接拖入卡片（拖入即登记为节奏参考并入该车道，允许重复拖入）；参考车道**不生成任何方块**，只作为粒子特效的节奏/音高参考——想让参考声道同时在普通轨道发声 = 勾选其行内「发声」（建一条普通车道）或把音轨拖入「车道池」卡片；每条参考车道可选类型（独立型/绑定型，作用于该车道全部成员）——绑定型粒子锚定本车道虚拟盒位、独立型锚定轨道 0 按音高偏移；粒子恒产生（与「发声」无关）</span>
+      <span class="hint">勾选音轨池的「节奏参考」→ 默认并入第一条参考车道、放不下自动新建；也可把左侧音轨池的音轨直接拖入卡片（拖入即登记为节奏参考并入该车道，允许重复拖入）；参考车道**不生成任何方块**，只作为粒子特效的节奏/音高参考——想让参考声道同时在普通轨道发声 = 勾选其行内「发声」（建一条普通车道）或把音轨拖入「车道池」卡片；每条参考车道可选类型（独立型/绑定型，作用于该车道全部成员）——绑定型粒子锚定本车道虚拟盒位、独立型锚定轨道 0 按音高偏移；粒子恒产生（与「发声」无关）；想关闭本车道粒子 = 在下方「粒子特效总览」模块取消该车道的「触发型」勾选</span>
     </div>
     <div id="refLaneList"></div>
     <h3>参考车道起点布局（Y-Z 截面，独立窗口；参考车道可拖，普通车道为半透明背景、不可移动）</h3>
@@ -224,8 +230,12 @@ input[type="number"] { width: 70px; }
     </div>
     <canvas id="refLaneCanvas" width="640" height="420"></canvas>
     <div class="layout-info" id="refLayoutInfo"></div>
-    <h3>粒子特效总览（共规划 3 类：触发型 / 连接型 / 背景型）</h3>
+  </section>
+
+  <section id="sfxEffect-section" hidden>
+    <h2>粒子特效总览（共规划 3 类：触发型 / 连接型 / 背景型；下方可按参考车道勾选涉及的特效）</h2>
     <div id="sfxEffectList"></div>
+    <div id="sfxEffectLanes"></div>
   </section>
 
   <section id="settings-section" hidden>
@@ -757,6 +767,8 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
       isDefaultRail: i === 0 && !!defaultStart,
       isRefLane: isRef,
       refLaneType: isRef ? ((refLanes[i - (defaultStart ? 1 : 0) - nOrd].type || 'independent')) : null,
+      // 车道级特效勾选（lane.effects，缺省 = 全选）：触发型取消勾选 → 该车道绑定行不生成
+      refLaneEffects: isRef ? (refLanes[i - (defaultStart ? 1 : 0) - nOrd].effects || null) : null,
     };
   });
   // 参考车道池启用 ⇔ 调用方传了 refLanes（UI 恒传数组；旧调用/测试传 undefined → 旧行为：绑定型锚定音轨车道）
@@ -1035,6 +1047,8 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
   if (refMode && railChain) {
     for (const r of chains.filter(c => c.isRefLane)) {
       if (r.refLaneType !== 'bound') continue; // 独立型车道不产绑定行（粒子走轨道 0 音高偏移路径）
+      // 触发型勾选（lane.effects，缺省 = 全选）：取消勾选 → 本车道绑定粒子行不生成
+      if (r.refLaneEffects && !r.refLaneEffects.includes('trigger')) continue;
       for (let t = 0; t < nTicks; t++) {
         // 按 lane.tracks 顺序收集本 tick 成员音符（允许重复成员 = 多槽位齐响）
         const hit = [];
@@ -1757,7 +1771,8 @@ function onSongLoaded(song, bytes) {
   $('group-section').hidden = false;
   renderRefLaneSection();
   $('refLane-section').hidden = false;
-  renderSfxEffectList(); // 粒子特效 3 类总览（静态框架，仅随载歌刷新一次）
+  $('sfxEffect-section').hidden = false;
+  renderSfxEffectList(); // 粒子特效 3 类总览（静态框架，仅随载歌刷新一次；车道勾选表由 renderRefLaneSection 联动刷新）
   renderSettings();
   $('settings-section').hidden = false;
   $('layout-section').hidden = false;
@@ -1811,6 +1826,7 @@ function saveStateNow() {
         tracks: [...l.tracks],
         type: l.type || 'independent',
         start: l.start ? { dz: l.start.dz, dy: l.start.dy } : null,
+        effects: Array.isArray(l.effects) ? [...l.effects] : undefined, // 缺省 = 全选（不写该键，保持旧载荷形状）
       })),
       settings: {
         targetVersion: AppState.settings.targetVersion,
@@ -1864,6 +1880,11 @@ function loadSavedState(song) {
         if (lane.type !== undefined && lane.type !== 'bound' && lane.type !== 'independent') return null;
         for (const t of lane.tracks) if (!Number.isInteger(t) || t < 0 || t >= nLayers) return null;
         if (!lane.start || !Number.isFinite(lane.start.dz) || !Number.isFinite(lane.start.dy)) return null;
+        // effects：可选（旧存档无此字段 = 全选）；值须为已知特效 key 子集
+        if (lane.effects !== undefined) {
+          if (!Array.isArray(lane.effects) || lane.effects.some(k => typeof k !== 'string'
+            || !['trigger', 'connect', 'background'].includes(k))) return null;
+        }
       }
     }
     return s;
@@ -1880,7 +1901,8 @@ function applySavedState(song, saved) {
   AppState.lanes = saved.lanes.map(l => ({ tracks: [...l.tracks], start: { dz: l.start.dz, dy: l.start.dy } }));
   if (saved.lane0Start) AppState.lane0 = { start: { dz: saved.lane0Start.dz, dy: saved.lane0Start.dy } };
   AppState.refLanes = (Array.isArray(saved.refLanes) ? saved.refLanes : [])
-    .map(l => ({ tracks: [...l.tracks], type: l.type || 'independent', start: { dz: l.start.dz, dy: l.start.dy } }));
+    .map(l => ({ tracks: [...l.tracks], type: l.type || 'independent', start: { dz: l.start.dz, dy: l.start.dy },
+      effects: Array.isArray(l.effects) ? l.effects : undefined })); // 缺省 = 全选（buildLayout 按 undefined 处理）
   // 车道级类型迁移（类型选型按参考车道存储）：车道显式含绑定型成员 → 该声道 refLayers 类型跟随车道
   for (const l of AppState.refLanes) {
     for (const t of l.tracks) {
@@ -2421,7 +2443,8 @@ function duplicateRefLane(li) {
       if (free(dz, baseDy)) start = { dz, dy: baseDy };
     }
   }
-  AppState.refLanes.splice(li + 1, 0, { tracks: [...src.tracks], type: src.type || 'independent', start: start || { dz: 0, dy: 1 } });
+  AppState.refLanes.splice(li + 1, 0, { tracks: [...src.tracks], type: src.type || 'independent', start: start || { dz: 0, dy: 1 },
+    effects: Array.isArray(src.effects) ? [...src.effects] : undefined }); // 特效勾选随复制保留（缺省 = 全选）
   syncRefLaneStarts();
   renderRefLaneSection();
   return true;
@@ -2539,11 +2562,21 @@ function renderRefLaneSection() {
   });
   $('refGroupCount').textContent = `共 ${AppState.refLanes.length} 条参考车道`;
   renderLayoutEditor();
+  renderSfxEffectLanes(); // 粒子特效模块：车道勾选表随参考车道增删/变更联动刷新
 }
 
-// 粒子特效总览（3 类框架，用户 2026-09-07 规划）：触发型（已实现，参数由 1 个音符决定）/
-// 连接型（规划：连接前后两音符，参数由 2 个音符决定）/ 背景型（规划：按乐曲小节间隔激活）。
-// 展示当前已有的种类与效果描述，不列逐 tick 条目；未实现类占位标注。
+// 粒子特效总览模块（独立 section，用户 2026-09-07 规划）：3 类框架展示 + 按参考车道勾选涉及的特效。
+//   ① 触发型（已实现）：由音符触发、参数由 1 个音符决定；勾选控制**绑定行生成**
+//     （绑定型车道取消勾选 → 其绑定粒子行不再生成；独立行锚轨道 0 按音高，属声道级、不受车道勾选影响）
+//   ② 连接型（规划占位）：连接前后两音符、参数由 2 音符决定；勾选仅存状态，暂未实现生成逻辑
+//   ③ 背景型（规划占位）：按乐曲小节间隔激活；勾选仅存状态，暂未实现生成逻辑
+// 勾选存 lane.effects: ['trigger'|'connect'|'background']（缺省 = 全选，向后兼容旧存档），
+// buildLayout 经 refLanes 第 7 参读取；默认全选 → 产物与旧版逐位一致。
+const SFX_EFFECT_TYPES = [
+  { key: 'trigger', name: '触发型' },
+  { key: 'connect', name: '连接型' },
+  { key: 'background', name: '背景型' },
+];
 function renderSfxEffectList() {
   const list = $('sfxEffectList');
   if (!list) return;
@@ -2567,16 +2600,89 @@ function renderSfxEffectList() {
   };
   card('① 触发型', 'on',
     '由音符触发，参数由 1 个音符决定。每个参考音符在轨道 0 同 tick 触发一次粒子：' +
-    '绑定型 = 粒子中心锚定所属参考车道的虚拟盒位（起点 + 槽位 Z +0/+1/−1，与「发声」无关、恒产生）；' +
-    '独立型 = 锚定轨道 0、Z 按音高偏移 (音高−12)×sfxPitchStep。' +
+    '绑定型 = 粒子中心锚定所属参考车道的虚拟盒位（起点 + 槽位 Z +0/+1/−1，与「发声」无关、恒产生，' +
+    '可被下方车道勾选关闭）；独立型 = 锚定轨道 0、Z 按音高偏移 (音高−12)×sfxPitchStep。' +
     '当前效果条目：end_rod 螺旋展开（particleex polarparameter minecraft:end_rod：' +
     '20 个粒子、寿命 0.1s、半径 1、角度随 t 扫描的平面螺旋，坐标段由构建时按车道起点/槽位/音高求解替换）。');
   card('② 连接型', 'todo',
     '特殊的触发型：连接前后两个音符，参数由 2 个音符决定（如起点 = 前一音符的盒位、' +
-    '终点/形态 = 当前音符的盒位与音高）。规划占位，暂未实现生成逻辑。');
+    '终点/形态 = 当前音符的盒位与音高）。规划占位，暂未实现生成逻辑（下方勾选仅存状态）。');
   card('③ 背景型', 'todo',
     '按一定乐曲小节间隔激活（与具体音符无关，按小节/拍位周期性触发，用于铺底氛围）。' +
-    '规划占位，暂未实现生成逻辑。');
+    '规划占位，暂未实现生成逻辑（下方勾选仅存状态）。');
+}
+// 按参考车道勾选涉及的特效：每车道一行 3 个 checkbox（绑定生成见模块头注释）
+function renderSfxEffectLanes() {
+  const box = $('sfxEffectLanes');
+  if (!box) return;
+  box.innerHTML = '';
+  const lanes = AppState.refLanes || [];
+  if (lanes.length === 0) {
+    const hint = document.createElement('div');
+    hint.className = 'hint';
+    hint.textContent = '尚无参考车道（在左侧音轨池勾选「节奏参考」或拖入参考车道池卡片后，此处可按车道勾选特效）';
+    box.appendChild(hint);
+    return;
+  }
+  const hint = document.createElement('div');
+  hint.className = 'hint';
+  hint.textContent = '按参考车道勾选涉及的特效（默认全选）：「触发型」控制该车道绑定粒子行是否生成（独立型车道不产绑定行、勾选不影响其音高偏移行）；连接型/背景型暂未实现，勾选仅存状态';
+  box.appendChild(hint);
+  const table = document.createElement('table');
+  table.className = 'sfx-effect-table';
+  const thead = document.createElement('tr');
+  const thHead = document.createElement('th');
+  thHead.textContent = '参考车道';
+  thead.appendChild(thHead);
+  SFX_EFFECT_TYPES.forEach((t) => {
+    const th = document.createElement('th');
+    th.textContent = t.name;
+    thead.appendChild(th);
+  });
+  table.appendChild(thead);
+  lanes.forEach((lane, li) => {
+    const tr = document.createElement('tr');
+    const tdName = document.createElement('td');
+    const label = document.createElement('label');
+    label.className = 'sfx-effect-lane-label';
+    label.textContent = `参考车道 ${li + 1}`;
+    const typeTag = document.createElement('span');
+    typeTag.className = 'hint';
+    typeTag.textContent = `（${lane.type === 'bound' ? '绑定型' : '独立型'} · 成员 ${lane.tracks.length ? lane.tracks.map(t => '#' + t).join('/') : '无'}）`;
+    label.appendChild(typeTag);
+    tdName.appendChild(label);
+    tr.appendChild(tdName);
+    SFX_EFFECT_TYPES.forEach((t) => {
+      const td = document.createElement('td');
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      const on = !lane.effects || lane.effects.includes(t.key);
+      cb.checked = on;
+      cb.className = 'sfx-effect-check';
+      cb.dataset.li = String(li);
+      cb.dataset.k = t.key;
+      cb.title = t.key === 'trigger'
+        ? '触发型：控制本车道绑定粒子行是否生成（独立型车道不产绑定行，勾选无影响）'
+        : `${t.name}：规划占位，暂未实现生成逻辑（勾选仅存状态）`;
+      cb.addEventListener('change', onSfxEffectToggle);
+      td.appendChild(cb);
+      tr.appendChild(td);
+    });
+    table.appendChild(tr);
+  });
+  box.appendChild(table);
+}
+// 参考车道特效勾选变更：写 lane.effects（三 key 全量重建，保持 SFX_EFFECT_TYPES 顺序）+ 落盘 + 重渲染
+function onSfxEffectToggle(e) {
+  const li = Number(e.target.dataset.li);
+  const k = e.target.dataset.k;
+  const lane = AppState.refLanes[li];
+  if (!lane) return;
+  const cur = Array.isArray(lane.effects) ? new Set(lane.effects) : new Set(SFX_EFFECT_TYPES.map(t => t.key));
+  if (e.target.checked) cur.add(k); else cur.delete(k);
+  lane.effects = SFX_EFFECT_TYPES.filter(t => cur.has(t.key)).map(t => t.key);
+  scheduleStateSave();
+  renderSfxEffectLanes();
 }
 
 function renderLaneSection() {
@@ -3454,6 +3560,7 @@ window.__NBS2SCHEMATIC = {
   parseNBS, computeDelays, noteFromKey, baseBlockFor, instrumentNameFor,
   buildLayout, buildPalette, buildLitematic,
   SFX_NAMESPACE, SFX_PARTICLE_CMD, SFX_CB_STATE, SFX_PACKFORMAT, sfxPackFormat, sfxParticleCmd,
+  SFX_EFFECT_TYPES, renderSfxEffectList, renderSfxEffectLanes, onSfxEffectToggle,
   buildSfxPackMcmeta, buildSfxFunctions, buildZip, zipCrc32, buildSfxDatapackZip,
   TARGET_VERSIONS, targetEntry, DEFAULT_TARGET_MC,
   playbackPlan, laneConflictStats, dominantInstrument, mergeSuggestions, packLanesNoConflict,
@@ -3507,7 +3614,8 @@ async function generate() {
     const result = buildLayout(song,
       lanes.map(l => ({ layers: l.tracks })), lanes.map(l => l.start),
       delays, AppState.settings, AppState.lane0.start,
-      refLanes.map(l => ({ tracks: [...l.tracks], type: l.type || 'independent', start: { ...l.start } })),
+      refLanes.map(l => ({ tracks: [...l.tracks], type: l.type || 'independent', start: { ...l.start },
+        effects: Array.isArray(l.effects) ? [...l.effects] : undefined })),
       AppState.refLayers);
     const palette = buildPalette(result.grid);
     const packed = packBlockStates(result.grid.data, palette.length);

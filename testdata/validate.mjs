@@ -148,7 +148,7 @@ function decodePacked(longs, bits, count) {
 
 // ---------- 端到端流程 ----------
 // refLayers：Map<声部下标, {type:'bound'|'independent', sound:bool}>（节奏参考双类型，旧 bool 值按独立型迁移）；传入后 buildLayout 在轨道 0 生成命令方块
-// refLanes：参考车道池 [{tracks, start}]（纯虚拟：不生成任何物理结构，2026-09-07 起仅粒子锚点几何；传数组即启用 refMode——绑定型粒子锚定参考车道虚拟槽位）
+// refLanes：参考车道池 [{tracks, type, start, effects?}]（纯虚拟：不生成任何物理结构，2026-09-07 起仅粒子锚点几何；传数组即启用 refMode——绑定型粒子锚定参考车道虚拟槽位；effects 缺省 = 三类特效全选）
 function runE2E(nbsFile, { autoGroup = true, groups = null, groupStarts = null, settings = null, targetMc = null, lane0 = null, refLayers = null, refLanes = null } = {}) {
   const bytes = new Uint8Array(readFileSync(path.join(__dirname, nbsFile)));
   const song = parseNBS(bytes);
@@ -168,8 +168,9 @@ function runE2E(nbsFile, { autoGroup = true, groups = null, groupStarts = null, 
     buttonType: 'minecraft:oak_button', customInstrumentMap: new Map(),
     ...(settings || {}),
   };
-  // refLanes 与 UI 同构（{tracks, type, start}）；缺省 type=independent、start 按单行 +6 接续（syncRefLaneStarts 默认）
-  const refGroups = (refLanes || []).map((l, i) => ({ tracks: [...l.tracks], type: l.type || 'independent', start: l.start || { dz: i * 3 + 6, dy: 0 } }));
+  // refLanes 与 UI 同构（{tracks, type, start, effects?}）；缺省 type=independent、start 按单行 +6 接续（syncRefLaneStarts 默认）；effects 缺省 = 全选（不传该键）
+  const refGroups = (refLanes || []).map((l, i) => ({ tracks: [...l.tracks], type: l.type || 'independent', start: l.start || { dz: i * 3 + 6, dy: 0 },
+    ...(Array.isArray(l.effects) ? { effects: [...l.effects] } : {}) }));
   const result = buildLayout(song, groups2, starts, delays, s, lane0,
     refLanes === null ? null : refGroups, refLayers);
   const palette = buildPalette(result.grid);
@@ -1429,6 +1430,20 @@ try {
       || JSON.stringify(tlbF[0].lines) !== JSON.stringify([sfxParticleCmd(0, 1, 3)])) {
       console.log(`FAIL 参考/普通同起点：盒=${statF.noteBlocks} 行=${JSON.stringify(tlbF)}（期望 2 盒、绑定行按虚拟槽位 (0,1,3)）`); ok = false;
     } else console.log('PASS 参考车道与普通车道同起点：生成正常（零结构、不参与碰撞、粒子按虚拟槽位）');
+    // G) 车道级特效勾选：refLanes[0].effects 不含 'trigger' → 绑定行不生成（空 tick 回退），
+    //    缺省（无 effects 字段）= 全选（场景 A 已覆盖）
+    const rG = runE2E(tmpFile, {
+      lane0: { dz: 0, dy: 0 }, refLayers: REF,
+      groups: [{ layers: [0] }], groupStarts: [{ dz: 3, dy: 0 }],
+      refLanes: [{ tracks: [0], type: 'bound', start: { dz: 6, dy: 1 }, effects: ['connect'] }],
+    });
+    const statG = rG.result.stats;
+    if (statG.noteBlocks !== 2 || statG.sfxBoundNotes !== 0 || statG.commandBlocks !== 0
+      || statG.sfxEmptyTicks !== 2 || rG.result.sfxTickList.length !== 0) {
+      console.log(`FAIL 触发型勾选关闭：盒=${statG.noteBlocks} bound=${statG.sfxBoundNotes} CB=${statG.commandBlocks} empty=${statG.sfxEmptyTicks}（期望 2/0/0/2，绑定行不生成）`); ok = false;
+    } else {
+      console.log('PASS 触发型勾选关闭（effects 不含 trigger）：绑定行不生成 + 空 tick 回退（音轨车道 2 盒不受影响）');
+    }
   } catch (e) {
     console.log('FAIL 参考车道池异常:', e.stack || e.message);
     ok = false;

@@ -112,6 +112,10 @@ check(elements.get('layer-section').hidden === false, '音轨池区已显示');
   check(eff.includes('minecraft:end_rod') && eff.includes('sfxPitchStep'),
     '粒子特效总览：触发型条目含当前效果（end_rod 螺旋）与参数规则描述');
 }
+// 粒子特效独立模块 + 按车道勾选表（无参考车道时空提示）
+check(elements.get('sfxEffect-section').hidden === false, '粒子特效总览为独立 section（已显示）');
+check(elements.get('sfxEffectLanes').innerHTML.includes('尚无参考车道'),
+  '特效勾选表：无参考车道时显示空提示');
 check(elements.get('sidebar').hidden === false, '音轨池左侧边栏已显示（左右分栏）');
 // 侧边栏折叠/展开（展开 680px = 340×2；折叠 = 侧栏整体隐藏 + 右侧顶部展开按钮；状态持久化到全局 UI 键）
 elements.get('sidebarToggle').dispatch('click', {});
@@ -646,6 +650,38 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
     && parsed.refLanes.some(l => l.tracks.includes(0) && l.type === 'bound'),
     '持久化载荷 refLanes 含绑定型车道（lane.type 字段往返）');
   check(!!parsed && parsed.settings.sfxPitchStep === 3, '持久化载荷 settings.sfxPitchStep=3');
+  // 8b) 车道级特效勾选（粒子特效独立模块）：取消绑定车道的「触发型」→ 绑定行不生成；恢复/持久化往返
+  {
+    const boundLi = st.refLanes.findIndex(l => l.tracks.includes(0));
+    check(boundLi >= 0 && (st.refLanes[boundLi].type || 'independent') === 'bound', '特效勾选表：绑定车道含 #0（车道级）');
+    const findTgl = (li, key) => {
+      const cbs = [];
+      const rec = (n) => { if (n.className === 'sfx-effect-check') cbs.push(n); (n.children || []).forEach(rec); };
+      rec(elements.get('sfxEffectLanes'));
+      return cbs.find(c => String(c.dataset.li) === String(li) && c.dataset.k === key);
+    };
+    check(!!findTgl(boundLi, 'trigger') && findTgl(boundLi, 'trigger').checked === true,
+      '特效勾选表：绑定车道三格渲染且默认全选（触发型勾选）');
+    const cb = findTgl(boundLi, 'trigger');
+    cb.checked = false; cb.dispatch('change', { target: cb }); // 桩 dispatch 直传 evt，需带 target（真实 DOM change 事件语义）
+    check(JSON.stringify(st.refLanes[boundLi].effects) === '["connect","background"]',
+      '取消触发型：lane.effects 重建为剩余项（connect/background，缺省全选语义反转）');
+    await context.generate();
+    const offRes = st.result.result;
+    check(offRes.stats.sfxBoundNotes === 0 && offRes.sfxTickList.length === 0,
+      `触发型取消后绑定行=0（实际 ${offRes.stats.sfxBoundNotes}）——粒子行不生成、空 tick 回退`);
+    const cb2 = findTgl(boundLi, 'trigger');
+    cb2.checked = true; cb2.dispatch('change', { target: cb2 });
+    check(st.refLanes[boundLi].effects.includes('trigger'), '重新勾选触发型：effects 含 trigger');
+    await context.generate();
+    check(st.result.result.stats.sfxBoundNotes > 0, '恢复勾选后绑定行回归');
+    context.saveStateNow();
+    const rawE = context.localStorage.getItem(context.stateKey(st.song));
+    const parsedE = rawE && JSON.parse(rawE);
+    const laneE = parsedE && parsedE.refLanes && parsedE.refLanes.find(l => l.tracks.includes(0));
+    check(!!laneE && Array.isArray(laneE.effects) && laneE.effects.includes('trigger'),
+      '持久化载荷 refLanes[].effects 往返（含 trigger）');
+  }
   // 9) 旧格式迁移：手工写入旧 bool 载荷 → 重载按独立型迁移
   if (parsed) {
     parsed.refLayers = [[1, true]];
