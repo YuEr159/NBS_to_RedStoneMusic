@@ -828,9 +828,9 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
   check(st.refLanes.some(l => l.tracks.includes(i1)), '第二条参考并入参考车道池（无冲突同车道或新建）');
   // 2) 卡片渲染：名称/复制/删除/成员标签/计数（DOM 桩无 className 属性 → 按 children 树收集 className 检查）
   const classesOf = (el) => { const out = []; const rec = (n) => { if (n.className) out.push(n.className); (n.children || []).forEach(rec); }; rec(el); return out.join(' '); };
-  const html = classesOf(elements.get('refLaneList'));
-  check(html.includes('ref-lane-del') && html.includes('ref-lane-dup'), '参考车道卡片渲染删除/复制按钮');
-  check(html.includes('ref-lane-tag'), '参考车道成员标签渲染');
+  const cardHtml = classesOf(elements.get('refLaneList'));
+  check(cardHtml.includes('ref-lane-del') && cardHtml.includes('ref-lane-dup'), '参考车道卡片渲染删除/复制按钮');
+  check(cardHtml.includes('ref-lane-tag'), '参考车道成员标签渲染');
   check(elements.get('refGroupCount').textContent === `共 ${st.refLanes.length} 条参考车道`, 'refGroupCount 计数正确');
   // 3) 复制/删除
   const nBefore = st.refLanes.length;
@@ -879,10 +879,52 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
   let nLaneI2 = 0; st.lanes.forEach((l) => { nLaneI2 += l.tracks.filter(x => x === i2).length; });
   check(nLaneI2 === 0, '拖入：音轨车道池零份（新语义：拖入参考车道池不进车道池）');
   check(classesOf(elements.get('refLaneList')).includes('ref-lane-drop'), '参考车道卡片渲染拖放区（.ref-lane-drop）');
+  // 3c) 分区顺序（2026-09-07 用户要求）：车道池 → **普通车道起点布局** → 参考车道池（含参考布局窗口）。
+  //     DOM 桩不解析静态 HTML 树（section 无 parent 链），直接按源码标记位置断言交付顺序
+  const secPos = id => html.indexOf(`id="${id}"`);
+  check(secPos('group-section') > -1 && secPos('layout-section') > secPos('group-section')
+    && secPos('refLane-section') > secPos('layout-section')
+    && secPos('sfxEffect-section') > secPos('refLane-section'),
+    '分区顺序：车道池 < 普通车道起点布局 < 参考车道池 < 粒子特效总览（源码标记位置）');
+  const ed = context.window.__NBS2SCHEMATIC.layoutEditor; // main 窗口编辑器（3d 拖拽序列与 4) 段共用）
+  // 3d) 真实 pointer 事件序列拖拽（DOM 桩 dispatch 驱动，回归「网格无法拖拽」类 bug）：
+  //     pointerdown 落在标记中心 → pointermove 到目标屏幕点 → start 应精确落到目标格
+  {
+    // R2 状态下车道池为空（音轨只进了参考车道），先压入一条普通车道模拟用户已拖入
+    st.lanes.push({ tracks: [i0], start: { dz: 10, dy: 0 } });
+    const cvMain = elements.get('layoutCanvas');
+    const p0 = ed.w2s(st.lanes[0].start.dz, st.lanes[0].start.dy);
+    cvMain.dispatch('pointerdown', { pointerId: 1, offsetX: p0.x, offsetY: p0.y });
+    check(ed.dragIndex === 1 && ed.selected === 1 && !ed.panning,
+      'pointer 拖拽：pointerdown 命中车道标记（dragIndex=1，非平移模式）');
+    const target = { dz: st.lanes[0].start.dz + 5, dy: st.lanes[0].start.dy + 3 };
+    const p1 = ed.w2s(target.dz, target.dy);
+    cvMain.dispatch('pointermove', { pointerId: 1, offsetX: p1.x, offsetY: p1.y });
+    check(st.lanes[0].start.dz === target.dz && st.lanes[0].start.dy === target.dy,
+      'pointer 拖拽：pointermove 后车道 start 精确移动（实际 ' + JSON.stringify(st.lanes[0].start) + '）');
+    cvMain.dispatch('pointerup', { pointerId: 1 });
+    check(ed.dragIndex === -1 && ed.lastPointer === null, 'pointer 拖拽：pointerup 结束拖拽状态');
+    // 越界守护（console 实测 bug：pointerdown 命中车道后该车道被删，pointermove 时
+    // dragIndex 越界 → idxKind 读 starts()[i].kind 抛 TypeError，拖拽/平移分支全死）：
+    // 复现序列 = 再压一条车道 → pointerdown 命中它（dragIndex=2）→ pop 删掉它 → pointermove
+    const pGuard = ed.w2s(26, 0);
+    st.lanes.push({ tracks: [], start: { dz: 26, dy: 0 } });
+    cvMain.dispatch('pointerdown', { pointerId: 2, offsetX: pGuard.x, offsetY: pGuard.y });
+    check(ed.dragIndex === 2, '越界守护前置：pointerdown 命中第二条车道（dragIndex=2）');
+    st.lanes.pop(); // 删掉正在拖的车道（starts() 变短，dragIndex 越界）
+    let guardOk = true, guardErr = null;
+    try {
+      cvMain.dispatch('pointermove', { pointerId: 2, offsetX: pGuard.x + 10, offsetY: pGuard.y + 10 });
+      cvMain.dispatch('pointermove', { pointerId: 2, offsetX: pGuard.x + 12, offsetY: pGuard.y + 12 });
+    } catch (err) { guardOk = false; guardErr = err; }
+    check(guardOk, '越界守护：拖拽中车道被删，pointermove 不抛 TypeError（' + (guardErr ? guardErr.message : '无异常') + '）');
+    cvMain.dispatch('pointerup', { pointerId: 2 });
+    st.lanes.pop(); // 恢复（车道池回到 R2 的空态）
+    check(st.lanes.length === 0, '拖拽序列：状态复原（车道池回空，不污染后续断言）');
+  }
   // 4) 布局编辑器双窗口（2026-09-07 虚拟化）：main 管轨道 0 + 普通车道（参考车道虚拟背景不可拖）；
   //    ref 窗口管参考车道（可拖，普通车道 + 轨道 0 半透明背景不可拖）
   st.lanes.push({ tracks: [], start: { dz: 20, dy: 0 } }); // 补一条空音轨车道，验证 idxKind 的 lane 映射
-  const ed = context.window.__NBS2SCHEMATIC.layoutEditor;
   check(ed.starts().length === 1 + st.lanes.length + st.refLanes.length,
     'main 窗口标记 = 轨道 0 + 音轨车道 + 参考车道');
   // 2026-09-07 双类型：main 窗口参考车道按类型分 kind——单线式（bound）= ref-bg 可拖

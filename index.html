@@ -227,12 +227,27 @@ input[type="number"] { width: 70px; }
     <div id="groupList"></div>
   </section>
 
+  <section id="layout-section" hidden>
+    <h2>普通车道起点布局（Y-Z 截面，可拖拽；单线式参考车道（紫）也可拖 = 其虚拟盒位锚点、直接决定绑定粒子行偏移，MIDI式参考车道为背景、不可拖——其中心基准在下方「参考车道池」的独立窗口中拖拽）</h2>
+    <div class="layout-tools">
+      <button id="presetLineBtn">预置：单行</button>
+      <button id="presetGridBtn">预置：网格</button>
+      <button id="presetRadialBtn">预置：放射</button>
+      <label class="hint">网格/放射行距(格) <input type="number" id="gridHeight" min="3" max="30" value="5"></label>
+      <button id="fitLayoutBtn">缩放到全部</button>
+      <span class="hint">点击标记选中；拖拽移动；选中后可用方向键微调（Shift=大步）；预置模板只重排普通车道</span>
+    </div>
+    <!-- 初始 640×420：配合 LayoutEditor 初始 zoom/pan（见其构造函数注释）显示默认布局 -->
+    <canvas id="layoutCanvas" width="640" height="420"></canvas>
+    <div class="layout-info" id="layoutInfo"></div>
+  </section>
+
   <section id="refLane-section" hidden>
     <h2>节奏型参考车道池（纯节奏/音高参考，不生成任何物理结构；成员在左侧音轨池勾选「节奏参考」，或直接拖入下方卡片）</h2>
     <div class="toolbar">
       <button id="addRefLaneBtn">＋ 新增参考车道</button>
       <span class="hint" id="refGroupCount"></span>
-      <span class="hint">勾选音轨池的「节奏参考」→ 默认并入第一条参考车道、放不下自动新建；也可把左侧音轨池的音轨直接拖入卡片（拖入即登记为节奏参考并入该车道，允许重复拖入）；参考车道**不生成任何方块**，只作为粒子特效的节奏/音高参考——想让参考声道同时在普通轨道发声 = 勾选其行内「发声」（建一条普通车道）或把音轨拖入「车道池」卡片；每条参考车道可选类型（单线式/MIDI式，作用于该车道全部成员）——单线式粒子锚定本车道虚拟盒位（起点可在下方音轨布局窗口直接拖）、MIDI式锚定轨道 0 CB + 本车道起点基准（下方独立窗口可拖，缺省 (0,0)）再按音高偏移；粒子恒产生（与「发声」无关）；想关闭本车道粒子 = 在下方「粒子特效总览」模块取消该车道的「触发型」勾选</span>
+      <span class="hint">勾选音轨池的「节奏参考」→ 默认并入第一条参考车道、放不下自动新建；也可把左侧音轨池的音轨直接拖入卡片（拖入即登记为节奏参考并入该车道，允许重复拖入）；参考车道**不生成任何方块**，只作为粒子特效的节奏/音高参考——想让参考声道同时在普通轨道发声 = 勾选其行内「发声」（建一条普通车道）或把音轨拖入「车道池」卡片；每条参考车道可选类型（单线式/MIDI式，作用于该车道全部成员）——单线式粒子锚定本车道虚拟盒位（起点可在上方「普通车道起点布局」窗口直接拖）、MIDI式锚定轨道 0 CB + 本车道起点基准（本分区下方独立窗口可拖，缺省 (0,0)）再按音高偏移；粒子恒产生（与「发声」无关）；想关闭本车道粒子 = 在下方「粒子特效总览」模块取消该车道的「触发型」勾选</span>
     </div>
     <div id="refLaneList"></div>
     <h3>参考车道起点布局（Y-Z 截面，独立窗口；MIDI式参考车道可拖 = 粒子中心基准，单线式为虚拟盒位背景、不可移动——单线式起点在上方音轨布局窗口拖）</h3>
@@ -266,21 +281,6 @@ input[type="number"] { width: 70px; }
       <input type="number" id="sfxPitchStep" min="0" max="8" step="1" value="1">
       <span class="hint">MIDI式参考声道：粒子中心 Z 偏移 =（音高 − 12）× 步长；音高 12 居中，默认 1</span>
     </div>
-  </section>
-
-  <section id="layout-section" hidden>
-    <h2>普通车道起点布局（Y-Z 截面，可拖拽；单线式参考车道（紫）也可拖 = 其虚拟盒位锚点、直接决定绑定粒子行偏移，MIDI式参考车道为背景、不可拖——其中心基准在上方「参考车道池」的独立窗口中拖拽）</h2>
-    <div class="layout-tools">
-      <button id="presetLineBtn">预置：单行</button>
-      <button id="presetGridBtn">预置：网格</button>
-      <button id="presetRadialBtn">预置：放射</button>
-      <label class="hint">网格/放射行距(格) <input type="number" id="gridHeight" min="3" max="30" value="5"></label>
-      <button id="fitLayoutBtn">缩放到全部</button>
-      <span class="hint">点击标记选中；拖拽移动；选中后可用方向键微调（Shift=大步）；预置模板只重排普通车道</span>
-    </div>
-    <!-- 初始 640×420：配合 LayoutEditor 初始 zoom/pan（见其构造函数注释）显示默认布局 -->
-    <canvas id="layoutCanvas" width="640" height="420"></canvas>
-    <div class="layout-info" id="layoutInfo"></div>
   </section>
 
   <section id="generate-section" hidden>
@@ -3180,22 +3180,31 @@ class LayoutEditor {
       if (!this.lastPointer) return;
       const dx = e.offsetX - this.lastPointer.x, dy = e.offsetY - this.lastPointer.y;
       this.lastPointer = { x: e.offsetX, y: e.offsetY };
-      const sel = this.idxKind(this.dragIndex);
-      if (this.draggable(this.dragIndex) && sel.kind === 'lane' && AppState.lanes[sel.j]) {
-        const w = this.s2w(e.offsetX, e.offsetY);
-        const z = Math.round(w.z);   // 允许负坐标（网格生成时整体平移保证非负）
-        const y = Math.round(w.y);
-        AppState.lanes[sel.j].start = { dz: z, dy: y };
-        this.draw(); this.updateInfo();
-        scheduleStateSave();
-      } else if (this.draggable(this.dragIndex) && (sel.kind === 'ref' || sel.kind === 'ref-bg') && AppState.refLanes[sel.j]) {
-        const w = this.s2w(e.offsetX, e.offsetY);
-        const z = Math.round(w.z);
-        const y = Math.round(w.y);
-        AppState.refLanes[sel.j].start = { dz: z, dy: y };
-        this.draw(); this.updateInfo();
-        scheduleStateSave();
-      } else if (this.panning) {
+      // 边界守护：拖拽中车道/参考车道被增删（删除卡片、预置重排）→ starts() 变短，
+      // dragIndex 越界时 idxKind 会读 starts()[i].kind 抛 TypeError（真实浏览器 console 实测）
+      const it = this.dragIndex >= 0 ? this.starts()[this.dragIndex] : undefined;
+      if (it && this.draggable(this.dragIndex)) {
+        const sel = this.idxKind(this.dragIndex);
+        if (sel.kind === 'lane' && AppState.lanes[sel.j]) {
+          const w = this.s2w(e.offsetX, e.offsetY);
+          const z = Math.round(w.z);   // 允许负坐标（网格生成时整体平移保证非负）
+          const y = Math.round(w.y);
+          AppState.lanes[sel.j].start = { dz: z, dy: y };
+          this.draw(); this.updateInfo();
+          scheduleStateSave();
+          return;
+        }
+        if ((sel.kind === 'ref' || sel.kind === 'ref-bg') && AppState.refLanes[sel.j]) {
+          const w = this.s2w(e.offsetX, e.offsetY);
+          const z = Math.round(w.z);
+          const y = Math.round(w.y);
+          AppState.refLanes[sel.j].start = { dz: z, dy: y };
+          this.draw(); this.updateInfo();
+          scheduleStateSave();
+          return;
+        }
+      }
+      if (this.panning) {
         this.panX += dx; this.panY += dy;
         this.draw();
       } else {
@@ -3227,6 +3236,7 @@ class LayoutEditor {
       if (activeLayoutEditor && activeLayoutEditor !== this) return;
       if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA')) return;
       if (this.selected < 0) return;
+      if (!this.starts()[this.selected]) { this.selected = -1; return; } // 越界守护（与 pointermove 同类）
       if (!this.draggable(this.selected)) return; // 背景标记（轨道 0 / 非本窗口的 kind）不响应方向键
       const sel = this.idxKind(this.selected);
       const lane = sel.kind === 'lane' ? AppState.lanes[sel.j]
