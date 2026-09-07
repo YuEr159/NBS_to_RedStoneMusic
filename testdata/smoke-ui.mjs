@@ -803,6 +803,21 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
   check(stR.settings.sfxPitchStep === 3, 'sfxPitchStep 持久化往返（3 恢复）');
   context.renderSettings();
   check(elements.get('sfxPitchStep').value === '3', '设置区 sfxPitchStep 输入框回填 3');
+  // 8d) sfxPitchStep 小数步长（2026-09-07 用户放开，步进 0.1）：0.5 接受 + 非法值回退默认 1
+  //     注意：9) 段已重载 demo3（st 已失效），此处须用 stR
+  {
+    const stepIn = elements.get('sfxPitchStep');
+    stepIn.value = '0.5';
+    stepIn.dispatch('change', { target: stepIn });
+    check(stR.settings.sfxPitchStep === 0.5 && stepIn.value === '0.5',
+      'sfxPitchStep 小数：0.5 被接受（状态 + 输入框回填）');
+    stepIn.value = 'abc';
+    stepIn.dispatch('change', { target: stepIn });
+    check(stR.settings.sfxPitchStep === 1, 'sfxPitchStep：非法值回退默认 1');
+    stepIn.value = '3';
+    stepIn.dispatch('change', { target: stepIn });
+    check(stR.settings.sfxPitchStep === 3, 'sfxPitchStep 恢复 3（不影响后续 R2 块断言）');
+  }
 }
 
 // ---------- R2 参考车道池：勾选式并入 / 卡片操作 / 布局标记 / 持久化 / 旧存档兼容 ----------

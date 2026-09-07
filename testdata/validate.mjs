@@ -1405,6 +1405,27 @@ try {
     } else {
       console.log('PASS MIDI式中心平移：start (4,2) → 粒子行 (0,2,4+音高偏移)，中心基准整体平移+音高 Z 展开');
     }
+    // C3) 小数音高步长（2026-09-07 用户放开，步进 0.1）：sfxPitchStep=2.5 → dz = 4 + (note−12)×2.5
+    //     音高 12 → 4（偏移 0）；音高 17 → 4+12.5=16.5（浮点噪声须在产物命令中不出现）
+    const rC3 = runE2E(tmpFile, {
+      lane0: { dz: 0, dy: 0 },
+      settings: { sfxPitchStep: 2.5 },
+      refLayers: new Map([[0, { type: 'independent', sound: true }]]),
+      groups: [{ layers: [0] }], groupStarts: [{ dz: 3, dy: 0 }],
+      refLanes: [{ tracks: [0], start: { dz: 4, dy: 2 } }],
+    });
+    ok = verifyE2E('参考车道池·MIDI式小数步长', rC3) && ok;
+    const statC3 = rC3.result.stats;
+    const tlbC3 = rC3.result.sfxTickList;
+    if (statC3.noteBlocks !== 2 || statC3.sfxStandaloneNotes !== 2 || statC3.sfxBoundNotes !== 0
+      || !tlbC3 || tlbC3.length !== 2
+      || JSON.stringify(tlbC3[0].lines) !== JSON.stringify([sfxParticleCmd(0, 2, 4)])
+      || JSON.stringify(tlbC3[1].lines) !== JSON.stringify([sfxParticleCmd(0, 2, 16.5)])
+      || !tlbC3[1].lines[0].includes('~16.5') || tlbC3[1].lines[0].includes('16.50000')) {
+      console.log(`FAIL MIDI式小数步长：indep=${statC3.sfxStandaloneNotes} 行=${JSON.stringify(tlbC3)}（期望 (0,2,4)/(0,2,16.5)，命令文本 ~16.5 无浮点噪声）`); ok = false;
+    } else {
+      console.log('PASS MIDI式小数步长 2.5：粒子行 (0,2,4)/(0,2,16.5)，命令文本无浮点噪声');
+    }
     // D) 类型选型按参考车道：refLayers 记MIDI式、但参考车道 lane.type='bound' → 绑定语义胜出，
     //    粒子锚定参考车道虚拟槽位（dz=6/dy=1 → (0,2,6)）
     const rD = runE2E(tmpFile, {
