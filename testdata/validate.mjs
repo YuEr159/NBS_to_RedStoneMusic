@@ -168,9 +168,10 @@ function runE2E(nbsFile, { autoGroup = true, groups = null, groupStarts = null, 
     buttonType: 'minecraft:oak_button', customInstrumentMap: new Map(),
     ...(settings || {}),
   };
-  // refLanes 与 UI 同构（{tracks, type, start, effects?}）；缺省 type=independent、start 按单行 +6 接续（syncRefLaneStarts 默认）；effects 缺省 = 全选（不传该键）
+  // refLanes 与 UI 同构（{tracks, type, start, effects?, sfxParams?}）；缺省 type=independent、start 按单行 +6 接续（syncRefLaneStarts 默认）；effects 缺省 = 全选（不传该键）；sfxParams 缺省 = 默认命令（不传该键）
   const refGroups = (refLanes || []).map((l, i) => ({ tracks: [...l.tracks], type: l.type || 'independent', start: l.start || { dz: i * 3 + 6, dy: 0 },
-    ...(Array.isArray(l.effects) ? { effects: [...l.effects] } : {}) }));
+    ...(Array.isArray(l.effects) ? { effects: [...l.effects] } : {}),
+    ...(l.sfxParams && typeof l.sfxParams === 'object' ? { sfxParams: { ...l.sfxParams } } : {}) }));
   const result = buildLayout(song, groups2, starts, delays, s, lane0,
     refLanes === null ? null : refGroups, refLayers);
   const palette = buildPalette(result.grid);
@@ -1297,7 +1298,7 @@ try {
 // 布局：轨道 0 dz=0/dy=0；音轨车道 dz=3/dy=0；参考车道 dz=6/dy=1（全非负 → zOffset=1、yOffset=0，
 //   尺寸只由真实链决定）
 {
-  const { SFX_NAMESPACE, SFX_CB_STATE, sfxParticleCmd } = context.window.__NBS2SCHEMATIC;
+  const { SFX_NAMESPACE, SFX_CB_STATE, sfxParticleCmd, sfxParticleCmdFromParts } = context.window.__NBS2SCHEMATIC;
   // layer 0：tick0 key45（音高 12）、tick2 key50（音高 17）
   const nbs = makeNbs({ tempoTps: 20, songLength: 8, layers: 1, noteSpecs: [
     { tick: 0, layer: 0, instrument: 0, key: 45 },
@@ -1444,6 +1445,44 @@ try {
     } else {
       console.log('PASS 触发型勾选关闭（effects 不含 trigger）：绑定行不生成 + 空 tick 回退（音轨车道 2 盒不受影响）');
     }
+    // H) 车道级触发模板（lane.sfxParams 结构化 5 字段）：绑定行按本车道模板生成（命令头/尾参逐字、
+    //    坐标段仍按虚拟槽位替换）；独立行不受车道模板影响（属声道级，仍用默认命令）
+    const FIELDS = { head: 'particleex custom minecraft:totem_of_undying', x: '~', y: '~', z: '~',
+      tail: '1 0.95 0.89 1 0 0 0 -10 10 0.1 20 1.0 null' };
+    const lineH = sfxParticleCmdFromParts(0, 2, 6, FIELDS);
+    const rH = runE2E(tmpFile, {
+      lane0: { dz: 0, dy: 0 }, refLayers: REF,
+      groups: [{ layers: [0] }], groupStarts: [{ dz: 3, dy: 0 }],
+      refLanes: [{ tracks: [0], type: 'bound', start: { dz: 6, dy: 1 }, sfxParams: FIELDS }],
+    });
+    const statH = rH.result.stats;
+    const tlbH = rH.result.sfxTickList;
+    if (statH.noteBlocks !== 2 || statH.sfxBoundNotes !== 2 || tlbH.length !== 2
+      || JSON.stringify(tlbH[0].lines) !== JSON.stringify([lineH])
+      || JSON.stringify(tlbH[1].lines) !== JSON.stringify([lineH])) {
+      console.log(`FAIL 车道级触发模板：bound=${statH.sfxBoundNotes} 行=${JSON.stringify(tlbH)}（期望 2 行 = 自定义模板 + 虚拟槽位 (0,2,6)）`); ok = false;
+    } else console.log('PASS 车道级触发模板：绑定行按本车道 5 字段模板生成（坐标段仍按虚拟槽位替换）');
+    // H2) 模板残缺（5 字段不全）→ normSfxParams 判无效 → 回退默认命令（产物与缺省逐位一致）
+    const rH2 = runE2E(tmpFile, {
+      lane0: { dz: 0, dy: 0 }, refLayers: REF,
+      groups: [{ layers: [0] }], groupStarts: [{ dz: 3, dy: 0 }],
+      refLanes: [{ tracks: [0], type: 'bound', start: { dz: 6, dy: 1 }, sfxParams: { head: 'x', tail: 'y' } }],
+    });
+    if (JSON.stringify(rH2.result.sfxTickList[0].lines) !== JSON.stringify([sfxParticleCmd(0, 2, 6)])) {
+      console.log(`FAIL 模板残缺回退默认：${JSON.stringify(rH2.result.sfxTickList[0].lines)}（期望默认命令 (0,2,6)）`); ok = false;
+    } else console.log('PASS 模板残缺（字段不全）：回退默认命令，产物与缺省逐位一致');
+    // H3) 命令头含 ~ 占位（用户把坐标段误留在头里）→ 本车道绑定行不生成 + 告警一次（避免空 function 方块）
+    const rH3 = runE2E(tmpFile, {
+      lane0: { dz: 0, dy: 0 }, refLayers: REF,
+      groups: [{ layers: [0] }], groupStarts: [{ dz: 3, dy: 0 }],
+      refLanes: [{ tracks: [0], type: 'bound', start: { dz: 6, dy: 1 },
+        sfxParams: { head: 'particleex custom minecraft:end_rod ~ ~2 ~', x: '~', y: '~', z: '~', tail: '1 0.1 20 null' } }],
+    });
+    const statH3 = rH3.result.stats;
+    if (statH3.sfxBoundNotes !== 0 || rH3.result.sfxTickList.length !== 0 || statH3.sfxEmptyTicks !== 2
+      || !rH3.result.stats.discardedDetails.some(s => s.includes('命令头含 ~ 占位'))) {
+      console.log(`FAIL 模板头含~：bound=${statH3.sfxBoundNotes} empty=${statH3.sfxEmptyTicks} 告警=${JSON.stringify(rH3.result.stats.discardedDetails)}`); ok = false;
+    } else console.log('PASS 模板命令头含 ~ 占位：绑定行跳过 + 空 tick 回退 + 一次性告警');
   } catch (e) {
     console.log('FAIL 参考车道池异常:', e.stack || e.message);
     ok = false;

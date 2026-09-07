@@ -682,6 +682,111 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
     check(!!laneE && Array.isArray(laneE.effects) && laneE.effects.includes('trigger'),
       '持久化载荷 refLanes[].effects 往返（含 trigger）');
   }
+  // 8c) 车道展开面板：▼ 展开 → 三类模板表单（触发型结构化 5 字段 + 连接/背景文本框）→
+  //     改触发型头/尾参 → 绑定行按本车道模板生成、独立行不受影响；恢复默认后逐位还原；sfxParams 持久化往返
+  {
+    const { sfxParticleCmdFromParts, SFX_PARTICLE_FIELDS } = context.window.__NBS2SCHEMATIC;
+    const boundLi = st.refLanes.findIndex(l => l.tracks.includes(0));
+    check(boundLi >= 0, '展开面板前置：绑定车道含 #0');
+    // 展开：点 ▼ → 面板行出现（x 按钮按行序取 boundLi 对应的；rec 逐个赋值会取到最后一个车道的）
+    const xbtns = [];
+    {
+      const recX = (n) => { if (n.className === 'sfx-lane-x') xbtns.push(n); (n.children || []).forEach(recX); };
+      recX(elements.get('sfxEffectLanes'));
+    }
+    const xbtn = xbtns[boundLi];
+    check(!!xbtn && xbtn.textContent === '▼', '勾选表行首渲染展开钮（默认收起 ▼）');
+    xbtn.dispatch('click', {}); // 桩 click() 为 noop，直派 click 事件（处理器闭包读 li、不读 evt）
+    const panelBox = elements.get('sfxEffectLanes');
+    const panelHtml = () => panelBox.innerHTML;
+    check(panelHtml().includes('① 触发型 · 粒子命令模板（结构化关键参数）')
+      && panelHtml().includes('② 连接型 · 粒子命令模板（规划占位）')
+      && panelHtml().includes('③ 背景型 · 粒子命令模板（规划占位）'),
+      '展开面板：三类模板区块齐全（触发型结构化 / 连接·背景占位文本框）');
+    // 表单回填 = 默认命令 5 字段
+    const findIn = (cls) => {
+      const out = [];
+      const rec = (n) => { if (n.className === cls) out.push(n); (n.children || []).forEach(rec); };
+      rec(panelBox);
+      return out;
+    };
+    const inputs = [];
+    // 只收集面板内输入（同表主行的 3 个 checkbox 也是 input，须排除——按 .sfx-lane-params 子树收集）
+    (function collect(n) {
+      if (n.className === 'sfx-lane-params') {
+        (function inner(m) { if (m.tagName === 'input') inputs.push(m); (m.children || []).forEach(inner); })(n);
+        return;
+      }
+      (n.children || []).forEach(collect);
+    })(panelBox);
+    check(inputs.length >= 7, `面板输入框 ≥7（命令头/坐标×3/尾参/连接/背景，实际 ${inputs.length}）`);
+    check(inputs[0].value === SFX_PARTICLE_FIELDS.head && inputs[4].value === SFX_PARTICLE_FIELDS.tail,
+      '触发型表单回填默认命令（命令头/尾参，输入序 head/x/y/z/tail）');
+    // 改触发型命令头 + 尾参 → 生成：绑定行按本车道模板（坐标段仍虚拟槽位 ~0 ~2 ~6），独立行保持默认命令
+    const headIn = inputs[0], tailIn = inputs[4];
+    headIn.value = 'particleex custom minecraft:totem_of_undying';
+    headIn.dispatch('change', { target: headIn });
+    tailIn.value = '1 0.95 0.89 1 0 0 0 -10 10 0.1 20 1.0 null';
+    tailIn.dispatch('change', { target: tailIn });
+    check(!!st.refLanes[boundLi].sfxParams && st.refLanes[boundLi].sfxParams.head === 'particleex custom minecraft:totem_of_undying',
+      '触发型表单编辑：lane.sfxParams.head 更新（change 即生效）');
+    await context.generate();
+    const resC = st.result.result;
+    // 期望偏移按本车道实际起点动态算（R 块 8) 把含 #0 的车道切绑定，其起点 (12,1) → dy=+1 层差+1、dz=12）
+    const laneC0 = st.refLanes[boundLi];
+    const offC = { dx: 0, dy: laneC0.start.dy + 1, dz: laneC0.start.dz };
+    const lineC = sfxParticleCmdFromParts(offC.dx, offC.dy, offC.dz, laneC0.sfxParams);
+    check(resC.sfxTickList.some(e => e.lines.includes(lineC)),
+      `模板生效：绑定行 = 本车道自定义模板 + 虚拟槽位 (0,${offC.dy},${offC.dz})`);
+    const stepC = st.settings.sfxPitchStep; // R 块 8) 已置 3
+    check(resC.sfxTickList.every(e => e.lines.filter(l => !l.includes('totem_of_undying'))
+      .every(l => /^particleex polarparameter minecraft:end_rod ~0 ~0 ~(-?\d+) /.test(l)
+        && (Math.abs(Number(l.match(/^particleex polarparameter minecraft:end_rod ~0 ~0 ~(-?\d+) /)[1]) % 1) === 0
+          && Number(l.match(/^particleex polarparameter minecraft:end_rod ~0 ~0 ~(-?\d+) /)[1]) % stepC === 0))),
+      '独立行不受车道模板影响（仍默认命令、音高偏移按 sfxPitchStep）');
+    // 恢复默认（全清 = 删键）→ 产物逐位还原
+    const inputs2 = [];
+    (function collect2(n) {
+      if (n.className === 'sfx-lane-params') {
+        (function inner2(m) { if (m.tagName === 'input' && m.className !== 'sfx-param-plain') inputs2.push(m); (m.children || []).forEach(inner2); })(n);
+        return;
+      }
+      (n.children || []).forEach(collect2);
+    })(panelBox);
+    inputs2.forEach(i => { i.value = ''; i.dispatch('change', { target: i }); });
+    check(st.refLanes[boundLi].sfxParams === undefined, '触发型表单全空 → sfxParams 删键（缺省 = 默认命令）');
+    await context.generate();
+    const resD = st.result.result;
+    const defD = sfxParticleCmd(offC.dx, offC.dy, offC.dz);
+    check(resD.sfxTickList.every(e => e.lines.every(l => l === defD
+      || /^particleex polarparameter minecraft:end_rod ~0 ~0 ~(-?\d+) /.test(l))),
+      '恢复默认后产物逐位还原（绑定行回默认命令）');
+    // 连接/背景占位文本：存状态、持久化往返、不影响生成
+    const plainIn = findIn('sfx-param-plain');
+    check(plainIn.length === 2, '连接/背景各 1 个模板文本框');
+    plainIn[0].value = 'particleex connect minecraft:dragon_breath ~ ~1 ~ 1 0 0.5 1 0 0 0 0 0.05 5 1.0 null';
+    plainIn[0].dispatch('change', { target: plainIn[0] });
+    plainIn[1].value = 'particleex bg minecraft:portal ~ ~0.5 ~ 0.5 0.1 0.1 0 0 0 0 10 0.4 1.0 null';
+    plainIn[1].dispatch('change', { target: plainIn[1] });
+    await context.generate();
+    check(!Buffer.from(st.sfxZipBytes).toString('latin1').includes('connect minecraft:dragon_breath'),
+      '连接/背景模板未进入数据包产物（规划占位，仅存状态）');
+    context.saveStateNow();
+    const rawF = context.localStorage.getItem(context.stateKey(st.song));
+    const parsedF = rawF && JSON.parse(rawF);
+    const laneF = parsedF && parsedF.refLanes && parsedF.refLanes[boundLi];
+    check(!!laneF && laneF.sfxParams && laneF.sfxParams.connect.includes('dragon_breath') && laneF.sfxParams.background.includes('portal'),
+      'sfxParams 持久化载荷含 connect/background 占位文本');
+    check(!laneF.sfxParams || !('head' in laneF.sfxParams), '触发型恢复默认后载荷不含 head（缺省不写该键）');
+    // 收起：▲ → 面板行消失（同样按行序取 boundLi 行首按钮）
+    const xbtns2 = [];
+    {
+      const recX2 = (n) => { if (n.className === 'sfx-lane-x') xbtns2.push(n); (n.children || []).forEach(recX2); };
+      recX2(elements.get('sfxEffectLanes'));
+    }
+    xbtns2[boundLi].dispatch('click', {});
+    check(!elements.get('sfxEffectLanes').innerHTML.includes('① 触发型 · 粒子命令模板'), '收起（▲）：面板行移除');
+  }
   // 9) 旧格式迁移：手工写入旧 bool 载荷 → 重载按独立型迁移
   if (parsed) {
     parsed.refLayers = [[1, true]];
