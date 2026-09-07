@@ -121,6 +121,13 @@ input[type="number"] { width: 70px; }
 /* 参考车道「静音」成员（未勾选发声 = 仅节奏/音高参考，用户 2026-09-07 提醒措施）：琥珀色标记 */
 .lane-tag.ref-lane-tag-muted { background: #4a3a1e; color: #e0a33c; }
 .lane-tag.ref-lane-tag-muted:hover { background: #7a5a20; color: #ffd98c; }
+/* 粒子特效总览卡片（3 类框架：触发型已实现 / 连接型·背景型规划占位） */
+.sfx-effect-card { background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; margin-bottom: 6px; font-size: 12px; line-height: 1.7; }
+.sfx-effect-card .sfx-effect-name { font-weight: 700; color: var(--accent); }
+.sfx-effect-card.sfx-effect-planned { opacity: 0.62; }
+.sfx-effect-badge { display: inline-block; border-radius: 3px; padding: 1px 6px; margin-left: 8px; font-size: 11px; font-weight: 600; }
+.sfx-effect-badge.on { background: #1f4a28; color: #9be3a0; }
+.sfx-effect-badge.todo { background: #4a3a1e; color: #e0a33c; }
 .lane-conflict-ok { font-size: 11px; color: #6fbf73; margin-left: 6px; }
 .lane-conflict-warn { font-size: 11px; color: #e0a33c; margin-left: 6px; font-weight: 700; }
 .merge-advice { background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; margin-bottom: 8px; font-size: 12px; }
@@ -217,6 +224,8 @@ input[type="number"] { width: 70px; }
     </div>
     <canvas id="refLaneCanvas" width="640" height="420"></canvas>
     <div class="layout-info" id="refLayoutInfo"></div>
+    <h3>粒子特效总览（共规划 3 类：触发型 / 连接型 / 背景型）</h3>
+    <div id="sfxEffectList"></div>
   </section>
 
   <section id="settings-section" hidden>
@@ -1748,6 +1757,7 @@ function onSongLoaded(song, bytes) {
   $('group-section').hidden = false;
   renderRefLaneSection();
   $('refLane-section').hidden = false;
+  renderSfxEffectList(); // 粒子特效 3 类总览（静态框架，仅随载歌刷新一次）
   renderSettings();
   $('settings-section').hidden = false;
   $('layout-section').hidden = false;
@@ -2529,6 +2539,44 @@ function renderRefLaneSection() {
   });
   $('refGroupCount').textContent = `共 ${AppState.refLanes.length} 条参考车道`;
   renderLayoutEditor();
+}
+
+// 粒子特效总览（3 类框架，用户 2026-09-07 规划）：触发型（已实现，参数由 1 个音符决定）/
+// 连接型（规划：连接前后两音符，参数由 2 个音符决定）/ 背景型（规划：按乐曲小节间隔激活）。
+// 展示当前已有的种类与效果描述，不列逐 tick 条目；未实现类占位标注。
+function renderSfxEffectList() {
+  const list = $('sfxEffectList');
+  if (!list) return;
+  list.innerHTML = '';
+  const card = (title, badge, body) => {
+    const c = document.createElement('div');
+    c.className = `sfx-effect-card${badge === 'todo' ? ' sfx-effect-planned' : ''}`;
+    const name = document.createElement('span');
+    name.className = 'sfx-effect-name';
+    name.textContent = title;
+    const b = document.createElement('span');
+    b.className = `sfx-effect-badge ${badge}`;
+    b.textContent = badge === 'todo' ? '规划中' : '已实现';
+    c.appendChild(name);
+    c.appendChild(b);
+    const p = document.createElement('div');
+    p.className = 'hint';
+    p.textContent = body;
+    c.appendChild(p);
+    list.appendChild(c);
+  };
+  card('① 触发型', 'on',
+    '由音符触发，参数由 1 个音符决定。每个参考音符在轨道 0 同 tick 触发一次粒子：' +
+    '绑定型 = 粒子中心锚定所属参考车道的虚拟盒位（起点 + 槽位 Z +0/+1/−1，与「发声」无关、恒产生）；' +
+    '独立型 = 锚定轨道 0、Z 按音高偏移 (音高−12)×sfxPitchStep。' +
+    '当前效果条目：end_rod 螺旋展开（particleex polarparameter minecraft:end_rod：' +
+    '20 个粒子、寿命 0.1s、半径 1、角度随 t 扫描的平面螺旋，坐标段由构建时按车道起点/槽位/音高求解替换）。');
+  card('② 连接型', 'todo',
+    '特殊的触发型：连接前后两个音符，参数由 2 个音符决定（如起点 = 前一音符的盒位、' +
+    '终点/形态 = 当前音符的盒位与音高）。规划占位，暂未实现生成逻辑。');
+  card('③ 背景型', 'todo',
+    '按一定乐曲小节间隔激活（与具体音符无关，按小节/拍位周期性触发，用于铺底氛围）。' +
+    '规划占位，暂未实现生成逻辑。');
 }
 
 function renderLaneSection() {

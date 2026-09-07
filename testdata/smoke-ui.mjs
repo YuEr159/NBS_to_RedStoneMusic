@@ -102,6 +102,16 @@ check(context.window.__NBS2SCHEMATIC.state.lanes[0].tracks.join(',') === '0,1,2'
 check(context.window.__NBS2SCHEMATIC.layoutEditor !== null, '布局编辑器已创建');
 check(elements.get('group-section').hidden === false, '车道池区已显示');
 check(elements.get('layer-section').hidden === false, '音轨池区已显示');
+// 粒子特效总览（3 类框架：触发型已实现 / 连接型·背景型规划占位）
+{
+  const eff = elements.get('sfxEffectList').innerHTML;
+  check(eff.includes('① 触发型') && eff.includes('② 连接型') && eff.includes('③ 背景型'),
+    '粒子特效总览：3 类（触发/连接/背景）全部渲染');
+  check((eff.match(/已实现/g) || []).length === 1 && (eff.match(/规划中/g) || []).length === 2,
+    '粒子特效总览：触发型标「已实现」×1、连接/背景标「规划中」×2');
+  check(eff.includes('minecraft:end_rod') && eff.includes('sfxPitchStep'),
+    '粒子特效总览：触发型条目含当前效果（end_rod 螺旋）与参数规则描述');
+}
 check(elements.get('sidebar').hidden === false, '音轨池左侧边栏已显示（左右分栏）');
 // 侧边栏折叠/展开（展开 680px = 340×2；折叠 = 侧栏整体隐藏 + 右侧顶部展开按钮；状态持久化到全局 UI 键）
 elements.get('sidebarToggle').dispatch('click', {});
