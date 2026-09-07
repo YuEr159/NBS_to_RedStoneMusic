@@ -1301,7 +1301,8 @@ try {
 // 布局：轨道 0 dz=0/dy=0；音轨车道 dz=3/dy=0；参考车道 dz=6/dy=1（全非负 → zOffset=1、yOffset=0，
 //   尺寸只由真实链决定）
 {
-  const { SFX_NAMESPACE, SFX_CB_STATE, sfxParticleCmd, sfxParticleCmdFromParts } = context.window.__NBS2SCHEMATIC;
+  const { SFX_NAMESPACE, SFX_CB_STATE, sfxParticleCmd, sfxParticleCmdFromParts,
+    SFX_CONNECT_DEFAULTS, SFX_CONNECT_POINT_GAP, sfxConnectCmd } = context.window.__NBS2SCHEMATIC;
   // layer 0：tick0 key45（音高 12）、tick2 key50（音高 17）
   const nbs = makeNbs({ tempoTps: 20, songLength: 8, layers: 1, noteSpecs: [
     { tick: 0, layer: 0, instrument: 0, key: 45 },
@@ -1375,7 +1376,7 @@ try {
       lane0: { dz: 0, dy: 0 },
       refLayers: new Map([[0, { type: 'independent', sound: true }]]),
       groups: [{ layers: [0] }], groupStarts: [{ dz: 3, dy: 0 }],
-      refLanes: [{ tracks: [0], start: { dz: 0, dy: 0 } }],
+      refLanes: [{ tracks: [0], start: { dz: 0, dy: 0 }, effects: ['trigger'] }],
     });
     ok = verifyE2E('参考车道池·MIDI式', rC) && ok;
     const statC = rC.result.stats;
@@ -1393,7 +1394,7 @@ try {
       lane0: { dz: 0, dy: 0 },
       refLayers: new Map([[0, { type: 'independent', sound: true }]]),
       groups: [{ layers: [0] }], groupStarts: [{ dz: 3, dy: 0 }],
-      refLanes: [{ tracks: [0], start: { dz: 4, dy: 2 } }],
+      refLanes: [{ tracks: [0], start: { dz: 4, dy: 2 }, effects: ['trigger'] }],
     });
     ok = verifyE2E('参考车道池·MIDI式中心平移', rC2) && ok;
     const statC2 = rC2.result.stats;
@@ -1412,7 +1413,7 @@ try {
       settings: { sfxPitchStep: 2.5 },
       refLayers: new Map([[0, { type: 'independent', sound: true }]]),
       groups: [{ layers: [0] }], groupStarts: [{ dz: 3, dy: 0 }],
-      refLanes: [{ tracks: [0], start: { dz: 4, dy: 2 } }],
+      refLanes: [{ tracks: [0], start: { dz: 4, dy: 2 }, effects: ['trigger'] }],
     });
     ok = verifyE2E('参考车道池·MIDI式小数步长', rC3) && ok;
     const statC3 = rC3.result.stats;
@@ -1525,6 +1526,96 @@ try {
       || !rH3.result.stats.discardedDetails.some(s => s.includes('命令头含 ~ 占位'))) {
       console.log(`FAIL 模板头含~：bound=${statH3.sfxBoundNotes} empty=${statH3.sfxEmptyTicks} 告警=${JSON.stringify(rH3.result.stats.discardedDetails)}`); ok = false;
     } else console.log('PASS 模板命令头含 ~ 占位：绑定行跳过 + 空 tick 回退 + 一次性告警');
+    // K) 连接型（2026-09-07 用户定规格：MIDI式相邻音符对 A→B 线段，tB 时刻笔尖恰好抵达 B）：
+    //    K1 缺省全选（触发+连接）：独立行 + 连接线；K2 取消连接（effects 仅 trigger）→ 无连接线、
+    //    网格与 K1 逐位一致（连接线零 litematic 改动）；K3 仅连接（effects 仅 connect）→ 无独立行、
+    //    行全为连接线；K4 车道级连接模板（sfxParams.connect）；K5 短 Δt（cpt>1）+ L<0.05 跳过
+    //    （tick0/2 同音高 A≡B 不连线、tick2/6 连）
+    {
+      // K1 期望（默认模板）：A=(0,0,0)、B=(0,0,5)（音高 12→17）；d=(0,0,5)、L=5、Δt=2
+      //   N0=⌈5/0.1⌉=50、cpt=⌈51/3⌉=17、P=51、step=1/50=0.02、end=1.01、age=m=10、φ=π/2、θ=0
+      const expK1 = sfxConnectCmd([0, 0, 0], [0, 0, 5], 5, 51,
+        SFX_CONNECT_DEFAULTS.m, SFX_CONNECT_DEFAULTS.alpha, SFX_CONNECT_DEFAULTS);
+      const k1Opts = {
+        lane0: { dz: 0, dy: 0 },
+        refLayers: new Map([[0, { type: 'independent', sound: true }]]),
+        groups: [{ layers: [0] }], groupStarts: [{ dz: 3, dy: 0 }],
+        refLanes: [{ tracks: [0], start: { dz: 0, dy: 0 } }],
+      };
+      const rK1 = runE2E(tmpFile, k1Opts);
+      ok = verifyE2E('参考车道池·连接线缺省', rK1) && ok;
+      const statK1 = rK1.result.stats;
+      const tlbK1 = rK1.result.sfxTickList;
+      if (statK1.sfxStandaloneNotes !== 2 || statK1.sfxConnectLines !== 1 || statK1.commandBlocks !== 2
+        || tlbK1.length !== 2
+        || JSON.stringify(tlbK1[0].lines) !== JSON.stringify([sfxParticleCmd(0, 0, 0), expK1])
+        || JSON.stringify(tlbK1[1].lines) !== JSON.stringify([sfxParticleCmd(0, 0, 5)])
+        || !expK1.startsWith('particleex tickpolarparameter minecraft:end_rod ~0 ~0 ~0 1 0.95 0.89 1 0 0 0 0 1.01')
+        || !expK1.includes('"s1,s2,dis=1.570796327,0,5*t" 0.02 51 10 null 1.0 null')) {
+        console.log(`FAIL 连接线缺省：indep=${statK1.sfxStandaloneNotes} conn=${statK1.sfxConnectLines} CB=${statK1.commandBlocks} 行=${JSON.stringify(tlbK1)}（期望 tick0 [独立行, 连接线] / tick1 [独立行]；命令 φ=π/2、L=5、step=0.02、P=51、age=10）`); ok = false;
+      } else {
+        console.log('PASS 连接线缺省（全选）：tA 行 = 独立行+连接线（t_B=t_A+2 笔尖抵达，无缝衔接），litematic 结构不变');
+      }
+      // K2 取消连接（effects 仅 trigger）：无连接线；网格/盒/中继器与 K1 逐位一致（零 litematic 改动）
+      const rK2 = runE2E(tmpFile, { ...k1Opts, refLanes: [{ tracks: [0], start: { dz: 0, dy: 0 }, effects: ['trigger'] }] });
+      ok = verifyE2E('参考车道池·连接线关闭', rK2) && ok;
+      const statK2 = rK2.result.stats;
+      if (statK2.sfxConnectLines !== 0 || statK2.sfxStandaloneNotes !== 2
+        || rK2.packed.longs.length !== rK1.packed.longs.length || !rK1.packed.longs.every((v, i) => v === rK2.packed.longs[i])
+        || rK2.totalBlocks !== rK1.totalBlocks) {
+        console.log(`FAIL 连接线关闭：conn=${statK2.sfxConnectLines} 网格差异（期望 conn=0、网格与 K1 逐位一致）`); ok = false;
+      } else console.log('PASS 连接线关闭（effects 仅 trigger）：零连接线，litematic 网格与缺省全选逐位一致');
+      // K3 仅连接（effects 仅 connect）：无独立触发行；tick0 行=连接线（CB 自持）；
+      //   tick2 无任何行 → 空 tick 回退（CB 还原雪块、TE 移除）
+      const rK3 = runE2E(tmpFile, { ...k1Opts, refLanes: [{ tracks: [0], start: { dz: 0, dy: 0 }, effects: ['connect'] }] });
+      const statK3 = rK3.result.stats;
+      const tlbK3 = rK3.result.sfxTickList;
+      if (statK3.sfxStandaloneNotes !== 0 || statK3.sfxConnectLines !== 1 || statK3.commandBlocks !== 1
+        || statK3.sfxEmptyTicks !== 1 || tlbK3.length !== 1
+        || JSON.stringify(tlbK3[0].lines) !== JSON.stringify([expK1])) {
+        console.log(`FAIL 连接线单独开（仅 connect）：indep=${statK3.sfxStandaloneNotes} conn=${statK3.sfxConnectLines} CB=${statK3.commandBlocks} empty=${statK3.sfxEmptyTicks} 行=${JSON.stringify(tlbK3)}（期望 tick0 [连接线]、tick2 空 tick 回退）`); ok = false;
+      } else {
+        console.log('PASS 连接线单独开（effects 仅 connect）：无触发独立行；tB tick 无行 → 空 tick 回退（连线自持 tA 的 function/CB）');
+      }
+      // K4 车道级连接模板（sfxParams.connect）：粒子/颜色/m/α 逐字进命令（α=0.1 → 速度 (0,0,α·dz/L)=(0,0,0.1)，
+      //   沿 AB 方向的漂移）；独立行（声道级触发命令）不受车道连接模板影响
+      const connK4 = { particle: 'minecraft:dragon_breath', color: '0.5 0.5 0.5 1', m: 20, alpha: 0.1 };
+      const rK4 = runE2E(tmpFile, { ...k1Opts, refLanes: [{ tracks: [0], start: { dz: 0, dy: 0 }, sfxParams: { connect: connK4 } }] });
+      const tlbK4 = rK4.result.sfxTickList;
+      const expK4 = sfxConnectCmd([0, 0, 0], [0, 0, 5], 5, 51, 20, 0.1, { particle: 'minecraft:dragon_breath', color: '0.5 0.5 0.5 1' });
+      if (JSON.stringify(tlbK4[0].lines) !== JSON.stringify([sfxParticleCmd(0, 0, 0), expK4])
+        || !expK4.startsWith('particleex tickpolarparameter minecraft:dragon_breath ~0 ~0 ~0 0.5 0.5 0.5 1 0 0 0.1 0 1.01')
+        || !expK4.includes('"s1,s2,dis=1.570796327,0,5*t" 0.02 51 20 null 1.0 null')) {
+        console.log(`FAIL 车道级连接模板：行=${JSON.stringify(tlbK4[0].lines)}（期望 dragon_breath、色 0.5 0.5 0.5 1、vz=0.1、age=20）`); ok = false;
+      } else {
+        console.log('PASS 车道级连接模板（sfxParams.connect）：粒子/颜色/m/α 定制进命令，独立行不受影响');
+      }
+      // K5 短 Δt + L<0.05 跳过：tick0 k45(12)、tick2 k45(12，A≡B 跳过)、tick6 k40(7)
+      //   对 (0,6)：d=(0,0,−5)、L=5、Δt=6、N0=50、cpt=⌈51/7⌉=8、P=55、step=1/54≈0.018518519、end=1.009259259
+      const nbsK5 = makeNbs({ tempoTps: 20, songLength: 8, layers: 1, noteSpecs: [
+        { tick: 0, layer: 0, instrument: 0, key: 45 },
+        { tick: 2, layer: 0, instrument: 0, key: 45 },
+        { tick: 6, layer: 0, instrument: 0, key: 40 },
+      ]});
+      const tmpK5 = 'synth_connect_short.nbs';
+      writeFileSync(path.join(__dirname, tmpK5), nbsK5);
+      const rK5 = runE2E(tmpK5, k1Opts);
+      ok = verifyE2E('参考车道池·连接线短Δt', rK5) && ok;
+      const statK5 = rK5.result.stats;
+      const tlbK5 = rK5.result.sfxTickList;
+      const expK5 = sfxConnectCmd([0, 0, 0], [0, 0, -5], 5, 55,
+        SFX_CONNECT_DEFAULTS.m, SFX_CONNECT_DEFAULTS.alpha, SFX_CONNECT_DEFAULTS);
+      if (statK5.sfxStandaloneNotes !== 3 || statK5.sfxConnectLines !== 1
+        || tlbK5.length !== 3
+        || JSON.stringify(tlbK5[0].lines) !== JSON.stringify([sfxParticleCmd(0, 0, 0)])
+        || JSON.stringify(tlbK5[1].lines) !== JSON.stringify([sfxParticleCmd(0, 0, 0), expK5])
+        || JSON.stringify(tlbK5[2].lines) !== JSON.stringify([sfxParticleCmd(0, 0, -5)])
+        || !expK5.includes('"s1,s2,dis=-1.570796327,0,5*t" 0.018518519 55 10 null 1.0 null')) {
+        console.log(`FAIL 连接线短Δt：indep=${statK5.sfxStandaloneNotes} conn=${statK5.sfxConnectLines} 行=${JSON.stringify(tlbK5)}（期望仅 (2,6) 一对连线、行落 t_A=2：L=5、Δt=6、P=55、step=1/54；(0,2) 同音高 A≡B 跳过）`); ok = false;
+      } else {
+        console.log('PASS 连接线短Δt：cpt=⌈(N0+1)/(Δt+1)⌉ 量化点距 ≤0.1；L<0.05（A≡B）自动跳过');
+      }
+    }
   } catch (e) {
     console.log('FAIL 参考车道池异常:', e.stack || e.message);
     ok = false;

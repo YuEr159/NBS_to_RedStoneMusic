@@ -102,15 +102,17 @@ check(context.window.__NBS2SCHEMATIC.state.lanes[0].tracks.join(',') === '0,1,2'
 check(context.window.__NBS2SCHEMATIC.layoutEditor !== null, '布局编辑器已创建');
 check(elements.get('group-section').hidden === false, '车道池区已显示');
 check(elements.get('layer-section').hidden === false, '音轨池区已显示');
-// 粒子特效总览（3 类框架：触发型已实现 / 连接型·背景型规划占位）
+// 粒子特效总览（3 类框架：触发型·连接型已实现 / 背景型规划占位）
 {
   const eff = elements.get('sfxEffectList').innerHTML;
   check(eff.includes('① 触发型') && eff.includes('② 连接型') && eff.includes('③ 背景型'),
     '粒子特效总览：3 类（触发/连接/背景）全部渲染');
-  check((eff.match(/已实现/g) || []).length === 1 && (eff.match(/规划中/g) || []).length === 2,
-    '粒子特效总览：触发型标「已实现」×1、连接/背景标「规划中」×2');
+  check((eff.match(/已实现/g) || []).length === 2 && (eff.match(/规划中/g) || []).length === 1,
+    '粒子特效总览：触发/连接标「已实现」×2、背景标「规划中」×1');
   check(eff.includes('minecraft:end_rod') && eff.includes('sfxPitchStep'),
     '粒子特效总览：触发型条目含当前效果（end_rod 螺旋）与参数规则描述');
+  check(eff.includes('tickpolarparameter') && eff.includes('点距 ≤0.1 格'),
+    '粒子特效总览：连接型条目含实现描述（tickpolarparameter、点距 ≤0.1 格）');
 }
 // 粒子特效独立模块 + 按车道勾选表（无参考车道时空提示）
 check(elements.get('sfxEffect-section').hidden === false, '粒子特效总览为独立 section（已显示）');
@@ -628,8 +630,12 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
   check(indepRes.stats.sfxBoundNotes === 0 && indepRes.stats.sfxStandaloneNotes > 0
     && indepRes.stats.commandBlocks > 0,
     `纯MIDI式：绑定行=0、独立行=${indepRes.stats.sfxStandaloneNotes}、CB=${indepRes.stats.commandBlocks}`);
-  check(indepRes.sfxTickList.every(e => e.lines.every(l => /^particleex polarparameter minecraft:end_rod ~0 ~0 ~-?\d+ /.test(l))),
-    'MIDI式行垂直偏移恒 0（~0 ~0 ~<z>，z 按音高）');
+  check(indepRes.sfxTickList.every(e => e.lines.every(l => /^particleex (?:polarparameter|tickpolarparameter) minecraft:end_rod ~0 ~0 /.test(l))),
+    'MIDI式行垂直偏移恒 0（触发独立行 ~0 ~0 ~<z> 与连接线起点 ~0 ~0 ~<z>，dy=0）');
+  check(indepRes.stats.sfxConnectLines > 0
+    && indepRes.sfxTickList.some(e => e.lines.some(l => /^particleex tickpolarparameter /.test(l)
+      && l.includes('"s1,s2,dis=') && / 10 null 1\.0 null$/.test(l))),
+    `纯MIDI式含连接线（conn=${indepRes.stats.sfxConnectLines}，缺省模板 age=m=10）`);
   // 7) 参考全取消 → 重新生成：zip 隐藏、无 CB
   onRefToggle(0, false);
   onRefToggle(2, false);
@@ -701,9 +707,9 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
     const panelBox = elements.get('sfxEffectLanes');
     const panelHtml = () => panelBox.innerHTML;
     check(panelHtml().includes('① 触发型 · 粒子命令模板（结构化关键参数）')
-      && panelHtml().includes('② 连接型 · 粒子命令模板（规划占位）')
+      && panelHtml().includes('② 连接型 · 线段参数（A→B，抵达时刻 = B 触发）')
       && panelHtml().includes('③ 背景型 · 粒子命令模板（规划占位）'),
-      '展开面板：三类模板区块齐全（触发型结构化 / 连接·背景占位文本框）');
+      '展开面板：三类模板区块齐全（触发型结构化 / 连接型结构化 4 字段 / 背景占位文本框）');
     // 表单回填 = 默认命令 5 字段
     const findIn = (cls) => {
       const out = [];
@@ -723,6 +729,12 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
     check(inputs.length >= 7, `面板输入框 ≥7（命令头/坐标×3/尾参/连接/背景，实际 ${inputs.length}）`);
     check(inputs[0].value === SFX_PARTICLE_FIELDS.head && inputs[4].value === SFX_PARTICLE_FIELDS.tail,
       '触发型表单回填默认命令（命令头/尾参，输入序 head/x/y/z/tail）');
+    // 连接型结构化 4 字段表单：回填默认（在触发型全清操作之前断言——同面板，全清会一并清空本表单）
+    const connIns = findIn('sfx-connect-field');
+    check(connIns.length === 4, `连接型表单 4 字段（粒子/颜色/m/α，实际 ${connIns.length}）`);
+    check(JSON.stringify([connIns[0].value, connIns[1].value, connIns[2].value, connIns[3].value])
+      === JSON.stringify(['minecraft:end_rod', '1 0.95 0.89 1', '10', '0']),
+      '连接型表单回填默认（粒子/颜色/m=10/α=0）');
     // 改触发型命令头 + 尾参 → 生成：绑定行按本车道模板（坐标段仍虚拟槽位 ~0 ~2 ~6），独立行保持默认命令
     const headIn = inputs[0], tailIn = inputs[4];
     headIn.value = 'particleex custom minecraft:totem_of_undying';
@@ -740,7 +752,8 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
     check(resC.sfxTickList.some(e => e.lines.includes(lineC)),
       `模板生效：绑定行 = 本车道自定义模板 + 虚拟槽位 (0,${offC.dy},${offC.dz})`);
     const stepC = st.settings.sfxPitchStep; // R 块 8) 已置 3
-    check(resC.sfxTickList.every(e => e.lines.filter(l => !l.includes('totem_of_undying'))
+    check(resC.sfxTickList.every(e => e.lines.filter(l => !l.includes('totem_of_undying')
+        && !l.startsWith('particleex tickpolarparameter '))
       .every(l => /^particleex polarparameter minecraft:end_rod ~0 ~0 ~(-?\d+) /.test(l)
         && (Math.abs(Number(l.match(/^particleex polarparameter minecraft:end_rod ~0 ~0 ~(-?\d+) /)[1]) % 1) === 0
           && Number(l.match(/^particleex polarparameter minecraft:end_rod ~0 ~0 ~(-?\d+) /)[1]) % stepC === 0))),
@@ -762,22 +775,40 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
     check(resD.sfxTickList.every(e => e.lines.every(l => l === defD
       || /^particleex polarparameter minecraft:end_rod ~0 ~0 ~(-?\d+) /.test(l))),
       '恢复默认后产物逐位还原（绑定行回默认命令）');
-    // 连接/背景占位文本：存状态、持久化往返、不影响生成
+    // 连接型表单编辑（表单计数/回填断言已在触发型编辑前完成）→ 非法值回默认 → 持久化往返
+    check(JSON.stringify([connIns[0].value, connIns[1].value, connIns[2].value, connIns[3].value])
+      === JSON.stringify(['', '', '', '']),
+      '连接型表单随触发型全清同步清空（同面板，桩 input 值被一并重置）');
+    connIns[0].value = 'minecraft:dragon_breath'; connIns[0].dispatch('change', { target: connIns[0] });
+    connIns[1].value = '0.5 0.5 0.5 1'; connIns[1].dispatch('change', { target: connIns[1] });
+    connIns[2].value = '20'; connIns[2].dispatch('change', { target: connIns[2] });
+    connIns[3].value = '0.1'; connIns[3].dispatch('change', { target: connIns[3] });
+    check(JSON.stringify(st.refLanes[boundLi].sfxParams && st.refLanes[boundLi].sfxParams.connect)
+      === JSON.stringify({ particle: 'minecraft:dragon_breath', color: '0.5 0.5 0.5 1', m: 20, alpha: 0.1 }),
+      '连接型表单编辑：lane.sfxParams.connect 更新（4 字段结构化对象）');
+    // 非法颜色（5 个值）→ 该次回退默认 → connect 键删除（全部=默认）
+    connIns[1].value = '0.5 0.5 0.5 1 9'; connIns[1].dispatch('change', { target: connIns[1] });
+    check(!(st.refLanes[boundLi].sfxParams && 'connect' in (st.refLanes[boundLi].sfxParams || {})),
+      '连接型非法字段（颜色 5 值）→ 回默认、connect 键删除');
+    // 重设 connect + 背景占位文本 → 生成不消费 connect（bound 车道无 MIDI式成员）→ 持久化往返
+    connIns[0].value = 'minecraft:dragon_breath'; connIns[0].dispatch('change', { target: connIns[0] });
+    connIns[2].value = '20'; connIns[2].dispatch('change', { target: connIns[2] });
     const plainIn = findIn('sfx-param-plain');
-    check(plainIn.length === 2, '连接/背景各 1 个模板文本框');
-    plainIn[0].value = 'particleex connect minecraft:dragon_breath ~ ~1 ~ 1 0 0.5 1 0 0 0 0 0.05 5 1.0 null';
+    check(plainIn.length === 1, '背景型 1 个占位文本框（连接型已升级为结构化表单）');
+    plainIn[0].value = 'particleex bg minecraft:portal ~ ~0.5 ~ 0.5 0.1 0.1 0 0 0 0 10 0.4 1.0 null';
     plainIn[0].dispatch('change', { target: plainIn[0] });
-    plainIn[1].value = 'particleex bg minecraft:portal ~ ~0.5 ~ 0.5 0.1 0.1 0 0 0 0 10 0.4 1.0 null';
-    plainIn[1].dispatch('change', { target: plainIn[1] });
     await context.generate();
-    check(!Buffer.from(st.sfxZipBytes).toString('latin1').includes('connect minecraft:dragon_breath'),
-      '连接/背景模板未进入数据包产物（规划占位，仅存状态）');
+    check(!Buffer.from(st.sfxZipBytes).toString('latin1').includes('bg minecraft:portal'),
+      '背景模板未进入数据包产物（规划占位，仅存状态）');
     context.saveStateNow();
     const rawF = context.localStorage.getItem(context.stateKey(st.song));
     const parsedF = rawF && JSON.parse(rawF);
     const laneF = parsedF && parsedF.refLanes && parsedF.refLanes[boundLi];
-    check(!!laneF && laneF.sfxParams && laneF.sfxParams.connect.includes('dragon_breath') && laneF.sfxParams.background.includes('portal'),
-      'sfxParams 持久化载荷含 connect/background 占位文本');
+    check(!!laneF && laneF.sfxParams && laneF.sfxParams.connect
+      && laneF.sfxParams.connect.particle === 'minecraft:dragon_breath' && laneF.sfxParams.connect.m === 20,
+      'sfxParams.connect 持久化载荷为结构化对象（particle/m 往返）');
+    check(!!laneF && laneF.sfxParams && laneF.sfxParams.background.includes('portal'),
+      'sfxParams.background 占位文本持久化往返');
     check(!laneF.sfxParams || !('head' in laneF.sfxParams), '触发型恢复默认后载荷不含 head（缺省不写该键）');
     // 收起：▲ → 面板行消失（同样按行序取 boundLi 行首按钮）
     const xbtns2 = [];
