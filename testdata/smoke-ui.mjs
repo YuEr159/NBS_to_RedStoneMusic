@@ -675,8 +675,12 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
       '取消触发型：lane.effects 重建为剩余项（connect/background，缺省全选语义反转）');
     await context.generate();
     const offRes = st.result.result;
-    check(offRes.stats.sfxBoundNotes === 0 && offRes.sfxTickList.length === 0,
-      `触发型取消后绑定行=0（实际 ${offRes.stats.sfxBoundNotes}）——粒子行不生成、空 tick 回退`);
+    // 触发型取消 → 绑定粒子行=0；2026-09-07c 起单线式连线独立于触发型：缺省全选下 connect 仍在 →
+    //   沿线连接行照产（自持 tA 的 function/CB，后续空 tick 回退）
+    check(offRes.stats.sfxBoundNotes === 0 && offRes.stats.sfxConnectLines > 0
+      && offRes.sfxTickList.length > 0
+      && offRes.sfxTickList.every(e => e.lines.every(l => l.startsWith('particleex tickpolarparameter '))),
+      `触发型取消后绑定行=0（实际 ${offRes.stats.sfxBoundNotes}）——绑定粒子行不生成、单线式连接线独立照产`);
     const cb2 = findTgl(boundLi, 'trigger');
     cb2.checked = true; cb2.dispatch('change', { target: cb2 });
     check(st.refLanes[boundLi].effects.includes('trigger'), '重新勾选触发型：effects 含 trigger');
@@ -772,9 +776,11 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
     await context.generate();
     const resD = st.result.result;
     const defD = sfxParticleCmd(offC.dx, offC.dy, offC.dz);
+    // 单线式连线行（tickpolarparameter）独立于触发模板 → 允许在列；触发型须回默认命令
     check(resD.sfxTickList.every(e => e.lines.every(l => l === defD
-      || /^particleex polarparameter minecraft:end_rod ~0 ~0 ~(-?\d+) /.test(l))),
-      '恢复默认后产物逐位还原（绑定行回默认命令）');
+      || /^particleex polarparameter minecraft:end_rod ~0 ~0 ~(-?\d+) /.test(l)
+      || l.startsWith('particleex tickpolarparameter '))),
+      '恢复默认后产物逐位还原（绑定行回默认命令，连接线独立在列）');
     // 连接型表单编辑（表单计数/回填断言已在触发型编辑前完成）→ 非法值回默认 → 持久化往返
     check(JSON.stringify([connIns[0].value, connIns[1].value, connIns[2].value, connIns[3].value])
       === JSON.stringify(['', '', '', '']),

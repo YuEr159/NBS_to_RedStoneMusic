@@ -480,21 +480,65 @@ const sfxParticleCmd = (dx, dy, dz) => sfxParticleCmdFromParts(dx, dy, dz, SFX_P
 const sfxParticleCmdFromParts = (dx, dy, dz, p) =>
   [p.head, `~${dx}`, `~${dy}`, `~${dz}`, p.tail].join(' ');
 
-// ===== ② 连接型（2026-09-07 用户定规格：线段 A→B，tB 时刻笔尖恰好抵达 B，无缝衔接）=====
+// ===== ② 连接型（2026-09-07/07c 用户定规格：线段连接「相邻演奏 tick」，tB 时刻笔尖恰好抵达 B，无缝衔接）=====
+// 连线主轴 = 时间，按**参考车道**连（车道级事件）：车道内任一成员发声的 tick 构成演奏 tick 序列，
+//   相邻演奏 tick A(t_A)→B(t_B) 之间连线。NBS 格式每 (声道, tick) 至多 1 音（layer_delta=0 即该 tick 结束，
+//   同 tick 内层号严格递增）→ "和弦" = 同一车道多个成员声道同 tick 齐响（跨声道）。
 // 用户可调（车道级 lane.sfxParams.connect，缺省 = SFX_CONNECT_DEFAULTS）：
 //   particle 粒子 / color "r g b a" 四值 0~1 / m 寿命 tick（自出生起，用户手输，默认 10）/ alpha 漂移系数（0=静止）。
 // 工具构建时计算（不可用户输入，依赖音符数据）：A、方向角 φ/θ、L、cpt、P、step、age——
-//   相邻音符对 A(t_A)→B(t_B)，Δt=t_B−t_A；L=|B−A|；N0=⌈L/0.1⌉（固定 0.1 格点距为密度上限）；
+//   相邻演奏 tick A(t_A)→B(t_B)，Δt=t_B−t_A；L=|B−A|；N0=⌈L/0.1⌉（固定 0.1 格点距为密度上限）；
 //   cpt=max(1,⌈(N0+1)/(Δt+1)⌉)、P=(Δt+1)·cpt、step=1/(P−1)。模组 tickpolarparameter 每 tick 生成 cpt 个采样点
 //   （客户端任务自调度，源码 ParticleEx TickParticleTask 实锤）→ 末点 k=P−1 生于 t_A+⌊k/cpt⌋=t_A+Δt=t_B，
 //   与 B 的触发型/音符盒激活同 tick 无缝衔接；实际点距 = L/(P−1) ≤ 0.1（量化只会更密）。
 // 球坐标（模组约定 ParticleUtil：dx=dis·cos(s2)·cos(s1), dy=dis·sin(s2), dz=dis·cos(s2)·sin(s1)）：
-//   φ=atan2(dz,dx)、θ=atan2(dy,√(dx²+dz²))；纯 +Z 方向 → φ=π/2、θ=0。
+//   φ=atan2(dz,dx)、θ=atan2(dy,√(dx²+dz²))；纯 +Z 方向 → φ=π/2、θ=0；纯 +X 方向 → φ=0、θ=0。
+// 两种参考车道类型的端点几何（2026-09-07c）：
+//   · MIDI式：端点 = 两 tick 各音的粒子中心（Z 按音高展开，基准 = 车道 start）。和弦配对见 sfxChordPairs：
+//     Δt ≤ SFX_CONNECT_NEAR_DT(32) → 1:1 最近邻 + 落单音就近挂靠（允许 1对3/3对1）；Δt > 32 → 严格 1:1。
+//   · 单线式：与音高无关 → 端点简并为车道中间槽位（主位），沿链 +X 方向连线（主链每 tick 恒 2 格），
+//     「连接前后节奏」：每个演奏 tick 与下一个演奏 tick 之间都有连线（每 tick 对只一条线）。
 const SFX_CONNECT_DEFAULTS = {
   particle: 'minecraft:end_rod', color: '1 0.95 0.89 1', m: 10, alpha: 0,
 };
 const SFX_CONNECT_POINT_GAP = 0.1; // 点距上限（格）
 const SFX_CONNECT_MIN_LEN = 0.05;  // L < 0.05 跳过（A≈B：B 的触发环已标记该点）
+const SFX_CONNECT_NEAR_DT = 32;    // 和弦连线近距阈值（2026-09-07c）：Δt ≤ 32 允许落单音就近挂靠
+                                   //   （1对3/3对1），Δt > 32 严格 1:1 最近邻（落单不连）
+// 和弦连线配对（同一 MIDI式车道相邻演奏 tick 的和弦 A.keys → B.keys，均升序）：
+//   Δt ≤ SFX_CONNECT_NEAR_DT：最近邻 1:1 优先；数量不齐时落单音就近挂靠（可共享 = 1:3 / 3:1）；
+//   Δt > SFX_CONNECT_NEAR_DT：严格 1:1 最近邻，落单不连。返回 [[ka, kb], …]（端点可重复 = 挂靠）。
+function sfxChordPairs(ka, kb, near) {
+  const A = ka.slice().sort((x, y) => x - y);
+  const B = kb.slice().sort((x, y) => x - y);
+  const pairs = [];
+  const usedA = new Set(), usedB = new Set();
+  // 1:1 最近邻（A 升序贪心，B 未占用中取 |Δ| 最小、并列取低者）
+  for (let ai = 0; ai < A.length; ai++) {
+    let bi = -1;
+    for (let j = 0; j < B.length; j++) {
+      if (usedB.has(j)) continue;
+      if (bi < 0 || Math.abs(B[j] - A[ai]) < Math.abs(B[bi] - A[ai])) bi = j;
+    }
+    if (bi >= 0) { usedA.add(ai); usedB.add(bi); pairs.push([A[ai], B[bi]]); }
+  }
+  if (!near) return pairs;
+  // 落单 A → 就近挂靠 B 中最近一个（可共享 = 3:1）
+  for (let ai = 0; ai < A.length; ai++) {
+    if (usedA.has(ai)) continue;
+    let bj = 0;
+    for (let j = 1; j < B.length; j++) if (Math.abs(B[j] - A[ai]) < Math.abs(B[bj] - A[ai])) bj = j;
+    pairs.push([A[ai], B[bj]]);
+  }
+  // 落单 B → 就近挂靠 A 中最近一个（可共享 = 1:3）
+  for (let bj = 0; bj < B.length; bj++) {
+    if (usedB.has(bj)) continue;
+    let ai = 0;
+    for (let i = 1; i < A.length; i++) if (Math.abs(A[i] - B[bj]) < Math.abs(A[ai] - B[bj])) ai = i;
+    pairs.push([A[ai], B[bj]]);
+  }
+  return pairs;
+}
 // 归一化车道级连接模板：4 字段全合法才返回完整对象，否则 undefined（= 缺省默认）。
 //   color 须 4 个 0~1 数值；m 整数 ≥0（0 = 粒子立即消亡 = 用户显式关闭寿命）；alpha ≥0。
 function normConnectParams(p) {
@@ -682,6 +726,7 @@ function parseNBS(bytes) {
       // 部分 NBS 文件的音符可能引用超过 song_layers 的声部号（声部被删除后残留），
       // 动态扩展并用默认元数据（与 pynbs 行为一致：音符层号不校验）
       while (layers.length <= layer) layers.push({ name: '', lock: false, volume:100, panning:0, notes:new Map() });
+      // 同 tick 同层不可编码（NBS：layer_delta=0 是该 tick 结束标记，同 tick 内层号严格递增）→ 每 (层,tick) 至多 1 音
       layers[layer].notes.set(tick, { instrument, key, velocity, panning, pitch });
       noteCount++;
       if (noteCount > NBS_MAX_NOTES) fail(`音符数超过 ${NBS_MAX_NOTES} 上限，不像真实 NBS 文件（请确认文件来源）`);
@@ -936,7 +981,9 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
   // 每 tick 参考音符 → 轨道 0 该段主位底座放 CB；<tick>.mcfunction 行在此随放置进度汇总。
   const boundRefLayers = [];    // 单线式声道下标（按声部升序）
   const sfxEntries = new Map(); // tick → [{ kind: 'bound', li, key } | { kind: 'indep', li, key }]
-  const sfxEntriesByLi = new Map(); // li → [{ t, key }]（indep 条目 tick 升序，连接型相邻音符对用）
+  // lane → [{ t, keys }]（车道级演奏 tick 升序，keys = 该 tick 全部成员音符 key 升序，
+  //   NBS 格式每 (声道,tick) 至多 1 音 → 和弦 = 多成员跨声道同 tick；连接型相邻 tick 对 + 和弦配对用）
+  const sfxLaneEvents = new Map();    // chain 下标 → Map(tick → [key…])
   const sfxTickLines = new Map(); // tick → 命令行数组（放置循环内填充，供数据包导出复用）
   const refBoundWarned = new Set();
   if (refLayers && refLayers.size > 0) {
@@ -951,6 +998,12 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
         const laneTypes = chains.filter(c => c.isRefLane && c.layers.includes(li)).map(c => c.refLaneType);
         if (laneTypes.length > 0) type = laneTypes.includes('bound') ? 'bound' : 'independent';
       }
+      // 连接型车道级事件归属：该声道实际采用的类型对应的参考车道（与上方类型选型同规则：
+      //   分属多车道时 bound 胜出 → 找 bound 车道）；未在任何同类型参考车道内 → 不连
+      const evLaneIdx = (() => {
+        const ln = chains.find(c => c.isRefLane && c.refLaneType === type && c.layers.includes(li));
+        return ln ? chains.indexOf(ln) : -1;
+      })();
       for (const tick of layer.notes.keys()) {
         if (tick < 0 || tick >= nTicks) continue;
         if (!sfxEntries.has(tick)) sfxEntries.set(tick, []);
@@ -959,8 +1012,12 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
           sfxEntries.get(tick).push({ kind: 'bound', li, key: layer.notes.get(tick).key });
         } else {
           sfxEntries.get(tick).push({ kind: 'indep', li, key: layer.notes.get(tick).key });
-          if (!sfxEntriesByLi.has(li)) sfxEntriesByLi.set(li, []);
-          sfxEntriesByLi.get(li).push({ t: tick, key: layer.notes.get(tick).key });
+        }
+        if (evLaneIdx >= 0) {
+          if (!sfxLaneEvents.has(evLaneIdx)) sfxLaneEvents.set(evLaneIdx, new Map());
+          const ev = sfxLaneEvents.get(evLaneIdx);
+          if (!ev.has(tick)) ev.set(tick, []);
+          ev.get(tick).push(layer.notes.get(tick).key);
         }
       }
     }
@@ -1216,35 +1273,52 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
       for (const e of entries) if (e.kind === 'indep' && sfxLaneTriggerOn(e.li)) sfxStandaloneLine(t, e.key, e.li);
     }
   }
-  // --- ② 连接型：MIDI式参考轨道相邻音符对 A→B 线段（用户 2026-09-07 规格，见 sfxConnectCmd 注释） ---
-  // 按声道（li）独立连（单声道 = 一条轨道），仅当该声道的**所属 MIDI式车道**勾选连接型（lane.effects 含 'connect'，
-  //   缺省 = 全选）且该车道 effects 非空时生效；模板 = 该车道的 sfxParams.connect（缺省 SFX_CONNECT_DEFAULTS）。
-  // 行落在 t_A（该 tick 必有参考音符 → CB 已在），litematic 零改动（纯数据包函数行增量）。
-  // 单线式车道不产连接线：其粒子中心 = 虚拟盒位，与音高无关 → 相邻同声道音符 A≡B 恒成立（<0.05 自动跳过）。
-  const sfxConnectLaneOf = (li) => chains.find(c => c.isRefLane && c.refLaneType === 'independent' && c.layers.includes(li)) || null;
-  const sfxCenterOf = (li, key) => {   // 与 sfxStandaloneLine 同一公式（相对轨道 0 CB 的粒子中心偏移）
-    const st = indepStartOf(li);
-    return [0, st ? st.dy : 0, (st ? st.dz : 0) + (Math.max(0, Math.min(24, noteFromKey(key))) - 12) * sfxPitchStep];
-  };
-  for (const [li, entries] of sfxEntriesByLi) {
-    const lane = sfxConnectLaneOf(li);
-    if (!lane) continue;
-    const eff = lane.refLaneEffects;
-    if (eff && !eff.includes('connect')) continue;   // 显式取消勾选连接型 → 不连线
-    const cp = lane.refLaneConnect || SFX_CONNECT_DEFAULTS;
-    for (let i = 0; i + 1 < entries.length; i++) {
-      const A = entries[i], B = entries[i + 1];
-      const ca = sfxCenterOf(li, A.key), cb = sfxCenterOf(li, B.key);
-      const d = [cb[0] - ca[0], cb[1] - ca[1], cb[2] - ca[2]];
-      const L = Math.hypot(d[0], d[1], d[2]);
-      if (L < SFX_CONNECT_MIN_LEN) continue;   // A≈B（同音高等）：跳过，B 的触发环已标记
-      const dt = B.t - A.t;
-      const n0 = Math.ceil(L / SFX_CONNECT_POINT_GAP);
-      const cpt = Math.max(1, Math.ceil((n0 + 1) / (dt + 1)));
-      const P = (dt + 1) * cpt;                // 末点生于 t_A+⌊(P−1)/cpt⌋ = t_A+dt = t_B（无缝衔接）
-      if (!sfxTickLines.has(A.t)) sfxTickLines.set(A.t, []);
-      sfxTickLines.get(A.t).push(sfxConnectCmd(ca, d, L, P, cp.m, cp.alpha, cp));
-      stats.sfxConnectLines++;
+  // --- ② 连接型：参考车道「相邻演奏 tick 之间」线段（用户 2026-09-07/07c 规格，见 sfxConnectCmd 注释） ---
+  // 按**参考车道**连（车道级事件 = 该 tick 车道全部成员音符集合）；仅当车道勾选连接型
+  //   （lane.effects 含 'connect'，缺省 = 全选）时生效；模板 = 车道 sfxParams.connect。
+  //   · MIDI式：端点 = 两 tick 各音的粒子中心（基准 = 车道 start + 音高 Z 展开）；
+  //     和弦配对：Δt ≤ 32 → 1:1 最近邻 + 落单就近挂靠（1对3/3对1），Δt > 32 → 严格 1:1。
+  //   · 单线式：与音高无关 → 端点简并为车道中间槽位（主位），沿链 +X 方向连线（主链每 tick 恒 2 格）。
+  // 行落在 t_A：t_A 必有参考音符（事件来源）→ CB 已在，空 tick 回退天然不触；litematic 零改动（纯函数行增量）。
+  if (railChain) {
+    for (const [ci, tickMap] of sfxLaneEvents) {
+      const lane = chains[ci];
+      if (!lane || !lane.isRefLane) continue;
+      const eff = lane.refLaneEffects;
+      if (eff && !eff.includes('connect')) continue;   // 显式取消勾选连接型 → 不连线
+      const cp = lane.refLaneConnect || SFX_CONNECT_DEFAULTS;
+      const isBound = lane.refLaneType === 'bound';
+      const mid = isBound ? [0, (lane.yb + 1) - railChain.yb, lane.zc - railChain.zc] : null;
+      const st = (!isBound && lane.refLaneStart) || null;   // MIDI式中心基准（未拖过 = null → (0,0) 旧行为）
+      const events = [...tickMap.entries()].map(([t, keys]) => ({ t, keys: keys.slice().sort((a, b) => a - b) }))
+        .sort((a, b) => a.t - b.t);
+      const centerOf = (key) => [0, st ? st.dy : 0, (st ? st.dz : 0)
+        + (Math.max(0, Math.min(24, noteFromKey(key))) - 12) * sfxPitchStep];
+      for (let i = 0; i + 1 < events.length; i++) {
+        const A = events[i], B = events[i + 1];
+        const dt = B.t - A.t;
+        // 每对端点 (ca, cb) 推一条线段
+        const pushLine = (ca, cb) => {
+          const d = [cb[0] - ca[0], cb[1] - ca[1], cb[2] - ca[2]];
+          const L = Math.hypot(d[0], d[1], d[2]);
+          if (L < SFX_CONNECT_MIN_LEN) return;   // A≈B：跳过（B 的触发环已标记该点）
+          const n0 = Math.ceil(L / SFX_CONNECT_POINT_GAP);
+          const cpt = Math.max(1, Math.ceil((n0 + 1) / (dt + 1)));
+          const P = (dt + 1) * cpt;                // 末点生于 t_A+⌊(P−1)/cpt⌋ = t_A+dt = t_B（无缝衔接）
+          if (!sfxTickLines.has(A.t)) sfxTickLines.set(A.t, []);
+          sfxTickLines.get(A.t).push(sfxConnectCmd(ca, d, L, P, cp.m, cp.alpha, cp));
+          stats.sfxConnectLines++;
+        };
+        if (isBound) {
+          // 单线式：A 端点 = 中间槽位 (0, yMid, zMid)，B 端点沿 +X 平移 dt×2 格（每 tick 恒 2 格）
+          pushLine([0, mid[1], mid[2]], [dt * 2, mid[1], mid[2]]);
+        } else {
+          // MIDI式：和弦配对（sfxChordPairs，Δt ≤ 32 允许落单就近挂靠 1:3/3:1，否则严格 1:1）
+          for (const [ka, kb] of sfxChordPairs(A.keys, B.keys, dt <= SFX_CONNECT_NEAR_DT)) {
+            pushLine(centerOf(ka), centerOf(kb));
+          }
+        }
+      }
     }
   }
   // 空 tick 回退：该 tick 有参考音符但无任何粒子行（如单线式声道未分配车道）→ 无 function 文件可写，
@@ -2784,8 +2858,9 @@ function renderRefLaneSection() {
 // 粒子特效总览模块（独立 section，用户 2026-09-07 规划）：3 类框架展示 + 按参考车道勾选涉及的特效。
 //   ① 触发型（已实现）：由音符触发、参数由 1 个音符决定；勾选控制**本车道粒子行生成**
 //     （单线式 → 绑定行；MIDI式 → 独立行；空 tick 时 CB 回退雪块）
-//   ② 连接型（已实现，线段）：MIDI式参考轨道相邻音符对 A→B 画线段（tickpolarparameter 逐点生成，
-//     点距 ≤0.1 格，笔尖恰好 t_B 抵达 B）；勾选控制本车道 MIDI式成员是否连线；模板 = sfxParams.connect
+//   ② 连接型（已实现，线段）：参考车道相邻演奏 tick A→B 画线段（tickpolarparameter 逐点生成，
+//     点距 ≤0.1 格，笔尖恰好 t_B 抵达 B；MIDI式按粒子中心 + 和弦配对、单线式中间槽位沿链 X）；
+//     勾选控制本车道成员是否连线；模板 = sfxParams.connect
 //   ③ 背景型（规划占位）：按乐曲小节间隔激活；勾选仅存状态，暂未实现生成逻辑
 // 勾选存 lane.effects: ['trigger'|'connect'|'background']（缺省 = 全选，向后兼容旧存档），
 // buildLayout 经 refLanes 第 7 参读取；默认全选 → 产物与旧版逐位一致。
@@ -2822,9 +2897,11 @@ function renderSfxEffectList() {
     '当前效果条目：end_rod 螺旋展开（particleex polarparameter minecraft:end_rod：' +
     '20 个粒子、寿命 0.1s、半径 1、角度随 t 扫描的平面螺旋，坐标段由构建时按车道起点/槽位/音高求解替换）。');
   card('② 连接型', 'on',
-    '由音符触发，参数由 2 个音符决定：MIDI式参考轨道的相邻音符 A→B 画一条线段（tickpolarparameter 逐点生成，点距 ≤0.1 格），' +
-    '生成节奏按 A、B 的 tick 差求解——笔尖恰好在 B 的触发型/音符盒激活那一 tick 抵达 B，视觉上无缝衔接。' +
-    '仅影响本车道的 MIDI式成员（单线式粒子中心与音高无关、相邻音符恒同点，自动无连线）；粒子/颜色/寿命 m/漂移在下方车道展开面板调。');
+    '由音符触发，参数由 2 个音符决定：连接参考车道**相邻演奏 tick**（t_A < t_B，按车道连；和弦 = 多成员同 tick 齐响，按 ≤32 tick 规则配对连线）——' +
+    'MIDI式按各音粒子中心（音高 Z 展开）画 A→B 线段，同 tick 和弦配对（间隔 ≤32 tick 时 1:1 最近邻 + 落单音就近挂靠，否则严格 1:1）；' +
+    '单线式与音高无关 → 端点简并为车道中间槽位、沿链 X 方向连线（每 tick 2 格）。' +
+    'tickpolarparameter 逐点生成（点距 ≤0.1 格），笔尖恰好在 B 的触发型/音符盒激活那一 tick 抵达 B，无缝衔接。' +
+    '粒子/颜色/寿命 m/漂移在下方车道展开面板调。');
   card('③ 背景型', 'todo',
     '按一定乐曲小节间隔激活（与具体音符无关，按小节/拍位周期性触发，用于铺底氛围）。' +
     '规划占位，暂未实现生成逻辑（下方勾选仅存状态）。');
@@ -2844,7 +2921,7 @@ function renderSfxEffectLanes() {
   }
   const hint = document.createElement('div');
   hint.className = 'hint';
-  hint.textContent = '按参考车道勾选涉及的特效（默认全选）：「触发型」控制该车道粒子行是否生成（单线式 → 绑定行、MIDI式 → 独立行，空 tick 时 CB 回退雪块）；「连接型」控制该车道 MIDI式成员的 A→B 线段是否生成（单线式成员恒无连线）；背景型暂未实现，勾选仅存状态。点行首 ▼ 展开该车道的模板参数编辑（仅影响本车道）';
+  hint.textContent = '按参考车道勾选涉及的特效（默认全选）：「触发型」控制该车道粒子行是否生成（单线式 → 绑定行、MIDI式 → 独立行，空 tick 时 CB 回退雪块）；「连接型」控制该车道成员相邻演奏 tick 之间的线段是否生成（MIDI式按音高中心连线、单线式沿链 X 方向连线）；背景型暂未实现，勾选仅存状态。点行首 ▼ 展开该车道的模板参数编辑（仅影响本车道）';
   box.appendChild(hint);
   const table = document.createElement('table');
   table.className = 'sfx-effect-table';
@@ -2898,7 +2975,7 @@ function renderSfxEffectLanes() {
       cb.title = t.key === 'trigger'
         ? '触发型：控制本车道粒子行是否生成（单线式 → 绑定行；MIDI式 → 独立行；空 tick 时 CB 回退雪块）'
         : t.key === 'connect'
-        ? '连接型：控制本车道 MIDI式成员相邻音符 A→B 线段是否生成（单线式恒无连线）'
+        ? '连接型：控制本车道成员相邻演奏 tick 之间的线段是否生成（MIDI式按音高中心连线、单线式沿链 X 方向连线）'
         : `${t.name}：规划占位，暂未实现生成逻辑（勾选仅存状态）`;
       cb.addEventListener('change', onSfxEffectToggle);
       td.appendChild(cb);
@@ -2974,7 +3051,7 @@ function renderSfxLaneParams(lane, li) {
   box.appendChild(h2);
   const tip2 = document.createElement('div');
   tip2.className = 'hint';
-  tip2.textContent = '仅影响本车道的**MIDI式成员**：相邻音符 A→B 画一条线段（点距 ≤0.1 格），笔尖恰好在 B 的触发型/音符盒激活那一 tick 抵达 B（无缝衔接）。方向/长度/生成节奏均由音符数据构建时计算；此处调视觉：粒子、颜色（R G B A 四值 0~1）、m 寿命（每粒子自出生起存活的 tick，≥ Δt = 到达后整线停留再消融，< Δt = 彗星尾）、漂移 α（整线朝 B 漂移速度系数，0 = 静止）。任一项留空 → 该字段回默认。';
+  tip2.textContent = '仅影响本车道的成员：相邻演奏 tick A→B 画一条线段（点距 ≤0.1 格），笔尖恰好在 B 的触发型/音符盒激活那一 tick 抵达 B（无缝衔接）。MIDI式按各音粒子中心（音高 Z）连线，同 tick 和弦（多成员齐响）配对：间隔 ≤32 tick 时 1:1 最近邻 + 落单音就近挂靠（1对3/3对1），否则严格 1:1；单线式端点简并为中间槽位、沿链 X 方向连线（每 tick 2 格）。方向/长度/生成节奏均由音符数据构建时计算；此处调视觉：粒子、颜色（R G B A 四值 0~1）、m 寿命（每粒子自出生起存活的 tick，≥ Δt = 到达后整线停留再消融，< Δt = 彗星尾）、漂移 α（整线朝 B 漂移速度系数，0 = 静止）。任一项留空 → 该字段回默认。';
   box.appendChild(tip2);
   const conn = normConnectParams(lane.sfxParams ? lane.sfxParams.connect : null) || SFX_CONNECT_DEFAULTS;
   const rowConn = document.createElement('div');
@@ -3976,7 +4053,7 @@ window.__NBS2SCHEMATIC = {
   buildLayout, buildPalette, buildLitematic,
   SFX_NAMESPACE, SFX_PARTICLE_CMD, SFX_CB_STATE, SFX_PACKFORMAT, sfxPackFormat, sfxParticleCmd,
   SFX_PARTICLE_FIELDS, sfxParticleCmdFromParts, normSfxParams, sfxParamsPayload,
-  SFX_CONNECT_DEFAULTS, SFX_CONNECT_POINT_GAP, SFX_CONNECT_MIN_LEN, normConnectParams, sfxNum, sfxConnectCmd,
+  SFX_CONNECT_DEFAULTS, SFX_CONNECT_POINT_GAP, SFX_CONNECT_MIN_LEN, SFX_CONNECT_NEAR_DT, normConnectParams, sfxNum, sfxConnectCmd, sfxChordPairs,
   SFX_EFFECT_TYPES, renderSfxEffectList, renderSfxEffectLanes, onSfxEffectToggle,
   buildSfxPackMcmeta, buildSfxFunctions, buildZip, zipCrc32, buildSfxDatapackZip,
   TARGET_VERSIONS, targetEntry, DEFAULT_TARGET_MC,

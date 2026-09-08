@@ -1302,7 +1302,19 @@ try {
 //   尺寸只由真实链决定）
 {
   const { SFX_NAMESPACE, SFX_CB_STATE, sfxParticleCmd, sfxParticleCmdFromParts,
-    SFX_CONNECT_DEFAULTS, SFX_CONNECT_POINT_GAP, sfxConnectCmd } = context.window.__NBS2SCHEMATIC;
+    SFX_CONNECT_DEFAULTS, SFX_CONNECT_POINT_GAP, SFX_CONNECT_NEAR_DT, sfxConnectCmd, sfxChordPairs } = context.window.__NBS2SCHEMATIC;
+  // 单线式连接线（2026-09-07c「连接前后节奏」）：端点 = 车道虚拟主位（中间槽位），沿链 +X（每 tick 2 格）。
+  //   A/D/E2/H/H2 用 refLanes start {dz:6,dy:1} → mid=(0,2,6)；F 用 {dz:3,dy:0} → mid=(0,1,3)
+  const boundConn = (my, mz, dt) => {
+    const L = dt * 2;
+    const n0 = Math.ceil(L / SFX_CONNECT_POINT_GAP);
+    const cpt = Math.max(1, Math.ceil((n0 + 1) / (dt + 1)));
+    const P = (dt + 1) * cpt;
+    return sfxConnectCmd([0, my, mz], [L, 0, 0], L, P,
+      SFX_CONNECT_DEFAULTS.m, SFX_CONNECT_DEFAULTS.alpha, SFX_CONNECT_DEFAULTS);
+  };
+  const BC_26 = boundConn(2, 6, 2);   // (0,2,6) 沿 X 4 格、P=42（与失败样本交叉核对：dis=4*t 0.024390244 42）
+  const BC_13 = boundConn(1, 3, 2);
   // layer 0：tick0 key45（音高 12）、tick2 key50（音高 17）
   const nbs = makeNbs({ tempoTps: 20, songLength: 8, layers: 1, noteSpecs: [
     { tick: 0, layer: 0, instrument: 0, key: 45 },
@@ -1344,15 +1356,16 @@ try {
     if (cellA(1, 1, 4) !== 'minecraft:note_block[instrument=harp,note=12,powered=false]') {
       console.log(`FAIL 音轨车道盒缺失/错位 (1,1,4)=${cellA(1, 1, 4)}`); ok = false;
     }
-    // 绑定行 = 虚拟槽位 − 轨道 0 CB：(0, 2, 6)；音轨车道重叠不再产行（无盒可锚）
+    // 绑定行 = 虚拟槽位 − 轨道 0 CB：(0, 2, 6)；音轨车道重叠不再产行（无盒可锚）；
+    //   2026-09-07c 起单线式连线恒产生（缺省全选）：tick0 追加沿链 X 的 A→B 线段（t0→t2，Δt=2 → X 移 4 格）
     const P0R = sfxParticleCmd(0, 2, 6);
     const tlbA = gA.sfxTickList;
-    if (tlbA.length !== 2 || JSON.stringify(tlbA[0].lines) !== JSON.stringify([P0R])
+    if (tlbA.length !== 2 || JSON.stringify(tlbA[0].lines) !== JSON.stringify([P0R, BC_26])
       || JSON.stringify(tlbA[1].lines) !== JSON.stringify([P0R])) {
-      console.log(`FAIL 参考车道虚拟绑定行 ${JSON.stringify(tlbA)}（期望 tick 0/2 各 1 行 ${P0R.slice(0, 40)}…）`); ok = false;
-    } else if (statA.sfxBoundNotes !== 2 || statA.sfxStandaloneNotes !== 0 || statA.commandBlocks !== 2) {
-      console.log(`FAIL 参考车道统计 bound=${statA.sfxBoundNotes} indep=${statA.sfxStandaloneNotes} CB=${statA.commandBlocks}（期望 2/0/2）`); ok = false;
-    } else console.log('PASS 单线式锚定参考车道虚拟槽位：dy=2（dy=1 抬升+1 层差）、dz=6 按参考车道起点求解');
+      console.log(`FAIL 参考车道虚拟绑定行 ${JSON.stringify(tlbA)}（期望 tick0 [绑定行, 连接线] / tick2 [绑定行]）`); ok = false;
+    } else if (statA.sfxBoundNotes !== 2 || statA.sfxStandaloneNotes !== 0 || statA.sfxConnectLines !== 1 || statA.commandBlocks !== 2) {
+      console.log(`FAIL 参考车道统计 bound=${statA.sfxBoundNotes} indep=${statA.sfxStandaloneNotes} conn=${statA.sfxConnectLines} CB=${statA.commandBlocks}（期望 2/0/1/2）`); ok = false;
+    } else console.log('PASS 单线式锚定参考车道虚拟槽位：dy=2（dy=1 抬升+1 层差）、dz=6 按参考车道起点求解（+沿链 X 连接线）');
     // B) 参考车道池为空（refLanes=[]，refMode 生效）：绑定层无锚点 → 粒子全跳 + 空 tick 回退
     const rB = runE2E(tmpFile, {
       lane0: { dz: 0, dy: 0 }, refLayers: REF,
@@ -1438,14 +1451,15 @@ try {
     ok = verifyE2E('参考车道池·车道级单线式', rD) && ok;
     const statD = rD.result.stats;
     const tlbD = rD.result.sfxTickList;
-    if (statD.sfxBoundNotes !== 2 || statD.sfxStandaloneNotes !== 0
-      || tlbD.length !== 2 || JSON.stringify(tlbD[0].lines) !== JSON.stringify([P0R])) {
-      console.log(`FAIL 车道级单线式：bound=${statD.sfxBoundNotes} indep=${statD.sfxStandaloneNotes} 行=${JSON.stringify(tlbD)}（期望 2/0、各 1 行 ${P0R.slice(0, 40)}…）`); ok = false;
+    if (statD.sfxBoundNotes !== 2 || statD.sfxStandaloneNotes !== 0 || statD.sfxConnectLines !== 1
+      || tlbD.length !== 2 || JSON.stringify(tlbD[0].lines) !== JSON.stringify([P0R, BC_26])
+      || JSON.stringify(tlbD[1].lines) !== JSON.stringify([P0R])) {
+      console.log(`FAIL 车道级单线式：bound=${statD.sfxBoundNotes} indep=${statD.sfxStandaloneNotes} conn=${statD.sfxConnectLines} 行=${JSON.stringify(tlbD)}（期望 2/0/1、tick0 [绑定行, 连接线] / tick2 [绑定行]）`); ok = false;
     } else {
-      console.log('PASS 类型选型按车道：车道 type=bound 时声道级MIDI式被覆盖、粒子锚定参考车道虚拟槽位');
+      console.log('PASS 类型选型按车道：车道 type=bound 时声道级MIDI式被覆盖、粒子锚定参考车道虚拟槽位（+沿链 X 连接线）');
     }
     // E) 单线式车道 + 成员 sound=false（2026-09-07 起可自由取消发声）：
-    //    音轨车道无盒（零发声）但粒子行**恒产生**（参考意义，按虚拟槽位）
+    //    音轨车道无盒（零发声）但粒子行**恒产生**（参考意义，按虚拟槽位）；连接线同理恒产生
     const rE2 = runE2E(tmpFile, {
       lane0: { dz: 0, dy: 0 },
       refLayers: new Map([[0, { type: 'bound', sound: false }]]),
@@ -1455,11 +1469,12 @@ try {
     const statE2 = rE2.result.stats;
     const tlbE2 = rE2.result.sfxTickList;
     if (statE2.noteBlocks !== 0 || statE2.sfxBoundNotes !== 2 || statE2.sfxStandaloneNotes !== 0
-      || statE2.commandBlocks !== 2 || tlbE2.length !== 2
-      || JSON.stringify(tlbE2[0].lines) !== JSON.stringify([P0R])) {
-      console.log(`FAIL 绑定车道 sound=false 成员：盒=${statE2.noteBlocks} bound=${statE2.sfxBoundNotes} CB=${statE2.commandBlocks}（期望 0 盒、2 绑定行、2 CB——粒子恒产生）`); ok = false;
+      || statE2.sfxConnectLines !== 1 || statE2.commandBlocks !== 2 || tlbE2.length !== 2
+      || JSON.stringify(tlbE2[0].lines) !== JSON.stringify([P0R, BC_26])
+      || JSON.stringify(tlbE2[1].lines) !== JSON.stringify([P0R])) {
+      console.log(`FAIL 绑定车道 sound=false 成员：盒=${statE2.noteBlocks} bound=${statE2.sfxBoundNotes} conn=${statE2.sfxConnectLines} CB=${statE2.commandBlocks}（期望 0 盒、2 绑定行、1 连接线、2 CB——粒子恒产生）`); ok = false;
     } else {
-      console.log('PASS 单线式取消发声：普通轨道零盒（纯参考），粒子行恒产生（虚拟槽位锚定）');
+      console.log('PASS 单线式取消发声：普通轨道零盒（纯参考），粒子行+连接线恒产生（虚拟槽位锚定）');
     }
     // F) 参考车道与普通车道同起点（物理并排）：生成不报错（虚拟化后参考车道不参与碰撞；
     //    网格只含普通车道结构，参考车道虚拟起点不产方块）
@@ -1471,22 +1486,27 @@ try {
     const statF = rF.result.stats;
     const tlbF = rF.result.sfxTickList;
     if (statF.noteBlocks !== 2 || tlbF.length !== 2
-      || JSON.stringify(tlbF[0].lines) !== JSON.stringify([sfxParticleCmd(0, 1, 3)])) {
-      console.log(`FAIL 参考/普通同起点：盒=${statF.noteBlocks} 行=${JSON.stringify(tlbF)}（期望 2 盒、绑定行按虚拟槽位 (0,1,3)）`); ok = false;
-    } else console.log('PASS 参考车道与普通车道同起点：生成正常（零结构、不参与碰撞、粒子按虚拟槽位）');
-    // G) 车道级特效勾选：refLanes[0].effects 不含 'trigger' → 绑定行不生成（空 tick 回退），
-    //    缺省（无 effects 字段）= 全选（场景 A 已覆盖）
+      || JSON.stringify(tlbF[0].lines) !== JSON.stringify([sfxParticleCmd(0, 1, 3), BC_13])
+      || JSON.stringify(tlbF[1].lines) !== JSON.stringify([sfxParticleCmd(0, 1, 3)])
+      || statF.sfxConnectLines !== 1) {
+      console.log(`FAIL 参考/普通同起点：盒=${statF.noteBlocks} conn=${statF.sfxConnectLines} 行=${JSON.stringify(tlbF)}（期望 2 盒、1 连接线、绑定行按虚拟槽位 (0,1,3) + 沿链 X 连线）`); ok = false;
+    } else console.log('PASS 参考车道与普通车道同起点：生成正常（零结构、不参与碰撞、粒子按虚拟槽位 + 沿链 X 连线）');
+    // G) 车道级特效勾选：refLanes[0].effects 不含 'trigger' → 绑定行不生成；但**连接型勾选（含 connect）
+    //    仍产单线式连接线**（连线自持 tA 的 function/CB）→ tick0 [连接线]、tick2 无行 → 空 tick 回退
+    //    （缺省（无 effects 字段）= 全选，场景 A 已覆盖）
     const rG = runE2E(tmpFile, {
       lane0: { dz: 0, dy: 0 }, refLayers: REF,
       groups: [{ layers: [0] }], groupStarts: [{ dz: 3, dy: 0 }],
       refLanes: [{ tracks: [0], type: 'bound', start: { dz: 6, dy: 1 }, effects: ['connect'] }],
     });
     const statG = rG.result.stats;
-    if (statG.noteBlocks !== 2 || statG.sfxBoundNotes !== 0 || statG.commandBlocks !== 0
-      || statG.sfxEmptyTicks !== 2 || rG.result.sfxTickList.length !== 0) {
-      console.log(`FAIL 触发型勾选关闭：盒=${statG.noteBlocks} bound=${statG.sfxBoundNotes} CB=${statG.commandBlocks} empty=${statG.sfxEmptyTicks}（期望 2/0/0/2，绑定行不生成）`); ok = false;
+    const tlbG = rG.result.sfxTickList;
+    if (statG.noteBlocks !== 2 || statG.sfxBoundNotes !== 0 || statG.sfxConnectLines !== 1
+      || statG.commandBlocks !== 1 || statG.sfxEmptyTicks !== 1 || tlbG.length !== 1
+      || JSON.stringify(tlbG[0].lines) !== JSON.stringify([BC_26])) {
+      console.log(`FAIL 触发型勾选关闭：盒=${statG.noteBlocks} bound=${statG.sfxBoundNotes} conn=${statG.sfxConnectLines} CB=${statG.commandBlocks} empty=${statG.sfxEmptyTicks} 行=${JSON.stringify(tlbG)}（期望 2/0/1/1/1，tick0 [连接线]、tick2 空 tick 回退）`); ok = false;
     } else {
-      console.log('PASS 触发型勾选关闭（effects 不含 trigger）：绑定行不生成 + 空 tick 回退（音轨车道 2 盒不受影响）');
+      console.log('PASS 触发型勾选关闭（effects 不含 trigger）：绑定行不生成、单线式连接线仍产（自持 tA 的 function/CB）');
     }
     // H) 车道级触发模板（lane.sfxParams 结构化 5 字段）：绑定行按本车道模板生成（命令头/尾参逐字、
     //    坐标段仍按虚拟槽位替换）；独立行不受车道模板影响（属声道级，仍用默认命令）
@@ -1500,21 +1520,23 @@ try {
     });
     const statH = rH.result.stats;
     const tlbH = rH.result.sfxTickList;
-    if (statH.noteBlocks !== 2 || statH.sfxBoundNotes !== 2 || tlbH.length !== 2
-      || JSON.stringify(tlbH[0].lines) !== JSON.stringify([lineH])
+    if (statH.noteBlocks !== 2 || statH.sfxBoundNotes !== 2 || statH.sfxConnectLines !== 1 || tlbH.length !== 2
+      || JSON.stringify(tlbH[0].lines) !== JSON.stringify([lineH, BC_26])
       || JSON.stringify(tlbH[1].lines) !== JSON.stringify([lineH])) {
-      console.log(`FAIL 车道级触发模板：bound=${statH.sfxBoundNotes} 行=${JSON.stringify(tlbH)}（期望 2 行 = 自定义模板 + 虚拟槽位 (0,2,6)）`); ok = false;
-    } else console.log('PASS 车道级触发模板：绑定行按本车道 5 字段模板生成（坐标段仍按虚拟槽位替换）');
+      console.log(`FAIL 车道级触发模板：bound=${statH.sfxBoundNotes} conn=${statH.sfxConnectLines} 行=${JSON.stringify(tlbH)}（期望 tick0 [自定义模板行, 连接线] / tick2 [自定义模板行]，坐标段仍按虚拟槽位替换）`); ok = false;
+    } else console.log('PASS 车道级触发模板：绑定行按本车道 5 字段模板生成（连接线不受触发模板影响，仍默认命令）');
     // H2) 模板残缺（5 字段不全）→ normSfxParams 判无效 → 回退默认命令（产物与缺省逐位一致）
     const rH2 = runE2E(tmpFile, {
       lane0: { dz: 0, dy: 0 }, refLayers: REF,
       groups: [{ layers: [0] }], groupStarts: [{ dz: 3, dy: 0 }],
       refLanes: [{ tracks: [0], type: 'bound', start: { dz: 6, dy: 1 }, sfxParams: { head: 'x', tail: 'y' } }],
     });
-    if (JSON.stringify(rH2.result.sfxTickList[0].lines) !== JSON.stringify([sfxParticleCmd(0, 2, 6)])) {
-      console.log(`FAIL 模板残缺回退默认：${JSON.stringify(rH2.result.sfxTickList[0].lines)}（期望默认命令 (0,2,6)）`); ok = false;
-    } else console.log('PASS 模板残缺（字段不全）：回退默认命令，产物与缺省逐位一致');
-    // H3) 命令头含 ~ 占位（用户把坐标段误留在头里）→ 本车道绑定行不生成 + 告警一次（避免空 function 方块）
+    if (JSON.stringify(rH2.result.sfxTickList[0].lines) !== JSON.stringify([sfxParticleCmd(0, 2, 6), BC_26])
+      || JSON.stringify(rH2.result.sfxTickList[1].lines) !== JSON.stringify([sfxParticleCmd(0, 2, 6)])) {
+      console.log(`FAIL 模板残缺回退默认：${JSON.stringify(rH2.result.sfxTickList[0].lines)}（期望默认命令 (0,2,6) + 连接线）`); ok = false;
+    } else console.log('PASS 模板残缺（字段不全）：回退默认命令，产物与缺省逐位一致（连接线在位）');
+    // H3) 命令头含 ~ 占位（用户把坐标段误留在头里）→ 本车道绑定行不生成 + 告警一次（避免空 function 方块）；
+    //    连接型独立于触发模板，连接线仍产（自持 tA 的 function/CB，tick2 无行 → 空 tick 回退）
     const rH3 = runE2E(tmpFile, {
       lane0: { dz: 0, dy: 0 }, refLayers: REF,
       groups: [{ layers: [0] }], groupStarts: [{ dz: 3, dy: 0 }],
@@ -1522,10 +1544,12 @@ try {
         sfxParams: { head: 'particleex custom minecraft:end_rod ~ ~2 ~', x: '~', y: '~', z: '~', tail: '1 0.1 20 null' } }],
     });
     const statH3 = rH3.result.stats;
-    if (statH3.sfxBoundNotes !== 0 || rH3.result.sfxTickList.length !== 0 || statH3.sfxEmptyTicks !== 2
+    const tlbH3 = rH3.result.sfxTickList;
+    if (statH3.sfxBoundNotes !== 0 || statH3.sfxConnectLines !== 1 || tlbH3.length !== 1
+      || JSON.stringify(tlbH3[0].lines) !== JSON.stringify([BC_26]) || statH3.sfxEmptyTicks !== 1
       || !rH3.result.stats.discardedDetails.some(s => s.includes('命令头含 ~ 占位'))) {
-      console.log(`FAIL 模板头含~：bound=${statH3.sfxBoundNotes} empty=${statH3.sfxEmptyTicks} 告警=${JSON.stringify(rH3.result.stats.discardedDetails)}`); ok = false;
-    } else console.log('PASS 模板命令头含 ~ 占位：绑定行跳过 + 空 tick 回退 + 一次性告警');
+      console.log(`FAIL 模板头含~：bound=${statH3.sfxBoundNotes} conn=${statH3.sfxConnectLines} empty=${statH3.sfxEmptyTicks} 行=${JSON.stringify(tlbH3)} 告警=${JSON.stringify(rH3.result.stats.discardedDetails)}（期望 bound=0、conn=1、tick0 [连接线]、tick2 空 tick 回退）`); ok = false;
+    } else console.log('PASS 模板命令头含 ~ 占位：绑定行跳过 + 告警，连接线独立照产（自持 tA 的 function/CB）');
     // K) 连接型（2026-09-07 用户定规格：MIDI式相邻音符对 A→B 线段，tB 时刻笔尖恰好抵达 B）：
     //    K1 缺省全选（触发+连接）：独立行 + 连接线；K2 取消连接（effects 仅 trigger）→ 无连接线、
     //    网格与 K1 逐位一致（连接线零 litematic 改动）；K3 仅连接（effects 仅 connect）→ 无独立行、
@@ -1614,6 +1638,76 @@ try {
         console.log(`FAIL 连接线短Δt：indep=${statK5.sfxStandaloneNotes} conn=${statK5.sfxConnectLines} 行=${JSON.stringify(tlbK5)}（期望仅 (2,6) 一对连线、行落 t_A=2：L=5、Δt=6、P=55、step=1/54；(0,2) 同音高 A≡B 跳过）`); ok = false;
       } else {
         console.log('PASS 连接线短Δt：cpt=⌈(N0+1)/(Δt+1)⌉ 量化点距 ≤0.1；L<0.05（A≡B）自动跳过');
+      }
+      // K6 和弦连线（2026-09-07c）：sfxChordPairs 单元断言 + 近/远距端到端
+      {
+        // 单元：近距 3→1 / 1→3 / 远距严格 1:1
+        const p1 = sfxChordPairs([44, 50], [45, 50, 55], true);
+        const p2 = sfxChordPairs([45], [45, 48, 52], true);
+        const p3 = sfxChordPairs([45], [45, 48, 52], false);
+        const p4 = sfxChordPairs([44, 50, 55], [45], true);
+        const p5 = sfxChordPairs([44, 50, 55], [45], false);
+        if (JSON.stringify(p1) !== JSON.stringify([[44, 45], [50, 50], [50, 55]])
+          || JSON.stringify(p2) !== JSON.stringify([[45, 45], [45, 48], [45, 52]])
+          || JSON.stringify(p3) !== JSON.stringify([[45, 45]])
+          || JSON.stringify(p4) !== JSON.stringify([[44, 45], [50, 45], [55, 45]])
+          || JSON.stringify(p5) !== JSON.stringify([[44, 45]])) {
+          console.log(`FAIL sfxChordPairs 单元：p1=${JSON.stringify(p1)} p2=${JSON.stringify(p2)} p3=${JSON.stringify(p3)} p4=${JSON.stringify(p4)} p5=${JSON.stringify(p5)}`); ok = false;
+        } else console.log('PASS sfxChordPairs 单元：近距 1:1+落单挂靠（1:3/3:1）、远距严格 1:1（落单不连）');
+        // K6a 近距 Δt=4：MIDI式车道 [layer0, layer1, layer2]；
+        //   A t0 = [44(L0), 50(L1)] → B t4 = [45(L0), 50(L1), 55(L2)]（NBS 每 (声道,tick) 至多 1 音 →
+        //   和弦 = 多成员跨声道同 tick）：1:1 (44→45,L=1)、(50→50,L=0 跳过)、落单 B=55 挂靠 A=50（L=5，1:3）
+        //   → 2 条线；独立行和弦每音一行（行序 = 声部升序，连接线整体在后）
+        const nbsK6a = makeNbs({ tempoTps: 20, songLength: 8, layers: 3, noteSpecs: [
+          { tick: 0, layer: 0, instrument: 0, key: 44 },
+          { tick: 0, layer: 1, instrument: 0, key: 50 },
+          { tick: 4, layer: 0, instrument: 0, key: 45 },
+          { tick: 4, layer: 1, instrument: 0, key: 50 },
+          { tick: 4, layer: 2, instrument: 0, key: 55 },
+        ]});
+        const tmpK6a = 'synth_chord_near.nbs';
+        writeFileSync(path.join(__dirname, tmpK6a), nbsK6a);
+        const refK6 = new Map([[0, { type: 'independent', sound: true }],
+          [1, { type: 'independent', sound: true }], [2, { type: 'independent', sound: true }]]);
+        const rK6a = runE2E(tmpK6a, { ...k1Opts, refLayers: refK6, refLanes: [{ tracks: [0, 1, 2], start: { dz: 0, dy: 0 } }] });
+        ok = verifyE2E('参考车道池·和弦连线近距', rK6a) && ok;
+        const statK6a = rK6a.result.stats;
+        const tlbK6a = rK6a.result.sfxTickList;
+        // 独立行：t0 I(44)=(0,0,-1)、I(50)=(0,0,5)；t4 I(45)=(0,0,0)、I(50)=(0,0,5)、I(55)=(0,0,10)
+        const I24 = (n) => sfxParticleCmd(0, 0, n);
+        const expK6a1 = sfxConnectCmd([0, 0, -1], [0, 0, 1], 1, 15,
+          SFX_CONNECT_DEFAULTS.m, SFX_CONNECT_DEFAULTS.alpha, SFX_CONNECT_DEFAULTS); // (44→45) L=1 Δt=4 → N0=10 cpt=3 P=15
+        const expK6a2 = sfxConnectCmd([0, 0, 5], [0, 0, 10], 5, 55,
+          SFX_CONNECT_DEFAULTS.m, SFX_CONNECT_DEFAULTS.alpha, SFX_CONNECT_DEFAULTS); // (50→55 挂靠) L=5 Δt=4 → N0=50 cpt=11 P=55
+        if (statK6a.sfxStandaloneNotes !== 5 || statK6a.sfxConnectLines !== 2
+          || JSON.stringify(tlbK6a[0].lines) !== JSON.stringify([I24(-1), I24(5), expK6a1, expK6a2])
+          || JSON.stringify(tlbK6a[1].lines) !== JSON.stringify([I24(0), I24(5), I24(10)])) {
+          console.log(`FAIL 和弦连线近距：indep=${statK6a.sfxStandaloneNotes} conn=${statK6a.sfxConnectLines} 行=${JSON.stringify(tlbK6a)}（期望 t0 [I(44),I(50),线1,线2] / t4 [I(45),I(50),I(55)]；(50→50) L=0 跳过）`); ok = false;
+        } else {
+          console.log('PASS 和弦连线近距（Δt≤32）：1:1 最近邻 + 落单音就近挂靠（1:3）、L=0 对跳过；和弦每音独立粒子行');
+        }
+        // K6b 远距 Δt=40：MIDI式车道 [layer0, layer1, layer2]；
+        //   A t0 = [45(L0)] → B t40 = [45(L0), 48(L1), 52(L2)]：严格 1:1 仅 (45→45,L=0 跳过)
+        //   → 0 条线（远距不挂靠、落单不连）
+        const nbsK6b = makeNbs({ tempoTps: 20, songLength: 48, layers: 3, noteSpecs: [
+          { tick: 0, layer: 0, instrument: 0, key: 45 },
+          { tick: 40, layer: 0, instrument: 0, key: 45 },
+          { tick: 40, layer: 1, instrument: 0, key: 48 },
+          { tick: 40, layer: 2, instrument: 0, key: 52 },
+        ]});
+        const tmpK6b = 'synth_chord_far.nbs';
+        writeFileSync(path.join(__dirname, tmpK6b), nbsK6b);
+        const rK6b = runE2E(tmpK6b, { ...k1Opts, refLayers: refK6, refLanes: [{ tracks: [0, 1, 2], start: { dz: 0, dy: 0 } }] });
+        ok = verifyE2E('参考车道池·和弦连线远距', rK6b) && ok;
+        const statK6b = rK6b.result.stats;
+        const tlbK6b = rK6b.result.sfxTickList;
+        if (statK6b.sfxStandaloneNotes !== 4 || statK6b.sfxConnectLines !== 0
+          || JSON.stringify(tlbK6b[0].lines) !== JSON.stringify([I24(0)])
+          || JSON.stringify(tlbK6b[1].lines) !== JSON.stringify([I24(0), I24(3), I24(7)])) {
+          console.log(`FAIL 和弦连线远距：indep=${statK6b.sfxStandaloneNotes} conn=${statK6b.sfxConnectLines} 行=${JSON.stringify(tlbK6b)}（期望 conn=0：Δt=40>32 严格 1:1、(45→45) L=0 跳过、落单不连）`); ok = false;
+        } else {
+          console.log('PASS 和弦连线远距（Δt>32）：严格 1:1、落单音不连（0 条线）');
+        }
       }
     }
   } catch (e) {
