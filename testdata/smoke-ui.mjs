@@ -912,7 +912,7 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
   st.refLanes[1].type = 'bound';
   dropToRefLane(i2, 1);   // 重复拖入同一车道
   check(JSON.stringify(st.refLanes[1].tracks) === JSON.stringify([i0, i2, i2]),
-    '拖入：重复拖入同一车道 = 占多个粒子槽位');
+    '拖入：重复拖入同一车道 = 同 tick 多成员齐响（触发粒子只取主位）');
   check(JSON.stringify(st.refLayers.get(i2)) === '{"type":"bound","sound":true}',
     '拖入：并入单线式车道 → 成员 refLayers 类型跟随车道（bound，sound 保持原值）');
   // 2026-09-07 虚拟化：单线式不再强制发声——先取消 sound 再重拖 → 类型跟随、sound 保持 false

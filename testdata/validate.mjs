@@ -1550,6 +1550,31 @@ try {
       || !rH3.result.stats.discardedDetails.some(s => s.includes('命令头含 ~ 占位'))) {
       console.log(`FAIL 模板头含~：bound=${statH3.sfxBoundNotes} conn=${statH3.sfxConnectLines} empty=${statH3.sfxEmptyTicks} 行=${JSON.stringify(tlbH3)} 告警=${JSON.stringify(rH3.result.stats.discardedDetails)}（期望 bound=0、conn=1、tick0 [连接线]、tick2 空 tick 回退）`); ok = false;
     } else console.log('PASS 模板命令头含 ~ 占位：绑定行跳过 + 告警，连接线独立照产（自持 tA 的 function/CB）');
+    // I) 触发粒子只取主位（2026-09-07d 用户定）：bound 车道 2 成员同 tick 齐响 → 仅主位 1 行（不展开第2/3位）；
+    //    车道级演奏 tick 序列不变 → 连接线照常（tick0→tick2，BC_26）
+    const nbsI = makeNbs({ tempoTps: 20, songLength: 8, layers: 2, noteSpecs: [
+      { tick: 0, layer: 0, instrument: 0, key: 45 },
+      { tick: 0, layer: 1, instrument: 0, key: 50 },
+      { tick: 2, layer: 1, instrument: 0, key: 45 },
+    ]});
+    const tmpI = 'synth_reflane_multi.nbs';
+    writeFileSync(path.join(__dirname, tmpI), nbsI);
+    const REF2 = new Map([[0, { type: 'bound', sound: true }], [1, { type: 'bound', sound: true }]]);
+    const rI = runE2E(tmpI, {
+      lane0: { dz: 0, dy: 0 }, refLayers: REF2,
+      groups: [{ layers: [0, 1] }], groupStarts: [{ dz: 3, dy: 0 }],
+      refLanes: [{ tracks: [0, 1], type: 'bound', start: { dz: 6, dy: 1 } }],
+    });
+    ok = verifyE2E('参考车道池·多成员只主位', rI) && ok;
+    const statI = rI.result.stats;
+    const tlbI = rI.result.sfxTickList;
+    if (statI.sfxBoundNotes !== 2 || statI.sfxConnectLines !== 1 || tlbI.length !== 2
+      || JSON.stringify(tlbI[0].lines) !== JSON.stringify([P0R, BC_26])
+      || JSON.stringify(tlbI[1].lines) !== JSON.stringify([P0R])) {
+      console.log(`FAIL 多成员只主位：bound=${statI.sfxBoundNotes} conn=${statI.sfxConnectLines} 行=${JSON.stringify(tlbI)}（期望 bound=2：t0 双成员齐响仅主位 1 行 / t2 1 行；tick0 [P0R, 连接线]、tick2 [P0R]）`); ok = false;
+    } else {
+      console.log('PASS 触发粒子只取主位：多成员同 tick 齐响不展开第2/3位（每 tick 每车道至多 1 行），连接线照产');
+    }
     // K) 连接型（2026-09-07 用户定规格：MIDI式相邻音符对 A→B 线段，tB 时刻笔尖恰好抵达 B）：
     //    K1 缺省全选（触发+连接）：独立行 + 连接线；K2 取消连接（effects 仅 trigger）→ 无连接线、
     //    网格与 K1 逐位一致（连接线零 litematic 改动）；K3 仅连接（effects 仅 connect）→ 无独立行、

@@ -859,16 +859,18 @@ const DEFAULT_RAIL_LIGHT = 'minecraft:ochre_froglight';
 // 触发区（总线/下降 tap/启动开关）已按用户要求从产物中移除：链头输入侧（X=0 的
 //   中继器输入端）留空，由用户手动铺设总线与开关（用户确认）。
 // refLayers：节奏参考声道 Map<声部下标, {type, sound}>（双类型，用户批准设计 v2）
-//   · 单线式 bound：粒子锚定所属参考车道的虚拟盒位（参考车道不生成任何物理结构，仅保留假定
-//     起点 + 3 盒位槽位作粒子锚点几何）；粒子恒产生（不受 sound 影响，2026-09-07 参考车道虚拟化后，
-//     用户确认「粒子恒产生（参考意义）」，单线式不再强制发声）；
+//   · 单线式 bound：粒子锚定所属参考车道虚拟盒位的**主位（中间槽位）**（参考车道不生成任何物理结构，仅保留假定
+//     起点；每 tick 每车道至多 1 行，多成员齐响不展开第2/3位——2026-09-07d 用户定「触发粒子只取主位」）；
+//     粒子恒产生（不受 sound 影响，2026-09-07 参考车道虚拟化后，用户确认「粒子恒产生（参考意义）」，单线式不再强制发声）；
 //   · MIDI式 independent：粒子中心 = 轨道 0 链 CB 位置 + 所属MIDI式参考车道的 start 基准
 //     （ref 窗口可拖，2026-09-07 独立中心可拖需求；未拖过的车道 start=(0,0) = 旧行为：与 CB 同高、
 //     原点中心），Z 再按音高线性偏移 (note−12)×sfxPitchStep（用户定：以 12 为中点）；同样恒产生。
 //   sound 对所有类型均为「在普通轨道也发声」显式开关（2026-09-07 起统一语义）。
 // refMode（参考车道池启用后，用户批准设计）：
-//   单线式粒子只锚定参考车道池（refLanes）内该声道的虚拟盒位——按 tracks 顺序占槽 0/1/2
-//   （对应 Z +0/+1/−1，同 tick >3 音符丢弃）。参考车道未含该单线式声道 → 粒子整体跳过（空 tick 回退还原 CB）。
+//   单线式粒子只锚定参考车道池（refLanes）内该车道虚拟盒位的**主位（中间槽位）**——每 tick 每车道至多 1 行，
+//   与成员数无关（2026-09-07d 用户定「触发粒子只取主位」，多成员同 tick 齐响不展开第2/3位）。
+//   参考车道未含该单线式声道 → 粒子整体跳过（空 tick 回退还原 CB）。
+//   （非 refMode 旧路径仍按真实盒位多槽位产行，见 sfxBoundNoteLine 注释。）
 // 触发几何：所有参考 CB 统一放轨道 0 —— 该 tick 有任意参考音符 → 轨道 0 主位底座
 //   （X_t+1, Yb）雪块换命令方块 (facing=up)，Command = function nbs2sfx:<tick>（0 基 NBS tick）。
 //   轨道 0 无音符 → 主位信号层恒红石粉，粉在机制正上方按红石规则激活下方方块（wiki Redstone power），
@@ -887,7 +889,7 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
   // --- 链几何 ---
   // 默认轨道 0 恒存在（即使所有音轨未分配），放在组下标 0 的位置，与音轨车道共享同一套链结构。
   // 参考车道池（refLanes）作为追加的**虚拟参考链**（2026-09-07 虚拟化：不生成任何物理结构，
-  //   仅保留虚拟 (zc,yb) 起点 + 3 盒位槽位作为单线式粒子锚点几何；成员来自参考勾选，可与音轨车道任意重叠）。
+  //   仅保留虚拟 (zc,yb) 起点 + 主位（中间槽位）作为单线式粒子锚点几何；成员来自参考勾选，可与音轨车道任意重叠）。
   // refLanes 元素与 lanes 同构（{ tracks, start }）。
   const refGroups = (refLanes || []).map(l => ({ layers: l.tracks }));
   const refStarts = (refLanes || []).map(l => l.start);
@@ -1043,7 +1045,7 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
   let xCur = 0; // 段首 X（全局）
 
   // --- 单线式参考：粒子行（偏移 = 所属参考车道虚拟盒位 − 轨道 0 CB 坐标） ---
-  // 2026-09-07 参考车道虚拟化后，绑定行不再随放置产生，改由放置循环后的独立段按参考车道虚拟槽位生成（恒产生）。
+  // 2026-09-07 参考车道虚拟化后，绑定行不再随放置产生，改由放置循环后的独立段按参考车道虚拟主位生成（恒产生）。
   // 此处保留的 sfxBoundNoteLine 仅供**非 refMode**（refLanes 未传的旧调用/旧行为）随放置路径使用；
   // refMode 下音轨车道上的盒静默跳过（粒子只锚定参考车道虚拟位置）。
   const railChain = chains.find(c => c.isDefaultRail);
@@ -1102,7 +1104,7 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
 
     for (const c of chains) {
       // 2026-09-07 参考车道虚拟化：参考车道不生成任何物理结构（无中继器/雪块/音符盒/CB），
-      //   只保留虚拟 (zc,yb) 起点作为单线式粒子锚点几何（见下方虚拟槽位段）
+      //   只保留虚拟 (zc,yb) 起点作为单线式粒子锚点几何（见下方虚拟主位段）
       if (c.isRefLane) continue;
       curChain = c; // 单线式偏移计算用（非 refMode 旧路径：音符盒所在车道的起点）
       const { zc, yb } = c;
@@ -1219,9 +1221,10 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
     xCur += cells;
   }
 
-  // --- 单线式参考（refMode）：粒子行按参考车道**虚拟槽位**生成（2026-09-07 参考车道虚拟化） ---
-  // 参考车道不生成物理盒，粒子锚定其假定的盒位：槽位规则与真实链一致（lane.tracks 顺序 → 槽 0/1/2 → Z +0/+1/−1，
-  //   同刻 >3 个成员音符按序丢弃），偏移 = (参考车道虚拟盒 − 轨道 0 CB)。**恒产生**，不受 sound 影响（参考意义）。
+  // --- 单线式参考（refMode）：粒子行按参考车道**虚拟主位**生成（2026-09-07 参考车道虚拟化） ---
+  // 参考车道不生成物理盒，粒子锚定其假定盒位的**主位（中间槽位 slot 0）**：每 tick 每车道至多 1 行，
+  //   与成员数无关（多成员同 tick 齐响不再展开第2/3位槽位——2026-09-07d 用户定「触发粒子只取主位」），
+  //   偏移 = (参考车道虚拟主位 − 轨道 0 CB)。**恒产生**，不受 sound 影响（参考意义）。
   // 行序：按参考车道（refLanes 顺序）逐 tick 追加，与旧版「车道放置顺序」一致；独立行随后，整体仍是绑定在前。
   if (refMode && railChain) {
     for (const r of chains.filter(c => c.isRefLane)) {
@@ -1241,22 +1244,19 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
       }
       if (!parts) continue;
       for (let t = 0; t < nTicks; t++) {
-        // 按 lane.tracks 顺序收集本 tick 成员音符（允许重复成员 = 多槽位齐响）
-        const hit = [];
+        // 本 tick 车道内任一单线式成员发声 → 主位（slot 0）产 1 行；多成员同 tick 齐响不展开第2/3位
+        //   （2026-09-07d 用户定「触发粒子只取主位」——与单线式连线「每 tick 简并为中间槽位」同义）
+        let anyBound = false;
         for (const li of r.layers) {
           const note = song.layers[li] && song.layers[li].notes.get(t);
-          if (note) hit.push({ li, note });
+          if (note && boundRefLayers.indexOf(li) >= 0) { anyBound = true; break; }
         }
-        hit.forEach((h, i) => {
-          if (i >= 3) { stats.sfxDiscarded++; return; } // 超 3 位丢弃（与真实链规则一致）
-          if (boundRefLayers.indexOf(h.li) < 0) return; // 该声道非单线式（多车道绑定优先已由 refTypeOf 处理）
-          const slotZ = [0, 1, -1][i];
-          const dy = (r.yb + 1) - railChain.yb;     // 虚拟盒层 − 轨道 0 底座层
-          const dz = (r.zc + slotZ) - railChain.zc; // 槽位 Z
-          if (!sfxTickLines.has(t)) sfxTickLines.set(t, []);
-          sfxTickLines.get(t).push(sfxParticleCmdFromParts(0, dy, dz, parts));
-          stats.sfxBoundNotes++;
-        });
+        if (!anyBound) continue;
+        const dy = (r.yb + 1) - railChain.yb;     // 虚拟盒层 − 轨道 0 底座层
+        const dz = r.zc - railChain.zc;           // 主位 Z（slot 0，无槽位偏移）
+        if (!sfxTickLines.has(t)) sfxTickLines.set(t, []);
+        sfxTickLines.get(t).push(sfxParticleCmdFromParts(0, dy, dz, parts));
+        stats.sfxBoundNotes++;
       }
     }
   }
@@ -2639,7 +2639,7 @@ function addToRefLanes(i) {
   syncRefLaneStarts();
 }
 
-// 拖拽并入指定参考车道（类车道池拖放：允许重复拖入同一音轨 = 占多个粒子槽位）：
+// 拖拽并入指定参考车道（类车道池拖放：允许重复拖入同一音轨 = 同 tick 多成员齐响；触发粒子只取主位）：
 // 拖入即登记为节奏参考声道（未勾选参考的音轨默认MIDI式 + sound=true——行内「发声」框默认勾，
 // 用户可随后取消 = 纯节奏/音高参考，普通轨道无盒；已登记成员保留原 sound 值，不再强制置位）；
 // 从其他参考车道移入本车道（同一成员保留多份 = 重复拖入）；
@@ -2654,7 +2654,7 @@ function dropToRefLane(t, li) {
   if (!isRef) AppState.refLayers.set(t, { type: 'independent', sound: true }); // 新登记默认发声（可随后取消）
   const cur = refSpecOf(AppState.refLayers.get(t));
   // 2026-09-07 起不再强制 sound=true：未发声的参考 = 纯节奏/音高参考（提醒见 renderRefLaneSection 的琥珀标记）
-  // 参考车道内移：从其他参考车道移除该音轨（保留本车道内已有的重复份 = 占多个粒子槽位）
+  // 参考车道内移：从其他参考车道移除该音轨（保留本车道内已有的重复份 = 多成员齐响）
   for (const l of AppState.refLanes) if (l !== lane) l.tracks = l.tracks.filter(x => x !== t);
   lane.tracks.push(t);
   lane.tracks.sort((a, b) => a - b);
@@ -2846,7 +2846,7 @@ function renderRefLaneSection() {
     const hint = document.createElement('div');
     hint.className = 'lane-drop ref-lane-drop';
     hint.dataset.li = String(li);
-    hint.textContent = '把左侧音轨池的音轨拖到这里即并入本车道（已勾选参考的音轨可重复拖入，占多个粒子槽位；未勾「发声」的成员标签标琥珀 = 仅节奏/音高参考）';
+    hint.textContent = '把左侧音轨池的音轨拖到这里即并入本车道（已勾选参考的音轨可重复拖入，同 tick 多成员齐响、触发粒子只取主位；未勾「发声」的成员标签标琥珀 = 仅节奏/音高参考）';
     row.appendChild(hint);
     list.appendChild(row);
   });
@@ -2892,7 +2892,7 @@ function renderSfxEffectList() {
   };
   card('① 触发型', 'on',
     '由音符触发，参数由 1 个音符决定。每个参考音符在轨道 0 同 tick 触发一次粒子：' +
-    '单线式 = 粒子中心锚定所属参考车道的虚拟盒位（起点 + 槽位 Z +0/+1/−1，与「发声」无关、恒产生，' +
+    '单线式 = 粒子中心锚定所属参考车道虚拟盒位的**主位（中间槽位）**（每 tick 每车道至多 1 行，多成员齐响不展开第2/3位，与「发声」无关、恒产生，' +
     '可被下方车道勾选关闭）；MIDI式 = 锚定轨道 0 CB + 所属参考车道的起点基准（「参考车道起点布局」窗口可拖，缺省 (0,0)），再按音高偏移 (音高−12)×sfxPitchStep。' +
     '当前效果条目：end_rod 螺旋展开（particleex polarparameter minecraft:end_rod：' +
     '20 个粒子、寿命 0.1s、半径 1、角度随 t 扫描的平面螺旋，坐标段由构建时按车道起点/槽位/音高求解替换）。');
