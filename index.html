@@ -462,13 +462,15 @@ function normSfxParams(p) {
   return out;
 }
 // 持久化载荷形状：保留 5 结构化字段（字符串）+ 连接型结构化对象（合法 4 字段；非法 → 丢弃，旧字符串占位值不兼容 → 丢弃）
-//   + background 占位文本（字符串）；全空 → undefined（不写该键）
+//   + 消失型结构化对象（合法 3 字段；非法 → 丢弃）+ background 占位文本（字符串）；全空 → undefined（不写该键）
 function sfxParamsPayload(l) {
   const p = (typeof l.sfxParams === 'object' && l.sfxParams !== null) ? l.sfxParams : {};
   const out = {};
   for (const k of ['head', 'x', 'y', 'z', 'tail']) if (typeof p[k] === 'string') out[k] = p[k];
   const conn = normConnectParams(p.connect);
   if (conn) out.connect = conn;   // 旧存档的字符串占位 connect 在此自然丢弃（norm 要求对象）
+  const van = normVanishParams(p.vanish);
+  if (van) out.vanish = van;
   for (const k of ['background']) if (typeof p[k] === 'string') out[k] = p[k];
   return Object.keys(out).length > 0 ? out : undefined;
 }
@@ -549,6 +551,45 @@ function normConnectParams(p) {
     || parts.length !== 4 || !c.every(x => Number.isFinite(x) && x >= 0 && x <= 1)
     || !Number.isInteger(p.m) || p.m < 0 || !Number.isFinite(p.alpha) || p.alpha < 0) return undefined;
   return { particle: p.particle.trim(), color: c.join(' '), m: p.m, alpha: p.alpha };
+}
+// ===== ④ 消失型（2026-09-07e 用户定规格：演奏 tick 前 N tick 提前出现，恰在演奏 tick 消亡）=====
+// 机制（用户 07e 定「自动计算粒子寿命，正好卡上对应 tick 就消失」）：每个参考音符在 t−N tick 生成一行
+//   粒子命令（conditional 立方体 #Cube 原型），**寿命字段 = N 自动计算**（构建时替换原型尾参里的寿命值）
+//   → 粒子常驻 t−N→t 区间、恰在 t tick 消亡（与音符激活同 tick，无分组/无 remove 命令）。
+//   钳位：t−N < 0（歌曲开头提前量不足）→ 生成落 tick 0、寿命 = t（实际提前量）。
+// 位置（与触发型同锚点）：单线式 = 所属参考车道虚拟主位（中间槽位）；MIDI式 = 车道 start 基准（可拖，缺省 (0,0)）。
+// 用户可调（车道级 lane.sfxParams.vanish，缺省 = SFX_VANISH_DEFAULTS）：
+//   particle 粒子 / color "r g b a" 四值 0~1 / ahead 提前量 N tick（整数 ≥0，默认 500）。
+//   几何（范围/步长/形状表达式/速度表达式）= 原型命令逐字写死，不可用户输入（与触发型命令同约束）。
+const SFX_VANISH_DEFAULTS = { particle: 'minecraft:end_rod', color: '1 0.95 0.89 1', ahead: 500 };
+// 消失型原型命令（用户 2026-09-07e 提供，#Cube 条件立方体）——除**坐标段**与**寿命**外逐字写死不得修正：
+//   conditional: <粒子> <坐标段x y z> <颜色4值> <速度3值> <范围3值> <形状表达式> <step> <age> <速度表达式> <速度步长> <组>
+//   寿命字段 age（数组第 11 元素 '20'，索引 10）由构建替换为实际 N；其余逐字。
+//   单引号是命令字面量的一部分（模组解析要求表达式/速度表达式带引号），写进数组元素内。
+const SFX_VANISH_PROTO = [
+  'particleex conditional', 'minecraft:end_rod', '~1', '~2', '~',
+  '1 0.95 0.89 1', '0 0 0', '0.5 0.5 0.5',
+  "'(abs(y)==0.5&!(abs(z)<0.5))|(abs(x)==0.5&(!(abs(z)<0.5)|!(abs(y)<0.5)))'",
+  '0.1', '20', "'vy=0.05'", '1.0', 'null',
+];
+// 车道级消失型命令：坐标段 = ~dx ~dy ~dz（按锚点求解），寿命 = 实际 N（钳位后）
+const sfxVanishCmd = (dx, dy, dz, N, v) => {
+  const p = (v && v.particle) ? v.particle : SFX_VANISH_DEFAULTS.particle;
+  const color = (v && v.color) ? v.color : SFX_VANISH_DEFAULTS.color;
+  const a = SFX_VANISH_PROTO.slice();
+  a[1] = p; a[2] = `~${dx}`; a[3] = `~${dy}`; a[4] = `~${dz}`;
+  a[5] = color; a[10] = String(N);   // age 字段（原型第 11 元素 '20'），寿命 = 实际 N
+  return a.join(' ');
+};
+// 归一化车道级消失型模板：3 字段全合法才返回完整对象，否则 undefined（= 缺省默认）。
+function normVanishParams(p) {
+  if (!p || typeof p !== 'object') return undefined;
+  const parts = String(p.color || '').split(/\s+/).filter(Boolean);
+  const c = parts.map(Number);
+  if (typeof p.particle !== 'string' || p.particle.trim() === ''
+    || parts.length !== 4 || !c.every(x => Number.isFinite(x) && x >= 0 && x <= 1)
+    || !Number.isInteger(p.ahead) || p.ahead < 0) return undefined;
+  return { particle: p.particle.trim(), color: c.join(' '), ahead: p.ahead };
 }
 // 浮点数字面量（角度/长度/步长）：去浮点噪声（0.30000000000000004 类），最多 9 位小数
 const sfxNum = (n) => String(Math.round(n * 1e9) / 1e9);
@@ -916,6 +957,8 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
       refLaneParams: isRef ? normSfxParams(refLanes[i - (defaultStart ? 1 : 0) - nOrd].sfxParams) : null,
       // 车道级连接模板（lane.sfxParams.connect，结构化对象；非法/缺省 → null → 生成时用 SFX_CONNECT_DEFAULTS）
       refLaneConnect: isRef ? normConnectParams(refLanes[i - (defaultStart ? 1 : 0) - nOrd].sfxParams ? refLanes[i - (defaultStart ? 1 : 0) - nOrd].sfxParams.connect : null) : null,
+      // 车道级消失型模板（lane.sfxParams.vanish，结构化对象；非法/缺省 → null → 生成时用 SFX_VANISH_DEFAULTS）
+      refLaneVanish: isRef ? normVanishParams(refLanes[i - (defaultStart ? 1 : 0) - nOrd].sfxParams ? refLanes[i - (defaultStart ? 1 : 0) - nOrd].sfxParams.vanish : null) : null,
       // MIDI式粒子中心基准（用户 2026-09-07 需求 5：参考窗口可拖）= 本车道 start（虚拟起点）；
       //   独立行 = 轨道 0 CB + (0, dy, dz) + (0, 0, 音高×sfxPitchStep)；未拖过的车道 start=(0,0)（v1 存档迁移保证）
       refLaneStart: isRef ? (refLanes[i - (defaultStart ? 1 : 0) - nOrd].start || null) : null,
@@ -964,7 +1007,7 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
     notesPlaced: 0, notesDiscarded: 0, noteBlocks: 0,
     repeaters: 0, wires: 0,
     commandBlocks: 0, sfxNotes: 0,
-    sfxBoundNotes: 0, sfxStandaloneNotes: 0, sfxConnectLines: 0,
+    sfxBoundNotes: 0, sfxStandaloneNotes: 0, sfxConnectLines: 0, sfxVanishNotes: 0,
     sfxDiscarded: 0, sfxEmptyTicks: 0,
     discardedDetails: [],
   };
@@ -1098,6 +1141,35 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
     sfxTickLines.get(t).push(sfxParticleCmd(0, dy, dz));
     stats.sfxStandaloneNotes++;
   }
+  // --- ④ 消失型（2026-09-07e 用户定规格：演奏 tick 前 N tick 提前出现、恰在演奏 tick 消亡） ---
+  // 每个参考音符在 t−N tick 产 1 行（寿命 = N，构建替换原型 age 字段「索引 10 的 '20'」）；钳位 t−N<0 → 生成 tick 0、寿命 = t。
+  //   门控：车道 effects 显式含 'vanish'（**默认不勾选**，opt-in——旧存档/未勾选车道产物逐位不变）；
+  //   锚点：bound = 车道虚拟主位（同触发主位）/ independent = 车道 start（可拖基准，缺省 (0,0)）。
+  //   生成行落 t−N 自持 function/CB：t−N 一般无参考音符 → 用 sfxVanishTicks 支撑轨道 0 CB（见放置循环）；
+  //   生成行已进 sfxTickLines → 空 tick 回退天然不触（该 tick 有行）。
+  const sfxVanishTicks = new Set();
+  if (railChain) {
+    for (const [ci, tickMap] of sfxLaneEvents) {
+      const lane = chains[ci];
+      if (!lane || !lane.isRefLane) continue;
+      const eff = lane.refLaneEffects;
+      if (!eff || !eff.includes('vanish')) continue;   // 默认不勾选 → 不产
+      const vp = lane.refLaneVanish || SFX_VANISH_DEFAULTS;
+      const N = vp.ahead;
+      const isBound = lane.refLaneType === 'bound';
+      const anchor = isBound ? [0, (lane.yb + 1) - railChain.yb, lane.zc - railChain.zc]
+                             : [0, (lane.refLaneStart ? lane.refLaneStart.dy : 0), (lane.refLaneStart ? lane.refLaneStart.dz : 0)];
+      for (const t of [...tickMap.keys()].sort((a, b) => a - b)) {
+        const gT = Math.max(0, t - N);
+        const life = t - gT;    // 钳位后的实际寿命（= 实际提前量）
+        if (life <= 0) continue; // t=0 → 无提前量，跳过（无 t−N 可生成）
+        sfxVanishTicks.add(gT);
+        if (!sfxTickLines.has(gT)) sfxTickLines.set(gT, []);
+        sfxTickLines.get(gT).push(sfxVanishCmd(anchor[0], anchor[1], anchor[2], life, vp));
+        stats.sfxVanishNotes++;
+      }
+    }
+  }
   for (let t = 0; t < nTicks; t++) {
     const d = delays[t];
     const cells = 2; // 主链恒 1 档：每 tick 恒 2 格（中继器格 + 主位传导格）
@@ -1162,10 +1234,10 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
           }
         } else {
           W(xCur + 1, ySig, zc, 'minecraft:redstone_wire');
-          // 轨道 0 且该 tick 有任意参考音符（绑定∪独立）：主位底座由雪块替换为命令方块
+          // 轨道 0 且该 tick 有任意参考音符（绑定∪独立）或消失型生成行（t−N 支撑）：主位底座由雪块替换为命令方块
           //   （上方红石粉激活，红石粉置于机制正上方会将其激活——wiki Redstone power；轨道 0 无音符故主位恒为粉，
           //   信号到达本格的 tick 即音符盒发声的同 tick）。<t>.mcfunction 行在放置循环内汇总。
-          const isSfxTick = c.isDefaultRail && sfxEntries.has(t);
+          const isSfxTick = c.isDefaultRail && (sfxEntries.has(t) || sfxVanishTicks.has(t));
           W(xCur + 1, yb, zc, isSfxTick ? SFX_CB_STATE : 'minecraft:snow_block');
           stats.wires++;
           if (isSfxTick) {
@@ -2128,19 +2200,21 @@ function loadSavedState(song) {
         if (lane.type !== undefined && lane.type !== 'bound' && lane.type !== 'independent') return null;
         for (const t of lane.tracks) if (!Number.isInteger(t) || t < 0 || t >= nLayers) return null;
         if (!lane.start || !Number.isFinite(lane.start.dz) || !Number.isFinite(lane.start.dy)) return null;
-        // effects：可选（旧存档无此字段 = 全选）；值须为已知特效 key 子集
+        // effects：可选（旧存档无此字段 = trigger/connect/background 全选）；值须为已知特效 key 子集
         if (lane.effects !== undefined) {
           if (!Array.isArray(lane.effects) || lane.effects.some(k => typeof k !== 'string'
-            || !['trigger', 'connect', 'background'].includes(k))) return null;
+            || !['trigger', 'connect', 'background', 'vanish'].includes(k))) return null;
         }
         // sfxParams：可选（旧存档无此字段 = 缺省默认命令）；对象值，键限已知集合；
-        //   5 触发字段 = 字符串；connect = 结构化对象（normConnectParams 校验，旧字符串占位值 → 非法）；background = 字符串
+        //   5 触发字段 = 字符串；connect = 结构化对象（normConnectParams 校验，旧字符串占位值 → 非法）；
+        //   vanish = 结构化对象（normVanishParams 校验）；background = 字符串
         if (lane.sfxParams !== undefined) {
           if (!lane.sfxParams || typeof lane.sfxParams !== 'object' || Array.isArray(lane.sfxParams)) return null;
           for (const k of Object.keys(lane.sfxParams)) {
             const v = lane.sfxParams[k];
-            if (!['head', 'x', 'y', 'z', 'tail', 'connect', 'background'].includes(k)) return null;
+            if (!['head', 'x', 'y', 'z', 'tail', 'connect', 'vanish', 'background'].includes(k)) return null;
             if (k === 'connect') { if (!normConnectParams(v)) return null; }
+            else if (k === 'vanish') { if (!normVanishParams(v)) return null; }
             else if (typeof v !== 'string') return null;
           }
         }
@@ -2862,12 +2936,16 @@ function renderRefLaneSection() {
 //     点距 ≤0.1 格，笔尖恰好 t_B 抵达 B；MIDI式按粒子中心 + 和弦配对、单线式中间槽位沿链 X）；
 //     勾选控制本车道成员是否连线；模板 = sfxParams.connect
 //   ③ 背景型（规划占位）：按乐曲小节间隔激活；勾选仅存状态，暂未实现生成逻辑
-// 勾选存 lane.effects: ['trigger'|'connect'|'background']（缺省 = 全选，向后兼容旧存档），
-// buildLayout 经 refLanes 第 7 参读取；默认全选 → 产物与旧版逐位一致。
+//   ④ 消失型（2026-09-07e 已实现）：演奏 tick 前 N tick（车道级 ahead，缺省 500）提前出现、恰在演奏 tick 消亡
+//     （寿命 = N 自动计算，构建替换原型 age 字段；#Cube 条件立方体，除坐标段/寿命外逐字）；
+//     **默认不勾选（opt-in）**——显式 lane.effects 含 'vanish' 才产行，旧存档/未勾选车道产物逐位不变
+// 勾选存 lane.effects: ['trigger'|'connect'|'background'|'vanish']（trigger/connect/background 缺省 = 勾选、
+// vanish 缺省 = 不勾选，向后兼容旧存档），buildLayout 经 refLanes 第 7 参读取。
 const SFX_EFFECT_TYPES = [
   { key: 'trigger', name: '触发型' },
   { key: 'connect', name: '连接型' },
   { key: 'background', name: '背景型' },
+  { key: 'vanish', name: '消失型' },
 ];
 function renderSfxEffectList() {
   const list = $('sfxEffectList');
@@ -2905,6 +2983,11 @@ function renderSfxEffectList() {
   card('③ 背景型', 'todo',
     '按一定乐曲小节间隔激活（与具体音符无关，按小节/拍位周期性触发，用于铺底氛围）。' +
     '规划占位，暂未实现生成逻辑（下方勾选仅存状态）。');
+  card('④ 消失型', 'on',
+    '由音符触发，参数由 1 个音符决定：**演奏 tick 前 N tick 提前出现、恰在演奏 tick 消亡**（N = 车道级「提前量」，缺省 500 tick，' +
+    '寿命 = N 由构建自动计算并写入命令；歌曲开头提前量不足时钳位到 tick 0、寿命 = 实际提前量）。' +
+    '粒子 = #Cube 条件立方体（particleex conditional：1×1×1 线框立方，边长 1 格、0.1 步长采样，vy=0.05 缓升），' +
+    '位置 = 车道锚点（单线式 = 虚拟主位；MIDI式 = 车道 start 基准）。**默认不勾选**——需在下方车道勾选表显式开启。');
 }
 // 按参考车道勾选涉及的特效：每车道一行 3 个 checkbox + 行首展开钮（▼/▲，展开后该行下方为模板编辑面板）
 function renderSfxEffectLanes() {
@@ -2921,7 +3004,7 @@ function renderSfxEffectLanes() {
   }
   const hint = document.createElement('div');
   hint.className = 'hint';
-  hint.textContent = '按参考车道勾选涉及的特效（默认全选）：「触发型」控制该车道粒子行是否生成（单线式 → 绑定行、MIDI式 → 独立行，空 tick 时 CB 回退雪块）；「连接型」控制该车道成员相邻演奏 tick 之间的线段是否生成（MIDI式按音高中心连线、单线式沿链 X 方向连线）；背景型暂未实现，勾选仅存状态。点行首 ▼ 展开该车道的模板参数编辑（仅影响本车道）';
+  hint.textContent = '按参考车道勾选涉及的特效：「触发型/连接型/背景型」默认全选；**「消失型」默认不勾选（opt-in）**——显式勾选后，每个演奏 tick 前 N tick（车道级提前量，缺省 500）出现 #Cube 粒子、恰在该 tick 消亡（寿命自动计算）。「触发型」控制该车道粒子行是否生成（单线式 → 绑定行、MIDI式 → 独立行，空 tick 时 CB 回退雪块）；「连接型」控制该车道成员相邻演奏 tick 之间的线段是否生成；背景型暂未实现，勾选仅存状态。点行首 ▼ 展开该车道的模板参数编辑（仅影响本车道）';
   box.appendChild(hint);
   const table = document.createElement('table');
   table.className = 'sfx-effect-table';
@@ -2967,7 +3050,9 @@ function renderSfxEffectLanes() {
       const td = document.createElement('td');
       const cb = document.createElement('input');
       cb.type = 'checkbox';
-      const on = !lane.effects || lane.effects.includes(t.key);
+      // 消失型默认不勾选（opt-in）；其余三类缺省 = 勾选（lane.effects 缺失 = 全选语义）
+      const on = (t.key === 'vanish') ? (Array.isArray(lane.effects) && lane.effects.includes('vanish'))
+                                      : (!lane.effects || lane.effects.includes(t.key));
       cb.checked = on;
       cb.className = 'sfx-effect-check';
       cb.dataset.li = String(li);
@@ -2976,6 +3061,8 @@ function renderSfxEffectLanes() {
         ? '触发型：控制本车道粒子行是否生成（单线式 → 绑定行；MIDI式 → 独立行；空 tick 时 CB 回退雪块）'
         : t.key === 'connect'
         ? '连接型：控制本车道成员相邻演奏 tick 之间的线段是否生成（MIDI式按音高中心连线、单线式沿链 X 方向连线）'
+        : t.key === 'vanish'
+        ? '消失型（默认不勾选）：每个演奏 tick 前 N tick（车道级提前量，缺省 500）出现 #Cube 粒子、恰在该 tick 消亡（寿命自动计算）'
         : `${t.name}：规划占位，暂未实现生成逻辑（勾选仅存状态）`;
       cb.addEventListener('change', onSfxEffectToggle);
       td.appendChild(cb);
@@ -2985,7 +3072,7 @@ function renderSfxEffectLanes() {
     if (AppState.sfxLanesOpen.has(li)) {
       const trP = document.createElement('tr');
       const tdP = document.createElement('td');
-      tdP.colSpan = 4 + SFX_EFFECT_TYPES.length;
+      tdP.colSpan = 5 + SFX_EFFECT_TYPES.length;
       tdP.appendChild(renderSfxLaneParams(lane, li));
       trP.appendChild(tdP);
       table.appendChild(trP);
@@ -2993,8 +3080,9 @@ function renderSfxEffectLanes() {
   });
   box.appendChild(table);
 }
-// 车道展开面板：三类特效各一块——触发型 = 结构化 5 字段（车道级模板，参与绑定行生成）；
+// 车道展开面板：四类特效各一块——触发型 = 结构化 5 字段（车道级模板，参与绑定行生成）；
 //   连接型 = 结构化 4 字段（粒子/颜色/m 寿命/漂移；线段几何构建时算，参与连接线生成）；
+//   消失型 = 结构化 3 字段（粒子/颜色/提前量 N；#Cube 原型其余逐字，寿命自动 = N）；
 //   背景型 = 模板文本框（规划占位：随车道持久化，暂未消费，不阻断生成）。
 function renderSfxLaneParams(lane, li) {
   const box = document.createElement('div');
@@ -3089,6 +3177,33 @@ function renderSfxLaneParams(lane, li) {
   inC3.placeholder = 'particleex …（占位，待实现后生效）';
   inC3.addEventListener('change', (e) => onSfxParamPlainEdit(li, 'background', e.target.value));
   box.appendChild(inC3);
+  // ④ 消失型：结构化 3 字段（粒子/颜色 R G B A/提前量 N；#Cube 原型几何逐字写死，寿命自动 = 实际提前量）
+  const h4 = document.createElement('h4');
+  h4.textContent = '④ 消失型 · 提前出现参数（t−N 生成，寿命 = 实际提前量自动计算）';
+  box.appendChild(h4);
+  const tip4 = document.createElement('div');
+  tip4.className = 'hint';
+  tip4.textContent = '仅影响本车道成员：每个演奏 tick t 前 N tick 生成 #Cube 条件立方体粒子（1×1×1 线框，命令除坐标段与寿命字段外逐字固定），寿命 = 实际提前量 → 恰在 t tick 消亡（与音符激活同 tick，无分组无 remove）。歌曲开头提前量不足时生成钳位到 tick 0、寿命 = t。需先在勾选表显式开启「消失型」（默认不勾选）。锚点：单线式 = 车道虚拟主位；MIDI式 = 车道 start 基准（「参考车道起点布局」可拖）。任一项留空/非法 → 该字段回默认。';
+  box.appendChild(tip4);
+  const vanish = normVanishParams(lane.sfxParams ? lane.sfxParams.vanish : null) || SFX_VANISH_DEFAULTS;
+  const rowVanish = document.createElement('div');
+  rowVanish.className = 'sfx-pf-coord';
+  [['particle', '粒子', vanish.particle, '如 minecraft:end_rod / minecraft:heart'],
+   ['color', '颜色 R G B A', vanish.color, '4 个 0~1 小数，如 1 0.95 0.89 1'],
+   ['ahead', '提前量 N (tick)', String(vanish.ahead), '提前出现的 tick 数（整数 ≥0，默认 500）；寿命自动 = N'],
+  ].forEach(([k, label, val, ph]) => {
+    const lb = document.createElement('label');
+    lb.textContent = label;
+    const inV = document.createElement('input');
+    inV.type = 'text';
+    inV.className = 'sfx-vanish-field';
+    inV.value = val;
+    inV.placeholder = ph;
+    inV.title = ph;
+    inV.addEventListener('change', (e) => onSfxVanishEdit(li, k, e.target.value));
+    rowVanish.appendChild(lb); rowVanish.appendChild(inV);
+  });
+  box.appendChild(rowVanish);
   return box;
 }
 // 触发型结构化字段编辑：合并进 lane.sfxParams（head/x/y/z/tail 五字段）；全空 → 删键（= 缺省默认命令）。
@@ -3130,13 +3245,32 @@ function onSfxParamPlainEdit(li, k, v) {
   lane.sfxParams = (Object.keys(p).length > 0) ? p : undefined;
   scheduleStateSave();
 }
-// 参考车道特效勾选变更：写 lane.effects（三 key 全量重建，保持 SFX_EFFECT_TYPES 顺序）+ 落盘 + 重渲染
+// 消失型结构化字段编辑：合并进 lane.sfxParams.vanish（3 字段：particle/color/ahead）；
+//   该字段留空/非法 → 回默认值（与连接型同语义，不应把其余字段冲掉）。全部字段 = 默认值时不存键。
+function onSfxVanishEdit(li, k, v) {
+  const lane = AppState.refLanes[li];
+  if (!lane) return;
+  const src = (lane.sfxParams && normVanishParams(lane.sfxParams.vanish))
+    || SFX_VANISH_DEFAULTS;
+  const cur = String(v == null ? '' : v).trim();
+  // ahead 须为整数过校验（空串 → NaN → 校验失败回默认，语义同清空）
+  const val = (k === 'ahead') ? (cur === '' ? cur : Number(cur)) : cur;
+  const p = { ...src, [k]: val };
+  const van = normVanishParams(p) || SFX_VANISH_DEFAULTS;
+  const base = (lane.sfxParams && typeof lane.sfxParams === 'object') ? { ...lane.sfxParams } : {};
+  const isDefault = JSON.stringify(van) === JSON.stringify(SFX_VANISH_DEFAULTS);
+  if (isDefault) delete base.vanish; else base.vanish = van;
+  lane.sfxParams = (Object.keys(base).length > 0) ? base : undefined;
+  scheduleStateSave();
+}
+// 参考车道特效勾选变更：写 lane.effects（四 key 全量重建，保持 SFX_EFFECT_TYPES 顺序）+ 落盘 + 重渲染
+//   （缺省语义：trigger/connect/background 未显式设置 = 勾选；vanish 未显式设置 = 不勾选）
 function onSfxEffectToggle(e) {
   const li = Number(e.target.dataset.li);
   const k = e.target.dataset.k;
   const lane = AppState.refLanes[li];
   if (!lane) return;
-  const cur = Array.isArray(lane.effects) ? new Set(lane.effects) : new Set(SFX_EFFECT_TYPES.map(t => t.key));
+  const cur = Array.isArray(lane.effects) ? new Set(lane.effects) : new Set(SFX_EFFECT_TYPES.map(t => t.key).filter(x => x !== 'vanish'));
   if (e.target.checked) cur.add(k); else cur.delete(k);
   lane.effects = SFX_EFFECT_TYPES.filter(t => cur.has(t.key)).map(t => t.key);
   scheduleStateSave();
@@ -4054,6 +4188,7 @@ window.__NBS2SCHEMATIC = {
   SFX_NAMESPACE, SFX_PARTICLE_CMD, SFX_CB_STATE, SFX_PACKFORMAT, sfxPackFormat, sfxParticleCmd,
   SFX_PARTICLE_FIELDS, sfxParticleCmdFromParts, normSfxParams, sfxParamsPayload,
   SFX_CONNECT_DEFAULTS, SFX_CONNECT_POINT_GAP, SFX_CONNECT_MIN_LEN, SFX_CONNECT_NEAR_DT, normConnectParams, sfxNum, sfxConnectCmd, sfxChordPairs,
+  SFX_VANISH_DEFAULTS, SFX_VANISH_PROTO, sfxVanishCmd, normVanishParams,
   SFX_EFFECT_TYPES, renderSfxEffectList, renderSfxEffectLanes, onSfxEffectToggle,
   buildSfxPackMcmeta, buildSfxFunctions, buildZip, zipCrc32, buildSfxDatapackZip,
   TARGET_VERSIONS, targetEntry, DEFAULT_TARGET_MC,
@@ -4197,7 +4332,8 @@ function renderStats() {
     ['中继器数', stats.repeaters],
     ['红石线数', stats.wires],
     ...(stats.commandBlocks > 0 ? [['节奏参考 CB', `${stats.commandBlocks}（轨道 0）· 粒子 ${stats.sfxNotes}`
-      + (stats.sfxConnectLines ? ` · 连接线 ${stats.sfxConnectLines}` : '')]] : []),
+      + (stats.sfxConnectLines ? ` · 连接线 ${stats.sfxConnectLines}` : '')
+      + (stats.sfxVanishNotes ? ` · 消失型 ${stats.sfxVanishNotes}` : '')]] : []),
   ];
   $('statsPanel').innerHTML = cards.map(([k, v]) =>
     `<div class="stat-card"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');

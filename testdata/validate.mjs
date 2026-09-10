@@ -1302,7 +1302,8 @@ try {
 //   尺寸只由真实链决定）
 {
   const { SFX_NAMESPACE, SFX_CB_STATE, sfxParticleCmd, sfxParticleCmdFromParts,
-    SFX_CONNECT_DEFAULTS, SFX_CONNECT_POINT_GAP, SFX_CONNECT_NEAR_DT, sfxConnectCmd, sfxChordPairs } = context.window.__NBS2SCHEMATIC;
+    SFX_CONNECT_DEFAULTS, SFX_CONNECT_POINT_GAP, SFX_CONNECT_NEAR_DT, sfxConnectCmd, sfxChordPairs,
+    SFX_VANISH_DEFAULTS, sfxVanishCmd, normVanishParams } = context.window.__NBS2SCHEMATIC;
   // 单线式连接线（2026-09-07c「连接前后节奏」）：端点 = 车道虚拟主位（中间槽位），沿链 +X（每 tick 2 格）。
   //   A/D/E2/H/H2 用 refLanes start {dz:6,dy:1} → mid=(0,2,6)；F 用 {dz:3,dy:0} → mid=(0,1,3)
   const boundConn = (my, mz, dt) => {
@@ -1733,6 +1734,125 @@ try {
         } else {
           console.log('PASS 和弦连线远距（Δt>32）：严格 1:1、落单音不连（0 条线）');
         }
+      }
+    }
+    // J) 消失型（2026-09-07e 用户定规格：演奏 tick 前 N tick 提前出现、恰在演奏 tick 消亡）：
+    //    t−N 生成 #Cube conditional 行（寿命 = 实际提前量，构建替换原型 age 字段）；钳位 t−N<0 → tick 0；
+    //    门控 = effects 显式含 'vanish'（默认不勾选，opt-in）；锚点 bound=虚拟主位 / independent=车道 start。
+    //    J1 默认不勾选不产；J2 bound N=10 钳位（t0 跳过 / t2 寿命 2 落 tick0）；
+    //    J3 MIDI式 start 锚点 + 空 tick 回退；J4 N=0 全跳过；J5 仅 vanish → sfxVanishTicks 支撑孤立 CB。
+    {
+      // 命令字面量（与 SFX_VANISH_PROTO 逐字对照，几何写死、仅坐标段与寿命替换）
+      const VANISH = (dy, dz, N) => sfxVanishCmd(0, dy, dz, N, SFX_VANISH_DEFAULTS);
+      const vanLite = (dy, dz, N) => `particleex conditional minecraft:end_rod ~0 ~${dy} ~${dz} 1 0.95 0.89 1 0 0 0 0.5 0.5 0.5 '(abs(y)==0.5&!(abs(z)<0.5))|(abs(x)==0.5&(!(abs(z)<0.5)|!(abs(y)<0.5)))' 0.1 ${N} 'vy=0.05' 1.0 null`;
+      // 单元：寿命字段 = age（原型索引 10 的 '20'），step '0.1' 不动 + normVanishParams 3 字段校验
+      if (VANISH(2, 6, 7) !== vanLite(2, 6, 7) || !VANISH(2, 6, 7).includes(' 0.1 7 \'vy=0.05\'')
+        || JSON.stringify(normVanishParams({ particle: 'minecraft:heart', color: '0.5 0.5 0.5 1', ahead: 3 }))
+          !== JSON.stringify({ particle: 'minecraft:heart', color: '0.5 0.5 0.5 1', ahead: 3 })
+        || normVanishParams({ particle: 'x', color: '1 0.95 0.89 1', ahead: -1 }) !== undefined
+        || normVanishParams({ particle: 'x', color: '1 0.95 0.89', ahead: 1 }) !== undefined
+        || normVanishParams({ particle: 'x', color: '1 0.95 0.89 2', ahead: 1 }) !== undefined
+        || normVanishParams({ particle: 'x', color: '1 0.95 0.89 1', ahead: 1.5 }) !== undefined
+        || normVanishParams(null) !== undefined) {
+        console.log(`FAIL 消失型单元：cmd=${VANISH(2, 6, 7)}（期望 ${vanLite(2, 6, 7)}；age 字段=寿命、step 0.1 保留；normVanishParams 校验非法值 → undefined）`); ok = false;
+      } else {
+        console.log('PASS 消失型单元：#Cube 命令 age 字段=寿命（step 0.1 保留）、normVanishParams 3 字段校验');
+      }
+      // J1 默认不勾选：refLanes 无 effects（缺省 trigger/connect/background 全选、vanish 不勾选）
+      //   → sfxVanishNotes=0、行与 A 场景期望逐位一致（[P0R, BC_26] / [P0R]）
+      const rJ1 = runE2E(tmpFile, {
+        lane0: { dz: 0, dy: 0 }, refLayers: REF,
+        groups: [{ layers: [0] }], groupStarts: [{ dz: 3, dy: 0 }],
+        refLanes: [{ tracks: [0], type: 'bound', start: { dz: 6, dy: 1 } }],
+      });
+      const statJ1 = rJ1.result.stats;
+      const tlbJ1 = rJ1.result.sfxTickList;
+      if (statJ1.sfxVanishNotes !== 0 || tlbJ1.length !== 2
+        || JSON.stringify(tlbJ1[0].lines) !== JSON.stringify([P0R, BC_26])
+        || JSON.stringify(tlbJ1[1].lines) !== JSON.stringify([P0R])) {
+        console.log(`FAIL 消失型默认不勾选：vanish=${statJ1.sfxVanishNotes} 行=${JSON.stringify(tlbJ1)}（期望 0 行、行与缺省全选一致 [P0R,BC_26]/[P0R]）`); ok = false;
+      } else {
+        console.log('PASS 消失型默认不勾选（opt-in）：不产行、产物与缺省全选逐位一致（旧存档向后兼容）');
+      }
+      // J2 bound 车道 N=10 钳位：t0（life=0 跳过）/ t2 → gT=0 life=2；
+      //   effects ['trigger','vanish']（无 connect → 无连接线）；行序：消失行最前（生成块在放置循环前）
+      const rJ2 = runE2E(tmpFile, {
+        lane0: { dz: 0, dy: 0 }, refLayers: REF,
+        groups: [{ layers: [0] }], groupStarts: [{ dz: 3, dy: 0 }],
+        refLanes: [{ tracks: [0], type: 'bound', start: { dz: 6, dy: 1 },
+          effects: ['trigger', 'vanish'],
+          sfxParams: { vanish: { particle: 'minecraft:end_rod', color: '1 0.95 0.89 1', ahead: 10 } } }],
+      });
+      ok = verifyE2E('参考车道池·消失型 bound 钳位', rJ2) && ok;
+      const statJ2 = rJ2.result.stats;
+      const tlbJ2 = rJ2.result.sfxTickList;
+      if (statJ2.sfxVanishNotes !== 1 || statJ2.commandBlocks !== 2 || tlbJ2.length !== 2
+        || JSON.stringify(tlbJ2[0].lines) !== JSON.stringify([VANISH(2, 6, 2), P0R])
+        || JSON.stringify(tlbJ2[1].lines) !== JSON.stringify([P0R])) {
+        console.log(`FAIL 消失型 bound 钳位：vanish=${statJ2.sfxVanishNotes} CB=${statJ2.commandBlocks} 行=${JSON.stringify(tlbJ2)}（期望 t0 跳过、t2 钳位 gT=0 life=2 → tick0 [VANISH(2), P0R, BC_26] / tick2 [P0R]，锚 (0,2,6)）`); ok = false;
+      } else {
+        console.log('PASS 消失型 bound 钳位：t=0 无提前量跳过、t=2 提前量不足钳位 tick 0（寿命=实际提前量 2）');
+      }
+      // J3 MIDI式 independent：锚点 = 车道 start（可拖，{dz:4,dy:2}）→ (0,2,4)；
+      //   effects 仅 ['vanish']（trigger 不勾 → 无独立行）→ tick0 仅消失行、tick2 空 tick 回退
+      const rJ3 = runE2E(tmpFile, {
+        lane0: { dz: 0, dy: 0 },
+        refLayers: new Map([[0, { type: 'independent', sound: true }]]),
+        groups: [{ layers: [0] }], groupStarts: [{ dz: 3, dy: 0 }],
+        refLanes: [{ tracks: [0], start: { dz: 4, dy: 2 },
+          effects: ['vanish'],
+          sfxParams: { vanish: { particle: 'minecraft:end_rod', color: '1 0.95 0.89 1', ahead: 10 } } }],
+      });
+      const statJ3 = rJ3.result.stats;
+      const tlbJ3 = rJ3.result.sfxTickList;
+      if (statJ3.sfxVanishNotes !== 1 || statJ3.sfxStandaloneNotes !== 0
+        || statJ3.commandBlocks !== 1 || statJ3.sfxEmptyTicks !== 1 || tlbJ3.length !== 1
+        || JSON.stringify(tlbJ3[0].lines) !== JSON.stringify([VANISH(2, 4, 2)])) {
+        console.log(`FAIL 消失型 MIDI 锚点：vanish=${statJ3.sfxVanishNotes} indep=${statJ3.sfxStandaloneNotes} CB=${statJ3.commandBlocks} empty=${statJ3.sfxEmptyTicks} 行=${JSON.stringify(tlbJ3)}（期望 tick0 [VANISH(2)@ (0,2,4)]、tick2 空 tick 回退）`); ok = false;
+      } else {
+        console.log('PASS 消失型 MIDI式锚点 = 车道 start（可拖基准）、生成行自持 CB、演奏 tick 空 tick 回退');
+      }
+      // J4 N=0：每 tick 提前量为 0 → 全跳过（无 t−N 可生成）
+      const rJ4 = runE2E(tmpFile, {
+        lane0: { dz: 0, dy: 0 }, refLayers: REF,
+        groups: [{ layers: [0] }], groupStarts: [{ dz: 3, dy: 0 }],
+        refLanes: [{ tracks: [0], type: 'bound', start: { dz: 6, dy: 1 },
+          effects: ['vanish'],
+          sfxParams: { vanish: { particle: 'minecraft:end_rod', color: '1 0.95 0.89 1', ahead: 0 } } }],
+      });
+      const statJ4 = rJ4.result.stats;
+      if (statJ4.sfxVanishNotes !== 0 || rJ4.result.sfxTickList.length !== 0
+        || statJ4.commandBlocks !== 0 || statJ4.sfxEmptyTicks !== 2) {
+        console.log(`FAIL 消失型 N=0：vanish=${statJ4.sfxVanishNotes} 行=${rJ4.result.sfxTickList.length} CB=${statJ4.commandBlocks} empty=${statJ4.sfxEmptyTicks}（期望全跳过：0 行 0 CB、t0/t2 空 tick 回退）`); ok = false;
+      } else {
+        console.log('PASS 消失型 N=0：提前量为 0 → 全跳过（寿命 = 实际提前量 = 0 无意义）');
+      }
+      // J5 仅 vanish（trigger 不勾）：音符 t20/t40 → 生成行落 t10/t30（sfxVanishTicks 支撑孤立 CB）；
+      //   t20/t40 有 sfxEntries 但无行 → 空 tick 回退（CB 还原雪块、TE 移除）
+      const nbsJ5 = makeNbs({ tempoTps: 20, songLength: 48, layers: 1, noteSpecs: [
+        { tick: 20, layer: 0, instrument: 0, key: 45 },
+        { tick: 40, layer: 0, instrument: 0, key: 50 },
+      ]});
+      const tmpJ5 = 'synth_vanish.nbs';
+      writeFileSync(path.join(__dirname, tmpJ5), nbsJ5);
+      const rJ5 = runE2E(tmpJ5, {
+        lane0: { dz: 0, dy: 0 }, refLayers: REF,
+        groups: [{ layers: [0] }], groupStarts: [{ dz: 3, dy: 0 }],
+        refLanes: [{ tracks: [0], type: 'bound', start: { dz: 6, dy: 1 },
+          effects: ['vanish'],
+          sfxParams: { vanish: { particle: 'minecraft:end_rod', color: '1 0.95 0.89 1', ahead: 10 } } }],
+      });
+      ok = verifyE2E('参考车道池·消失型孤立 CB', rJ5) && ok;
+      const statJ5 = rJ5.result.stats;
+      const tlbJ5 = rJ5.result.sfxTickList;
+      if (statJ5.sfxVanishNotes !== 2 || statJ5.commandBlocks !== 2 || statJ5.sfxEmptyTicks !== 2
+        || tlbJ5.length !== 2
+        || tlbJ5[0].tick !== 10 || tlbJ5[1].tick !== 30
+        || JSON.stringify(tlbJ5[0].lines) !== JSON.stringify([VANISH(2, 6, 10)])
+        || JSON.stringify(tlbJ5[1].lines) !== JSON.stringify([VANISH(2, 6, 10)])) {
+        console.log(`FAIL 消失型孤立 CB：vanish=${statJ5.sfxVanishNotes} CB=${statJ5.commandBlocks} empty=${statJ5.sfxEmptyTicks} 行=${JSON.stringify(tlbJ5)}（期望 行落 t10/t30 各 [VANISH(10)]、CB=2 自持、t20/t40 空 tick 回退）`); ok = false;
+      } else {
+        console.log('PASS 消失型 sfxVanishTicks 支撑孤立 CB：生成 tick（无参考音符）自持 function/CB，演奏 tick 无行 → 空 tick 回退');
       }
     }
   } catch (e) {

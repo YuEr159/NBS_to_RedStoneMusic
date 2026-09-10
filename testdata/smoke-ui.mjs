@@ -102,17 +102,19 @@ check(context.window.__NBS2SCHEMATIC.state.lanes[0].tracks.join(',') === '0,1,2'
 check(context.window.__NBS2SCHEMATIC.layoutEditor !== null, '布局编辑器已创建');
 check(elements.get('group-section').hidden === false, '车道池区已显示');
 check(elements.get('layer-section').hidden === false, '音轨池区已显示');
-// 粒子特效总览（3 类框架：触发型·连接型已实现 / 背景型规划占位）
+// 粒子特效总览（4 类框架：触发/连接/消失已实现 / 背景型规划占位）
 {
   const eff = elements.get('sfxEffectList').innerHTML;
-  check(eff.includes('① 触发型') && eff.includes('② 连接型') && eff.includes('③ 背景型'),
-    '粒子特效总览：3 类（触发/连接/背景）全部渲染');
-  check((eff.match(/已实现/g) || []).length === 2 && (eff.match(/规划中/g) || []).length === 1,
-    '粒子特效总览：触发/连接标「已实现」×2、背景标「规划中」×1');
+  check(eff.includes('① 触发型') && eff.includes('② 连接型') && eff.includes('③ 背景型') && eff.includes('④ 消失型'),
+    '粒子特效总览：4 类（触发/连接/背景/消失）全部渲染');
+  check((eff.match(/已实现/g) || []).length === 3 && (eff.match(/规划中/g) || []).length === 1,
+    '粒子特效总览：触发/连接/消失标「已实现」×3、背景标「规划中」×1');
   check(eff.includes('minecraft:end_rod') && eff.includes('sfxPitchStep'),
     '粒子特效总览：触发型条目含当前效果（end_rod 螺旋）与参数规则描述');
   check(eff.includes('tickpolarparameter') && eff.includes('点距 ≤0.1 格'),
     '粒子特效总览：连接型条目含实现描述（tickpolarparameter、点距 ≤0.1 格）');
+  check(eff.includes('particleex conditional') && eff.includes('默认不勾选'),
+    '粒子特效总览：消失型条目含 #Cube 条件立方体描述与默认不勾选注记');
 }
 // 粒子特效独立模块 + 按车道勾选表（无参考车道时空提示）
 check(elements.get('sfxEffect-section').hidden === false, '粒子特效总览为独立 section（已显示）');
@@ -667,8 +669,9 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
       rec(elements.get('sfxEffectLanes'));
       return cbs.find(c => String(c.dataset.li) === String(li) && c.dataset.k === key);
     };
-    check(!!findTgl(boundLi, 'trigger') && findTgl(boundLi, 'trigger').checked === true,
-      '特效勾选表：绑定车道三格渲染且默认全选（触发型勾选）');
+    check(!!findTgl(boundLi, 'trigger') && findTgl(boundLi, 'trigger').checked === true
+      && !!findTgl(boundLi, 'vanish') && findTgl(boundLi, 'vanish').checked === false,
+      '特效勾选表：绑定车道四格渲染（触发/连接/背景默认勾选，消失型默认不勾选）');
     const cb = findTgl(boundLi, 'trigger');
     cb.checked = false; cb.dispatch('change', { target: cb }); // 桩 dispatch 直传 evt，需带 target（真实 DOM change 事件语义）
     check(JSON.stringify(st.refLanes[boundLi].effects) === '["connect","background"]',
@@ -824,6 +827,98 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
     }
     xbtns2[boundLi].dispatch('click', {});
     check(!elements.get('sfxEffectLanes').innerHTML.includes('① 触发型 · 粒子命令模板'), '收起（▲）：面板行移除');
+  }
+  // 8e) 消失型（07e）：默认不勾选不产 → 勾选后 t−N 生成行（寿命 = 实际提前量）→ ④ 表单 3 字段往返 → 取消回 0
+  {
+    const { SFX_VANISH_DEFAULTS, sfxVanishCmd } = context.window.__NBS2SCHEMATIC;
+    const boundLi = st.refLanes.findIndex(l => l.tracks.includes(0));
+    const findTgl = (li, key) => {
+      const cbs = [];
+      const rec = (n) => { if (n.className === 'sfx-effect-check') cbs.push(n); (n.children || []).forEach(rec); };
+      rec(elements.get('sfxEffectLanes'));
+      return cbs.find(c => String(c.dataset.li) === String(li) && c.dataset.k === key);
+    };
+    const findIn = (cls) => {
+      const out = [];
+      const rec = (n) => { if (n.className === cls) out.push(n); (n.children || []).forEach(rec); };
+      rec(elements.get('sfxEffectLanes'));
+      return out;
+    };
+    await context.generate();
+    check(st.result.result.stats.sfxVanishNotes === 0, '消失型默认不勾选 → 不产行（旧行为逐位不变）');
+    // 勾选 → 展开面板改提前量为 10（小值便于断言 t−N 落位）
+    const cbV = findTgl(boundLi, 'vanish');
+    cbV.checked = true; cbV.dispatch('change', { target: cbV });
+    check(st.refLanes[boundLi].effects.includes('vanish'), '勾选消失型：effects 含 vanish');
+    const xbtns3 = [];
+    { const recX3 = (n) => { if (n.className === 'sfx-lane-x') xbtns3.push(n); (n.children || []).forEach(recX3); }; recX3(elements.get('sfxEffectLanes')); }
+    xbtns3[boundLi].dispatch('click', {});
+    const vanIns = findIn('sfx-vanish-field');
+    check(vanIns.length === 3, `④ 消失型表单 3 字段（粒子/颜色/提前量，实际 ${vanIns.length}）`);
+    check(JSON.stringify([vanIns[0].value, vanIns[1].value, vanIns[2].value])
+      === JSON.stringify([SFX_VANISH_DEFAULTS.particle, SFX_VANISH_DEFAULTS.color, '500']),
+      '消失型表单回填默认（end_rod / 1 0.95 0.89 1 / 500）');
+    vanIns[2].value = '10'; vanIns[2].dispatch('change', { target: vanIns[2] });
+    check(JSON.stringify(st.refLanes[boundLi].sfxParams.vanish)
+      === JSON.stringify({ particle: 'minecraft:end_rod', color: '1 0.95 0.89 1', ahead: 10 }),
+      '提前量表单编辑：lane.sfxParams.vanish 更新（ahead=10）');
+    await context.generate();
+    const resV = st.result.result;
+    check(resV.stats.sfxVanishNotes > 0, `勾选后消失型行生成（实际 ${resV.stats.sfxVanishNotes}）`);
+    // 行内容：bound 车道锚点 = 虚拟主位（0, dy, dz）；寿命 = 实际提前量 min(N, t)（t=0 音符跳过）
+    const laneV = st.refLanes[boundLi];
+    const anchor = { dx: 0, dy: laneV.start.dy + 1, dz: laneV.start.dz };
+    const vLines = [];
+    for (const e of resV.sfxTickList) for (const l of e.lines) if (l.startsWith('particleex conditional ')) vLines.push(l);
+    check(vLines.length > 0 && vLines.every(l => /^particleex conditional minecraft:end_rod ~0 ~\d+ ~-?\d+ 1 0\.95 0\.89 1 0 0 0 0\.5 0\.5 0\.5 '\(abs\(y\)==0\.5.*' 0\.1 \d+ 'vy=0\.05' 1\.0 null$/.test(l)),
+      `消失型行 = #Cube 原型（坐标段 ~0 ~${anchor.dy} ~${anchor.dz} 锚点、寿命字段为数字、几何逐字）`);
+    check(vLines.some(l => l.includes(`~${anchor.dy} ~${anchor.dz} `)),
+      `消失型行锚点 = 车道虚拟主位 (0,${anchor.dy},${anchor.dz})`);
+    // 寿命 = min(N, t)：所有行寿命 ≤ 10，且存在寿命恰 = 10 的（t ≥ 10 的音符）
+    const lives = vLines.map(l => Number(l.match(/ 0\.1 (\d+) 'vy=0\.05'/)[1]));
+    check(lives.every(n => n >= 1 && n <= 10) && lives.includes(10),
+      `寿命 = 实际提前量（1..10，含满提前量 10；钳位生效）`);
+    // 生成行落 t−N：生成 tick g 的消失行寿命 L 对应演奏 tick g+L（该 tick 有触发行）
+    const triggerTicks = new Set(resV.sfxTickList.filter(e => e.lines.some(l => l.startsWith('particleex polarparameter ')))
+      .map(e => e.tick));
+    let vPairOk = true;
+    for (const e of resV.sfxTickList) for (const l of e.lines) {
+      if (!l.startsWith('particleex conditional ')) continue;
+      const L = Number(l.match(/ 0\.1 (\d+) 'vy=0\.05'/)[1]);
+      if (!triggerTicks.has(e.tick + L)) vPairOk = false;
+    }
+    check(vPairOk, '生成 tick = t−N（消失行寿命 L 对应演奏 tick g+L 存在触发行，寿命 = 实际提前量）');
+    // 非法 ahead（-5）→ 回默认 → 取消勾选 → 0 行 + sfxParams.vanish 删键
+    vanIns[2].value = '-5'; vanIns[2].dispatch('change', { target: vanIns[2] });
+    check(!st.refLanes[boundLi].sfxParams || !('vanish' in st.refLanes[boundLi].sfxParams),
+      'ahead 非法（-5）→ 回默认、vanish 键删除（全部=默认）');
+    const cbV2 = findTgl(boundLi, 'vanish');
+    cbV2.checked = false; cbV2.dispatch('change', { target: cbV2 });
+    await context.generate();
+    check(!st.refLanes[boundLi].effects.includes('vanish') && st.result.result.stats.sfxVanishNotes === 0,
+      '取消消失型：effects 不再含 vanish、不产行（回 0）');
+    // 持久化往返：重新勾选 + 设 ahead=7 → 载荷含 vanish
+    const cbV3 = findTgl(boundLi, 'vanish');
+    cbV3.checked = true; cbV3.dispatch('change', { target: cbV3 });
+    const xbtns4 = [];
+    { const recX4 = (n) => { if (n.className === 'sfx-lane-x') xbtns4.push(n); (n.children || []).forEach(recX4); }; recX4(elements.get('sfxEffectLanes')); }
+    if (xbtns4[boundLi] && xbtns4[boundLi].textContent === '▼') xbtns4[boundLi].dispatch('click', {}); // 面板可能仍展开（sfxLanesOpen 持久）
+    const vanIns2 = findIn('sfx-vanish-field');
+    check(vanIns2.length === 3, `④ 面板重开后 3 字段在列（实际 ${vanIns2.length}）`);
+    vanIns2[2].value = '7'; vanIns2[2].dispatch('change', { target: vanIns2[2] });
+    context.saveStateNow();
+    const rawV = context.localStorage.getItem(context.stateKey(st.song));
+    const parsedV = rawV && JSON.parse(rawV);
+    const laneVP = parsedV && parsedV.refLanes && parsedV.refLanes[boundLi];
+    check(!!laneVP && laneVP.effects.includes('vanish')
+      && laneVP.sfxParams && JSON.stringify(laneVP.sfxParams.vanish)
+        === JSON.stringify({ particle: 'minecraft:end_rod', color: '1 0.95 0.89 1', ahead: 7 }),
+      '消失型勾选 + 参数持久化往返（effects 含 vanish、sfxParams.vanish.ahead=7）');
+    // 收尾还原：取消 vanish + 删 vanish 键，避免影响后续场景（9) 旧格式迁移等）
+    const cbV4 = findTgl(boundLi, 'vanish');
+    cbV4.checked = false; cbV4.dispatch('change', { target: cbV4 });
+    vanIns2[2].value = '500'; vanIns2[2].dispatch('change', { target: vanIns2[2] });
+    check(!st.refLanes[boundLi].effects.includes('vanish'), '消失型收尾还原（取消勾选，ahead 回默认删键）');
   }
   // 9) 旧格式迁移：手工写入旧 bool 载荷 → 重载按MIDI式迁移
   if (parsed) {
