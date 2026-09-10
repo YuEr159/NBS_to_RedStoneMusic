@@ -463,7 +463,8 @@ const SFX_PARTICLE_FIELDS = (() => {
     tail: parts.slice(ci + 3).join(' '),
   };
 })();
-// 归一化车道级触发模板：5 字段全为非空字符串才有效；否则 undefined（= 缺省默认命令）
+// 归一化车道级触发模板：5 字段全为非空字符串才有效；否则 undefined（= 缺省默认命令）。
+//   可选 group（粒子组名，单 token）：仅当非空字符串且不含空白时附加到 5 字段结果；空/多 token/非字符串 → 忽略（不存）。
 function normSfxParams(p) {
   if (!p || typeof p !== 'object') return undefined;
   const out = {};
@@ -471,14 +472,20 @@ function normSfxParams(p) {
     if (typeof p[k] !== 'string' || p[k].trim() === '') return undefined;
     out[k] = p[k];
   }
+  if (p.group !== undefined) {
+    const g = typeof p.group === 'string' ? p.group.trim() : '';
+    if (g === '') return out;
+    if (!/^\S+$/.test(g)) return undefined;
+    out.group = g;
+  }
   return out;
 }
-// 持久化载荷形状：保留 5 结构化字段（字符串）+ 连接型结构化对象（合法 4 字段；非法 → 丢弃，旧字符串占位值不兼容 → 丢弃）
-//   + 消失型结构化对象（合法 3 字段；非法 → 丢弃）+ background 模板文本（字符串，trim 后非空才存）；全空 → undefined（不写该键）
+// 持久化载荷形状：保留 5 结构化字段 + 可选组名（字符串）+ 连接型结构化对象（合法 5 字段；非法 → 丢弃，旧字符串占位值不兼容 → 丢弃）
+//   + 消失型结构化对象（合法 4 字段；非法 → 丢弃）+ background 模板文本（字符串，trim 后非空才存）；全空 → undefined（不写该键）
 function sfxParamsPayload(l) {
   const p = (typeof l.sfxParams === 'object' && l.sfxParams !== null) ? l.sfxParams : {};
   const out = {};
-  for (const k of ['head', 'x', 'y', 'z', 'tail']) if (typeof p[k] === 'string') out[k] = p[k];
+  for (const k of ['head', 'x', 'y', 'z', 'tail', 'group']) if (typeof p[k] === 'string') out[k] = p[k];
   const conn = normConnectParams(p.connect);
   if (conn) out.connect = conn;   // 旧存档的字符串占位 connect 在此自然丢弃（norm 要求对象）
   const van = normVanishParams(p.vanish);
@@ -493,6 +500,14 @@ const sfxParticleCmd = (dx, dy, dz) => sfxParticleCmdFromParts(dx, dy, dz, SFX_P
 //   行 = 命令头 + 替换后的坐标段 + 尾参（尾参里的占位由模组端自行解释，构建侧不再二次替换）。
 const sfxParticleCmdFromParts = (dx, dy, dz, p) =>
   [p.head, `~${dx}`, `~${dy}`, `~${dz}`, p.tail].join(' ');
+// 组名版（2026-09-10）：g 非空且 tail 末 token 恰为 null（粒子命令组位 = 尾参最后一个 token）
+//   → 末 token 替换为组名；否则（缺省命令 / 自定义 tail 未以 null 结尾）原样返回 FromParts 结果。
+const sfxParticleCmdWithGroup = (dx, dy, dz, p, g) => {
+  if (!g) return sfxParticleCmdFromParts(dx, dy, dz, p);
+  const t = String(p.tail).trim();
+  if (!/\snull$/.test(t)) return sfxParticleCmdFromParts(dx, dy, dz, p);
+  return [p.head, `~${dx}`, `~${dy}`, `~${dz}`, String(p.tail).replace(/\s*null\s*$/, ` ${g}`)].join(' ');
+};
 
 // ===== ② 连接型（2026-09-07/07c 用户定规格：线段连接「相邻演奏 tick」，tB 时刻笔尖恰好抵达 B，无缝衔接）=====
 // 连线主轴 = 时间，按**参考车道**连（车道级事件）：车道内任一成员发声的 tick 构成演奏 tick 序列，
@@ -555,6 +570,7 @@ function sfxChordPairs(ka, kb, near) {
 }
 // 归一化车道级连接模板：4 字段全合法才返回完整对象，否则 undefined（= 缺省默认）。
 //   color 须 4 个 0~1 数值；m 整数 ≥0（0 = 粒子立即消亡 = 用户显式关闭寿命）；alpha ≥0。
+//   可选 group（粒子组名，单 token）：合法 4 字段基础上附加；空/多 token/非字符串 → 忽略（不存）。
 function normConnectParams(p) {
   if (!p || typeof p !== 'object') return undefined;
   const parts = String(p.color || '').split(/\s+/).filter(Boolean);
@@ -562,7 +578,14 @@ function normConnectParams(p) {
   if (typeof p.particle !== 'string' || p.particle.trim() === ''
     || parts.length !== 4 || !c.every(x => Number.isFinite(x) && x >= 0 && x <= 1)
     || !Number.isInteger(p.m) || p.m < 0 || !Number.isFinite(p.alpha) || p.alpha < 0) return undefined;
-  return { particle: p.particle.trim(), color: c.join(' '), m: p.m, alpha: p.alpha };
+  const out = { particle: p.particle.trim(), color: c.join(' '), m: p.m, alpha: p.alpha };
+  if (p.group !== undefined) {
+    const g = typeof p.group === 'string' ? p.group.trim() : '';
+    if (g === '') return out;
+    if (!/^\S+$/.test(g)) return undefined;
+    out.group = g;
+  }
+  return out;
 }
 // ===== ④ 消失型（2026-09-07e 用户定规格：演奏 tick 前 N tick 提前出现，恰在演奏 tick 消亡）=====
 // 机制（用户 07e 定「自动计算粒子寿命，正好卡上对应 tick 就消失」）：每个参考音符在 t−N tick 生成一行
@@ -584,16 +607,19 @@ const SFX_VANISH_PROTO = [
   "'(abs(y)==0.5&!(abs(z)<0.5))|(abs(x)==0.5&(!(abs(z)<0.5)|!(abs(y)<0.5)))'",
   '0.1', '20', "'vy=0.05'", '1.0', 'null',
 ];
-// 车道级消失型命令：坐标段 = ~dx ~dy ~dz（按锚点求解），寿命 = 实际 N（钳位后）
+// 车道级消失型命令：坐标段 = ~dx ~dy ~dz（按锚点求解），寿命 = 实际 N（钳位后），
+//   组位（数组索引 13）= v.group（缺省/未填 = 'null'）
 const sfxVanishCmd = (dx, dy, dz, N, v) => {
   const p = (v && v.particle) ? v.particle : SFX_VANISH_DEFAULTS.particle;
   const color = (v && v.color) ? v.color : SFX_VANISH_DEFAULTS.color;
   const a = SFX_VANISH_PROTO.slice();
   a[1] = p; a[2] = `~${dx}`; a[3] = `~${dy}`; a[4] = `~${dz}`;
   a[5] = color; a[10] = String(N);   // age 字段（原型第 11 元素 '20'），寿命 = 实际 N
+  a[13] = (v && v.group) ? v.group : 'null';   // 组位（2026-09-10 开放为车道级可选组名）
   return a.join(' ');
 };
 // 归一化车道级消失型模板：3 字段全合法才返回完整对象，否则 undefined（= 缺省默认）。
+//   可选 group（粒子组名，单 token）：合法 3 字段基础上附加；空/多 token/非字符串 → 忽略（不存）。
 function normVanishParams(p) {
   if (!p || typeof p !== 'object') return undefined;
   const parts = String(p.color || '').split(/\s+/).filter(Boolean);
@@ -601,7 +627,14 @@ function normVanishParams(p) {
   if (typeof p.particle !== 'string' || p.particle.trim() === ''
     || parts.length !== 4 || !c.every(x => Number.isFinite(x) && x >= 0 && x <= 1)
     || !Number.isInteger(p.ahead) || p.ahead < 0) return undefined;
-  return { particle: p.particle.trim(), color: c.join(' '), ahead: p.ahead };
+  const out = { particle: p.particle.trim(), color: c.join(' '), ahead: p.ahead };
+  if (p.group !== undefined) {
+    const g = typeof p.group === 'string' ? p.group.trim() : '';
+    if (g === '') return out;
+    if (!/^\S+$/.test(g)) return undefined;
+    out.group = g;
+  }
+  return out;
 }
 // 浮点数字面量（角度/长度/步长）：去浮点噪声（0.30000000000000004 类），最多 9 位小数
 const sfxNum = (n) => String(Math.round(n * 1e9) / 1e9);
@@ -620,7 +653,7 @@ function sfxConnectCmd(a, d, L, P, m, alpha, cp) {
     sfxNum(vx), sfxNum(vy), sfxNum(vz),
     '0', sfxNum(end),
     `"s1,s2,dis=${sfxNum(phi)},${sfxNum(theta)},${sfxNum(L)}*t"`,
-    sfxNum(step), String(P), String(m), 'null', '1.0', 'null',
+    sfxNum(step), String(P), String(m), 'null', '1.0', cp.group || 'null',
   ].join(' ');
 }
 // 命令方块方块状态：facing=up（1.21.11 jar 查证：command_block 的 blockstate 仅 facing 属性；
@@ -1356,6 +1389,12 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
         stats.discardedDetails.push(
           `参考车道 ${chains.indexOf(r) - (defaultStart ? 1 : 0) - nOrd + 1} 触发模板命令头含 ~ 占位：坐标段须填入「坐标段 X/Y/Z」字段，本车道绑定粒子行已跳过`);
       }
+      // 组名（2026-09-10）：有值但 tail 末 token ≠ null → 组位无法安全替换，告警一次（行仍按原命令生成）
+      const sfxGroup = (parts && parts !== SFX_PARTICLE_FIELDS && parts.group) ? parts.group : undefined;
+      if (sfxGroup && parts && !/\snull$/.test(String(parts.tail).trim())) {
+        stats.discardedDetails.push(
+          `参考车道 ${chains.indexOf(r) - (defaultStart ? 1 : 0) - nOrd + 1} 触发模板组名已填但尾参末 token 非 null：组位未替换，按原命令生成`);
+      }
       if (!parts) continue;
       for (let t = 0; t < nTicks; t++) {
         // 本 tick 车道内任一单线式成员发声 → 主位（slot 0）产 1 行；多成员同 tick 齐响不展开第2/3位
@@ -1369,7 +1408,7 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
         const dy = (r.yb + 1) - railChain.yb;     // 虚拟盒层 − 轨道 0 底座层
         const dz = r.zc - railChain.zc;           // 主位 Z（slot 0，无槽位偏移）
         if (!sfxTickLines.has(t)) sfxTickLines.set(t, []);
-        sfxTickLines.get(t).push(sfxParticleCmdFromParts(0, dy, dz, parts));
+        sfxTickLines.get(t).push(sfxParticleCmdWithGroup(0, dy, dz, parts, sfxGroup));
         stats.sfxBoundNotes++;
       }
     }
@@ -2256,7 +2295,7 @@ function loadSavedState(song) {
           if (!lane.sfxParams || typeof lane.sfxParams !== 'object' || Array.isArray(lane.sfxParams)) return null;
           for (const k of Object.keys(lane.sfxParams)) {
             const v = lane.sfxParams[k];
-            if (!['head', 'x', 'y', 'z', 'tail', 'connect', 'vanish', 'background'].includes(k)) return null;
+            if (!['head', 'x', 'y', 'z', 'tail', 'group', 'connect', 'vanish', 'background'].includes(k)) return null;
             if (k === 'connect') { if (!normConnectParams(v)) return null; }
             else if (k === 'vanish') { if (!normVanishParams(v)) return null; }
             else if (typeof v !== 'string') return null;
@@ -3126,9 +3165,9 @@ function renderSfxEffectLanes() {
   });
   box.appendChild(table);
 }
-// 车道展开面板：四类特效各一块——触发型 = 结构化 5 字段（车道级模板，参与绑定行生成）；
-//   连接型 = 结构化 4 字段（粒子/颜色/m 寿命/漂移；线段几何构建时算，参与连接线生成）；
-//   消失型 = 结构化 3 字段（粒子/颜色/提前量 N；#Cube 原型其余逐字，寿命自动 = N）；
+// 车道展开面板：四类特效各一块——触发型 = 结构化 5 字段 + 可选组名（车道级模板，参与绑定行生成）；
+//   连接型 = 结构化 4 字段 + 可选组名（粒子/颜色/m 寿命/漂移；线段几何构建时算，参与连接线生成）；
+//   消失型 = 结构化 3 字段 + 可选组名（粒子/颜色/提前量 N；#Cube 原型其余逐字，寿命自动 = N）；
 //   背景型 = 模板文本框（2026-09-10 实现：按乐曲小节间隔周期性执行；随车道持久化）。
 function renderSfxLaneParams(lane, li) {
   const box = document.createElement('div');
@@ -3140,7 +3179,7 @@ function renderSfxLaneParams(lane, li) {
   box.appendChild(h1);
   const tip1 = document.createElement('div');
   tip1.className = 'hint';
-  tip1.textContent = '仅影响本车道**绑定行**（MIDI式行属声道级，仍用默认命令）。构建时坐标段按车道起点/槽位替换为 ~dx ~dy ~dz；命令头/尾参逐字进入 .mcfunction（模组端自行解释其占位符）。留空任一项 → 按默认命令生成。';
+  tip1.textContent = '仅影响本车道**绑定行**（MIDI式行属声道级，仍用默认命令）。构建时坐标段按车道起点/槽位替换为 ~dx ~dy ~dz；命令头/尾参逐字进入 .mcfunction（模组端自行解释其占位符）。留空任一项 → 按默认命令生成。组名（可选，单 token）写入命令组位——仅当尾参以 null 结尾时替换该 token，否则忽略（留空 = 不分组）。';
   box.appendChild(tip1);
   const rowHead = document.createElement('div');
   rowHead.className = 'sfx-pf';
@@ -3179,13 +3218,25 @@ function renderSfxLaneParams(lane, li) {
   inT.addEventListener('change', (e) => onSfxParamEdit(li, 'tail', e.target.value));
   rowTail.appendChild(lbT); rowTail.appendChild(inT);
   box.appendChild(rowTail);
-  // ② 连接型：结构化 4 字段（粒子/颜色/m 寿命/漂移；线段几何 = 构建时按音符数据计算，不可用户输入）
+  const rowGroup = document.createElement('div');
+  rowGroup.className = 'sfx-pf';
+  const lbG = document.createElement('label');
+  lbG.textContent = '组（可选）';
+  const inG = document.createElement('input');
+  inG.type = 'text';
+  inG.value = (typeof p.group === 'string') ? p.group : '';
+  inG.placeholder = 'particleex 组名（如 bg1）';
+  inG.title = '粒子组名（单 token，不含空白）：写入命令组位（仅当尾参末 token 为 null 时替换）。留空 = 不分组（命令组位保持 null）';
+  inG.addEventListener('change', (e) => onSfxParamEdit(li, 'group', e.target.value));
+  rowGroup.appendChild(lbG); rowGroup.appendChild(inG);
+  box.appendChild(rowGroup);
+  // ② 连接型：结构化 5 字段（粒子/颜色/m 寿命/漂移/组名；线段几何 = 构建时按音符数据计算，不可用户输入）
   const h2 = document.createElement('h4');
   h2.textContent = '② 连接型 · 线段参数（A→B，抵达时刻 = B 触发）';
   box.appendChild(h2);
   const tip2 = document.createElement('div');
   tip2.className = 'hint';
-  tip2.textContent = '仅影响本车道的成员：相邻演奏 tick A→B 画一条线段（点距 ≤0.1 格），笔尖恰好在 B 的触发型/音符盒激活那一 tick 抵达 B（无缝衔接）。MIDI式按各音粒子中心（音高 Z）连线，同 tick 和弦（多成员齐响）配对：间隔 ≤32 tick 时 1:1 最近邻 + 落单音就近挂靠（1对3/3对1），否则严格 1:1；单线式端点简并为中间槽位、沿链 X 方向连线（每 tick 2 格）。方向/长度/生成节奏均由音符数据构建时计算；此处调视觉：粒子、颜色（R G B A 四值 0~1）、m 寿命（每粒子自出生起存活的 tick，≥ Δt = 到达后整线停留再消融，< Δt = 彗星尾）、漂移 α（整线朝 B 漂移速度系数，0 = 静止）。任一项留空 → 该字段回默认。';
+  tip2.textContent = '仅影响本车道的成员：相邻演奏 tick A→B 画一条线段（点距 ≤0.1 格），笔尖恰好在 B 的触发型/音符盒激活那一 tick 抵达 B（无缝衔接）。MIDI式按各音粒子中心（音高 Z）连线，同 tick 和弦（多成员齐响）配对：间隔 ≤32 tick 时 1:1 最近邻 + 落单音就近挂靠（1对3/3对1），否则严格 1:1；单线式端点简并为中间槽位、沿链 X 方向连线（每 tick 2 格）。方向/长度/生成节奏均由音符数据构建时计算；此处调视觉：粒子、颜色（R G B A 四值 0~1）、m 寿命（每粒子自出生起存活的 tick，≥ Δt = 到达后整线停留再消融，< Δt = 彗星尾）、漂移 α（整线朝 B 漂移速度系数，0 = 静止）、组名（可选，写入命令组位，留空 = null）。任一项留空 → 该字段回默认。';
   box.appendChild(tip2);
   const conn = normConnectParams(lane.sfxParams ? lane.sfxParams.connect : null) || SFX_CONNECT_DEFAULTS;
   const rowConn = document.createElement('div');
@@ -3195,6 +3246,7 @@ function renderSfxLaneParams(lane, li) {
     ['color', '颜色 R G B A', conn.color, '4 个 0~1 小数，如 1 0.95 0.89 1'],
     ['m', 'm 寿命 (tick)', String(conn.m), '每粒子自出生起存活的 tick（整数 ≥0；0 = 立即消亡）'],
     ['alpha', '漂移 α', String(conn.alpha), '整线朝 B 漂移速度系数（≥0；0 = 静止）'],
+    ['group', '组（可选）', (typeof conn.group === 'string') ? conn.group : '', 'particleex 组名（单 token）；留空 = 不分组（命令组位 null）'],
   ].forEach(([k, label, val, ph]) => {
     const lb = document.createElement('label');
     lb.textContent = label;
@@ -3223,7 +3275,7 @@ function renderSfxLaneParams(lane, li) {
   inC3.placeholder = 'particleex …（留空 = 不产背景行）';
   inC3.addEventListener('change', (e) => onSfxParamPlainEdit(li, 'background', e.target.value));
   box.appendChild(inC3);
-  // ④ 消失型：结构化 3 字段（粒子/颜色 R G B A/提前量 N；#Cube 原型几何逐字写死，寿命自动 = 实际提前量）
+  // ④ 消失型：结构化 4 字段（粒子/颜色 R G B A/提前量 N/组名；#Cube 原型几何逐字写死，寿命自动 = 实际提前量）
   const h4 = document.createElement('h4');
   h4.textContent = '④ 消失型 · 提前出现参数（t−N 生成，寿命 = 实际提前量自动计算）';
   box.appendChild(h4);
@@ -3237,6 +3289,7 @@ function renderSfxLaneParams(lane, li) {
   [['particle', '粒子', vanish.particle, '如 minecraft:end_rod / minecraft:heart'],
    ['color', '颜色 R G B A', vanish.color, '4 个 0~1 小数，如 1 0.95 0.89 1'],
    ['ahead', '提前量 N (tick)', String(vanish.ahead), '提前出现的 tick 数（整数 ≥0，默认 500）；寿命自动 = N'],
+   ['group', '组（可选）', (typeof vanish.group === 'string') ? vanish.group : '', 'particleex 组名（单 token）；留空 = 不分组（命令组位 null）'],
   ].forEach(([k, label, val, ph]) => {
     const lb = document.createElement('label');
     lb.textContent = label;
@@ -3258,6 +3311,17 @@ function renderSfxLaneParams(lane, li) {
 function onSfxParamEdit(li, k, v) {
   const lane = AppState.refLanes[li];
   if (!lane) return;
+  if (k === 'group') {
+    // 组名独立处理：不参与 5 字段「非空才存」判定——清空组名不应把整表单冲成默认/删键
+    const g = String(v == null ? '' : v).trim();
+    if (g === '') {
+      if (lane.sfxParams) { delete lane.sfxParams.group; if (Object.keys(lane.sfxParams).length === 0) lane.sfxParams = undefined; }
+    } else {
+      lane.sfxParams = { ...(typeof lane.sfxParams === 'object' && lane.sfxParams !== null ? lane.sfxParams : {}), group: g };
+    }
+    scheduleStateSave();
+    return;
+  }
   const src = (typeof lane.sfxParams === 'object' && lane.sfxParams !== null) ? { ...SFX_PARTICLE_FIELDS, ...lane.sfxParams } : SFX_PARTICLE_FIELDS;
   const p = { ...src, [k]: String(v == null ? '' : v).trim() };
   lane.sfxParams = (p.head || p.x || p.y || p.z || p.tail) ? p : undefined;
@@ -3274,9 +3338,13 @@ function onSfxConnectEdit(li, k, v) {
   // 输入框给字符串；m/alpha 须为数值过校验（空串保持空串 → 校验失败回默认，语义同清空）
   const val = (k === 'm' || k === 'alpha') ? (cur === '' ? cur : Number(cur)) : cur;
   const p = { ...src, [k]: val };
+  if (k === 'group' && cur === '') delete p.group;   // 组名留空 = 不存（不分组，命令组位保持 null）
   const conn = normConnectParams(p) || SFX_CONNECT_DEFAULTS;   // 该字段非法（如颜色 5 个值）→ 回默认
   const base = (lane.sfxParams && typeof lane.sfxParams === 'object') ? { ...lane.sfxParams } : {};
-  const isDefault = JSON.stringify(conn) === JSON.stringify(SFX_CONNECT_DEFAULTS);
+  // 默认判定：4 基础字段全 = 默认 且 group 未填 → 不存键（载荷保持旧形状）
+  const cmp = { particle: conn.particle, color: conn.color, m: conn.m, alpha: conn.alpha };
+  if (typeof conn.group === 'string') cmp.group = conn.group;
+  const isDefault = JSON.stringify(cmp) === JSON.stringify(SFX_CONNECT_DEFAULTS);
   if (isDefault) delete base.connect; else base.connect = conn;
   lane.sfxParams = (Object.keys(base).length > 0) ? base : undefined;
   scheduleStateSave();
@@ -3302,9 +3370,13 @@ function onSfxVanishEdit(li, k, v) {
   // ahead 须为整数过校验（空串 → NaN → 校验失败回默认，语义同清空）
   const val = (k === 'ahead') ? (cur === '' ? cur : Number(cur)) : cur;
   const p = { ...src, [k]: val };
+  if (k === 'group' && cur === '') delete p.group;
   const van = normVanishParams(p) || SFX_VANISH_DEFAULTS;
   const base = (lane.sfxParams && typeof lane.sfxParams === 'object') ? { ...lane.sfxParams } : {};
-  const isDefault = JSON.stringify(van) === JSON.stringify(SFX_VANISH_DEFAULTS);
+  // 默认判定：3 基础字段全 = 默认 且 group 未填 → 不存键（载荷保持旧形状）
+  const cmpV = { particle: van.particle, color: van.color, ahead: van.ahead };
+  if (typeof van.group === 'string') cmpV.group = van.group;
+  const isDefault = JSON.stringify(cmpV) === JSON.stringify(SFX_VANISH_DEFAULTS);
   if (isDefault) delete base.vanish; else base.vanish = van;
   lane.sfxParams = (Object.keys(base).length > 0) ? base : undefined;
   scheduleStateSave();
@@ -4232,7 +4304,7 @@ window.__NBS2SCHEMATIC = {
   parseNBS, computeDelays, noteFromKey, baseBlockFor, instrumentNameFor,
   buildLayout, buildPalette, buildLitematic,
   SFX_NAMESPACE, SFX_PARTICLE_CMD, SFX_CB_STATE, SFX_PACKFORMAT, sfxPackFormat, sfxParticleCmd,
-  SFX_PARTICLE_FIELDS, sfxParticleCmdFromParts, normSfxParams, sfxParamsPayload,
+  SFX_PARTICLE_FIELDS, sfxParticleCmdFromParts, sfxParticleCmdWithGroup, normSfxParams, sfxParamsPayload,
   SFX_NBS_TICK_PER_BEAT, sfxBarLen, sfxNormBackground,
   SFX_CONNECT_DEFAULTS, SFX_CONNECT_POINT_GAP, SFX_CONNECT_MIN_LEN, SFX_CONNECT_NEAR_DT, normConnectParams, sfxNum, sfxConnectCmd, sfxChordPairs,
   SFX_VANISH_DEFAULTS, SFX_VANISH_PROTO, sfxVanishCmd, normVanishParams,

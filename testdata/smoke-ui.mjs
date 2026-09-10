@@ -735,15 +735,15 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
       }
       (n.children || []).forEach(collect);
     })(panelBox);
-    check(inputs.length >= 7, `面板输入框 ≥7（命令头/坐标×3/尾参/连接/背景，实际 ${inputs.length}）`);
+    check(inputs.length >= 8, `面板输入框 ≥8（命令头/坐标×3/尾参/组名/连接×5/背景，实际 ${inputs.length}）`);
     check(inputs[0].value === SFX_PARTICLE_FIELDS.head && inputs[4].value === SFX_PARTICLE_FIELDS.tail,
       '触发型表单回填默认命令（命令头/尾参，输入序 head/x/y/z/tail）');
-    // 连接型结构化 4 字段表单：回填默认（在触发型全清操作之前断言——同面板，全清会一并清空本表单）
+    // 连接型结构化 5 字段表单：回填默认（在触发型全清操作之前断言——同面板，全清会一并清空本表单）
     const connIns = findIn('sfx-connect-field');
-    check(connIns.length === 4, `连接型表单 4 字段（粒子/颜色/m/α，实际 ${connIns.length}）`);
-    check(JSON.stringify([connIns[0].value, connIns[1].value, connIns[2].value, connIns[3].value])
-      === JSON.stringify(['minecraft:end_rod', '1 0.95 0.89 1', '10', '0']),
-      '连接型表单回填默认（粒子/颜色/m=10/α=0）');
+    check(connIns.length === 5, `连接型表单 5 字段（粒子/颜色/m/α/组，实际 ${connIns.length}）`);
+    check(JSON.stringify([connIns[0].value, connIns[1].value, connIns[2].value, connIns[3].value, connIns[4].value])
+      === JSON.stringify(['minecraft:end_rod', '1 0.95 0.89 1', '10', '0', '']),
+      '连接型表单回填默认（粒子/颜色/m=10/α=0/组留空）');
     // 改触发型命令头 + 尾参 → 生成：绑定行按本车道模板（坐标段仍虚拟槽位 ~0 ~2 ~6），独立行保持默认命令
     const headIn = inputs[0], tailIn = inputs[4];
     headIn.value = 'particleex custom minecraft:totem_of_undying';
@@ -863,10 +863,10 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
     { const recX3 = (n) => { if (n.className === 'sfx-lane-x') xbtns3.push(n); (n.children || []).forEach(recX3); }; recX3(elements.get('sfxEffectLanes')); }
     xbtns3[boundLi].dispatch('click', {});
     const vanIns = findIn('sfx-vanish-field');
-    check(vanIns.length === 3, `④ 消失型表单 3 字段（粒子/颜色/提前量，实际 ${vanIns.length}）`);
-    check(JSON.stringify([vanIns[0].value, vanIns[1].value, vanIns[2].value])
-      === JSON.stringify([SFX_VANISH_DEFAULTS.particle, SFX_VANISH_DEFAULTS.color, '500']),
-      '消失型表单回填默认（end_rod / 1 0.95 0.89 1 / 500）');
+    check(vanIns.length === 4, `④ 消失型表单 4 字段（粒子/颜色/提前量/组，实际 ${vanIns.length}）`);
+    check(JSON.stringify([vanIns[0].value, vanIns[1].value, vanIns[2].value, vanIns[3].value])
+      === JSON.stringify([SFX_VANISH_DEFAULTS.particle, SFX_VANISH_DEFAULTS.color, '500', '']),
+      '消失型表单回填默认（end_rod / 1 0.95 0.89 1 / 500 / 组留空）');
     vanIns[2].value = '10'; vanIns[2].dispatch('change', { target: vanIns[2] });
     check(JSON.stringify(st.refLanes[boundLi].sfxParams.vanish)
       === JSON.stringify({ particle: 'minecraft:end_rod', color: '1 0.95 0.89 1', ahead: 10 }),
@@ -913,7 +913,7 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
     { const recX4 = (n) => { if (n.className === 'sfx-lane-x') xbtns4.push(n); (n.children || []).forEach(recX4); }; recX4(elements.get('sfxEffectLanes')); }
     if (xbtns4[boundLi] && xbtns4[boundLi].textContent === '▼') xbtns4[boundLi].dispatch('click', {}); // 面板可能仍展开（sfxLanesOpen 持久）
     const vanIns2 = findIn('sfx-vanish-field');
-    check(vanIns2.length === 3, `④ 面板重开后 3 字段在列（实际 ${vanIns2.length}）`);
+    check(vanIns2.length === 4, `④ 面板重开后 4 字段在列（实际 ${vanIns2.length}）`);
     vanIns2[2].value = '7'; vanIns2[2].dispatch('change', { target: vanIns2[2] });
     context.saveStateNow();
     const rawV = context.localStorage.getItem(context.stateKey(st.song));
@@ -982,6 +982,102 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
     bgIns[0].value = ''; bgIns[0].dispatch('change', { target: bgIns[0] });
     await context.generate();
     check(st.result.result.stats.sfxBackgroundNotes === 0, '收尾还原：清空背景模板 → 0 背景行');
+  }
+  // 8g) 粒子组名（2026-09-10）：① 触发型组名输入（8c 已覆盖）→ ② 连接型组字段 + ④ 消失型组字段 →
+  //     连接线/消失行组位写入 + 持久化往返；收尾还原（组清空、取消消失型）
+  {
+    const boundLi = st.refLanes.findIndex(l => l.tracks.includes(0));
+    const findTgl = (li, key) => {
+      const cbs = [];
+      const rec = (n) => { if (n.className === 'sfx-effect-check') cbs.push(n); (n.children || []).forEach(rec); };
+      rec(elements.get('sfxEffectLanes'));
+      return cbs.find(c => String(c.dataset.li) === String(li) && c.dataset.k === key);
+    };
+    const findIn = (cls) => {
+      const out = [];
+      const rec = (n) => { if (n.className === cls) out.push(n); (n.children || []).forEach(rec); };
+      rec(elements.get('sfxEffectLanes'));
+      return out;
+    };
+    // 勾选消失型 + 展开面板
+    const cbG = findTgl(boundLi, 'vanish');
+    cbG.checked = true; cbG.dispatch('change', { target: cbG });
+    const xbtns6 = [];
+    { const recX6 = (n) => { if (n.className === 'sfx-lane-x') xbtns6.push(n); (n.children || []).forEach(recX6); }; recX6(elements.get('sfxEffectLanes')); }
+    if (xbtns6[boundLi] && xbtns6[boundLi].textContent === '▼') xbtns6[boundLi].dispatch('click', {});
+    const vanIns3 = findIn('sfx-vanish-field');
+    const connIns2 = findIn('sfx-connect-field');
+    check(vanIns3.length === 4 && connIns2.length === 5,
+      `8g 前置：④ 表单 4 字段 / ② 表单 5 字段（实际 van=${vanIns3.length} conn=${connIns2.length}）`);
+    // ① 触发型组名（第 6 输入）：填写 → 绑定行组位替换；清空 → 组位回 null
+    const panelBoxG = elements.get('sfxEffectLanes');
+    const allInsG = [];
+    (function collectG(n) {
+      if (n.className === 'sfx-lane-params') {
+        (function innerG(m) { if (m.tagName === 'input') allInsG.push(m); (m.children || []).forEach(innerG); })(n);
+        return;
+      }
+      (n.children || []).forEach(collectG);
+    })(panelBoxG);
+    const gIn2 = allInsG[5];
+    check(!!gIn2 && gIn2.value === '', '① 触发型组名输入框在列（第 6 输入，默认留空）');
+    // 组名生效前提 = 5 字段模板有效（normSfxParams 全非空）→ 先回填默认 5 字段，再填组名
+    {
+      const PFv = context.window.__NBS2SCHEMATIC.SFX_PARTICLE_FIELDS;
+      [allInsG[0], allInsG[1], allInsG[2], allInsG[3], allInsG[4]].forEach((inp, i) => {
+        inp.value = [PFv.head, PFv.x, PFv.y, PFv.z, PFv.tail][i];
+        inp.dispatch('change', { target: inp });
+      });
+    }
+    gIn2.value = 'g1'; gIn2.dispatch('change', { target: gIn2 });
+    check(st.refLanes[boundLi].sfxParams && st.refLanes[boundLi].sfxParams.group === 'g1',
+      '① 组名表单编辑：lane.sfxParams.group 更新');
+    // 填组名：消失 vg9 / 连接 cg9
+    vanIns3[3].value = 'vg9'; vanIns3[3].dispatch('change', { target: vanIns3[3] });
+    connIns2[4].value = 'cg9'; connIns2[4].dispatch('change', { target: connIns2[4] });
+    check(JSON.stringify(st.refLanes[boundLi].sfxParams.vanish)
+        === JSON.stringify({ particle: 'minecraft:end_rod', color: '1 0.95 0.89 1', ahead: 500, group: 'vg9' })
+      && st.refLanes[boundLi].sfxParams.connect && st.refLanes[boundLi].sfxParams.connect.group === 'cg9',
+      '组名表单编辑：sfxParams.vanish.group / sfxParams.connect.group 更新');
+    await context.generate();
+    const resG2 = st.result.result;
+    const vG = resG2.sfxTickList.flatMap(e => e.lines).filter(l => l.startsWith('particleex conditional '));
+    const cG = resG2.sfxTickList.flatMap(e => e.lines).filter(l => l.startsWith('particleex tickpolarparameter '));
+    check(vG.length > 0 && vG.every(l => /\s+vg9$/.test(l)),
+      `消失行组位 = vg9（实际 ${vG.length} 行）`);
+    check(cG.length > 0 && cG.every(l => /\s+cg9$/.test(l)),
+      `连接线组位 = cg9（实际 ${cG.length} 行）`);
+    // ① 绑定行组位 = g1（lane.sfxParams 含完整 5 字段默认模板 + group → 组位替换）
+    const boundG = resG2.sfxTickList.flatMap(e => e.lines)
+      .filter(l => l.startsWith('particleex polarparameter '));
+    const boundGg = boundG.filter(l => /\s+g1$/.test(l));
+    check(boundG.length > 0 && boundGg.length === boundG.length,
+      `① 绑定行组位 = g1（全部 ${boundG.length} 条触发行末 token g1）`);
+    // 持久化往返：vanish.group / connect.group
+    context.saveStateNow();
+    const rawG = context.localStorage.getItem(context.stateKey(st.song));
+    const parsedG = rawG && JSON.parse(rawG);
+    const laneGP = parsedG && parsedG.refLanes && parsedG.refLanes[boundLi];
+    check(!!laneGP && laneGP.sfxParams
+      && laneGP.sfxParams.vanish && laneGP.sfxParams.vanish.group === 'vg9'
+      && laneGP.sfxParams.connect && laneGP.sfxParams.connect.group === 'cg9',
+      '组名持久化往返（sfxParams.vanish.group / sfxParams.connect.group）');
+    // 收尾还原：组清空（触发/连接/消失）+ 取消消失型 → 组位回 null、消失行消失
+    gIn2.value = ''; gIn2.dispatch('change', { target: gIn2 });
+    vanIns3[3].value = ''; vanIns3[3].dispatch('change', { target: vanIns3[3] });
+    connIns2[4].value = ''; connIns2[4].dispatch('change', { target: connIns2[4] });
+    const cbG2 = findTgl(boundLi, 'vanish');
+    cbG2.checked = false; cbG2.dispatch('change', { target: cbG2 });
+    await context.generate();
+    const resG3 = st.result.result;
+    const vG3 = resG3.sfxTickList.flatMap(e => e.lines).filter(l => l.startsWith('particleex conditional '));
+    const cG3 = resG3.sfxTickList.flatMap(e => e.lines).filter(l => l.startsWith('particleex tickpolarparameter '));
+    check(vG3.length === 0 && cG3.length > 0 && cG3.every(l => /\s+null$/.test(l)),
+      '收尾还原：消失行消失（取消勾选）、连接线组位回 null');
+    const boundG3 = resG3.sfxTickList.flatMap(e => e.lines)
+      .filter(l => l.startsWith('particleex polarparameter '));
+    check(boundG3.length > 0 && boundG3.every(l => !/\s+g1$/.test(l)),
+      '收尾还原：① 触发组名清空 → 绑定行组位回 null');
   }
   // 9) 旧格式迁移：手工写入旧 bool 载荷 → 重载按MIDI式迁移
   if (parsed) {

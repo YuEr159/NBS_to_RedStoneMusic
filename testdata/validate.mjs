@@ -1302,6 +1302,7 @@ try {
 //   尺寸只由真实链决定）
 {
   const { SFX_NAMESPACE, SFX_CB_STATE, sfxParticleCmd, sfxParticleCmdFromParts,
+    SFX_PARTICLE_FIELDS, sfxParticleCmdWithGroup, normSfxParams, normConnectParams,
     SFX_CONNECT_DEFAULTS, SFX_CONNECT_POINT_GAP, SFX_CONNECT_NEAR_DT, sfxConnectCmd, sfxChordPairs,
     SFX_VANISH_DEFAULTS, sfxVanishCmd, normVanishParams,
     sfxBarLen, sfxNormBackground } = context.window.__NBS2SCHEMATIC;
@@ -1956,6 +1957,80 @@ try {
           console.log(`FAIL 背景型 3/4 e2e：bg=${statL5.sfxBackgroundNotes} CB=${statL5.commandBlocks} 行=${JSON.stringify(tlbL5)}（期望 barLen=54 → 行落 0/54/108、CB=4）`); ok = false;
         } else {
           console.log('PASS 背景型 3/4 拍号：小节长 54（3×18.125 取整）→ 行落 0/54/108');
+        }
+        // N) 粒子组名（2026-09-10：particleex 命令组位开放为车道级可选参数，缺省保持 null）：
+        //    触发型（group 附加在 5 字段模板上，仅 tail 末 token = null 时替换组位）/
+        //    连接型（sfxConnectCmd 末位）/ 消失型（sfxVanishCmd 索引 13）
+        {
+          const CG = 'cg1', VG = 'vg1', TG = 'tg1';
+          // N1 单元：三处组位写入 + 校验规则（多 token/非字符串组名 → 丢弃该字段）
+          const connG = sfxConnectCmd([0, 0, 0], [2, 0, 0], 2, 5, 10, 0, { ...SFX_CONNECT_DEFAULTS, group: CG });
+          const connG0 = sfxConnectCmd([0, 0, 0], [2, 0, 0], 2, 5, 10, 0, SFX_CONNECT_DEFAULTS);
+          const vanG = sfxVanishCmd(0, 2, 6, 9, { ...SFX_VANISH_DEFAULTS, ahead: 9, group: VG });
+          const tgBase = { ...SFX_PARTICLE_FIELDS };
+          const tgCmd = sfxParticleCmdWithGroup(0, 2, 6, { ...tgBase, group: TG }, TG);
+          const tgPlain = sfxParticleCmdWithGroup(0, 2, 6, tgBase, undefined);
+          const tailNoNull = { ...tgBase, tail: '1 0.95 0.89 1 0 0 0 -10 10 0.1 20 1.0 end' };
+          const tgIgnored = sfxParticleCmdWithGroup(0, 2, 6, { ...tailNoNull, group: TG }, TG);
+          // 校验规则：非字符串/空组名 → 忽略（不存该字段，返回 5 字段对象）；含空白（多 token）→ 整模板无效（undefined）
+          if (connG.slice(-3) !== CG
+            || connG0.slice(-4) !== 'null'
+            || vanG.slice(-3) !== VG || tgCmd.slice(-3) !== TG
+            || tgPlain !== sfxParticleCmdFromParts(0, 2, 6, tgBase)
+            || tgIgnored !== sfxParticleCmdFromParts(0, 2, 6, tailNoNull)
+            || normSfxParams({ ...tgBase, group: 'a b' }) !== undefined
+            || JSON.stringify(normSfxParams({ ...tgBase, group: 5 })) !== JSON.stringify(normSfxParams(tgBase))
+            || normSfxParams({ ...tgBase, group: '' }) === undefined
+            || normSfxParams({ ...tgBase, group: TG }).group !== TG
+            || normConnectParams({ ...SFX_CONNECT_DEFAULTS, group: 'x y' }) !== undefined
+            || normConnectParams({ ...SFX_CONNECT_DEFAULTS, group: CG }).group !== CG
+            || normVanishParams({ particle: 'minecraft:end_rod', color: '1 0.95 0.89 1', ahead: 1, group: VG }).group !== VG
+            || normVanishParams({ particle: 'minecraft:end_rod', color: '1 0.95 0.89 1', ahead: 1, group: '' }) === undefined) {
+            console.log(`FAIL 组名单元：conn=${connG} van=${vanG} tg=${tgCmd}（期望 conn/van/tg 末位分别 ${CG}/${VG}/${TG}、缺省 null；tail 末 token 非 null 时不替换；非字符串/空组名忽略、多 token → 整模板无效）`); ok = false;
+          } else {
+            console.log('PASS 组名单元：触发/连接/消失三命令组位写入（缺省 null）、tail 末 token 非 null 时忽略、校验规则（单 token）');
+          }
+          // N2 e2e 触发型：bound 车道 + 完整 5 字段模板（= 默认命令拆分）+ group → 绑定行组位 = tg1
+          const rN2 = runE2E(tmpFile, {
+            lane0: { dz: 0, dy: 0 }, refLayers: REF,
+            groups: [{ layers: [0] }], groupStarts: [{ dz: 3, dy: 0 }],
+            refLanes: [{ tracks: [0], type: 'bound', start: { dz: 6, dy: 1 },
+              sfxParams: { ...SFX_PARTICLE_FIELDS, group: TG } }],
+          });
+          const tlbN2 = rN2.result.sfxTickList;
+          const expN2 = sfxParticleCmdWithGroup(0, 2, 6, { ...SFX_PARTICLE_FIELDS, group: TG }, TG);
+          if (!expN2.endsWith(' ' + TG) || tlbN2.length !== 2
+            || JSON.stringify(tlbN2[0].lines) !== JSON.stringify([expN2, BC_26])
+            || JSON.stringify(tlbN2[1].lines) !== JSON.stringify([expN2])) {
+            console.log(`FAIL 组名 e2e 触发型：行=${JSON.stringify(tlbN2)}（期望绑定行组位 ${TG}、连接线不受触发模板组名影响仍默认命令）`); ok = false;
+          } else {
+            console.log('PASS 组名 e2e 触发型：绑定行按本车道模板 + 组名生成（组位末 token 替换），连接线不受影响');
+          }
+          // N3 e2e 消失型：vanish.group → 生成行组位 = vg1（bound t20/t40、N=10 → 行落 t10/t30）
+          const nbsN3 = makeNbs({ tempoTps: 20, songLength: 52, layers: 1, noteSpecs: [
+            { tick: 20, layer: 0, instrument: 0, key: 45 },
+            { tick: 40, layer: 0, instrument: 0, key: 50 },
+          ]});
+          const tmpN3 = 'synth_vanish_g.nbs';
+          writeFileSync(path.join(__dirname, tmpN3), nbsN3);
+          const rN3 = runE2E(tmpN3, {
+            lane0: { dz: 0, dy: 0 }, refLayers: REF,
+            groups: [{ layers: [0] }], groupStarts: [{ dz: 3, dy: 0 }],
+            refLanes: [{ tracks: [0], type: 'bound', start: { dz: 6, dy: 1 },
+              effects: ['vanish'],
+              sfxParams: { vanish: { particle: 'minecraft:end_rod', color: '1 0.95 0.89 1', ahead: 10, group: VG } } }],
+          });
+          ok = verifyE2E('参考车道池·消失型组名', rN3) && ok;
+          const statN3 = rN3.result.stats;
+          const tlbN3 = rN3.result.sfxTickList;
+          const expN3 = sfxVanishCmd(0, 2, 6, 10, { ...SFX_VANISH_DEFAULTS, ahead: 10, group: VG });
+          if (statN3.sfxVanishNotes !== 2 || tlbN3.length !== 2
+            || JSON.stringify(tlbN3[0].lines) !== JSON.stringify([expN3])
+            || JSON.stringify(tlbN3[1].lines) !== JSON.stringify([expN3])) {
+            console.log(`FAIL 组名 e2e 消失型：vanish=${statN3.sfxVanishNotes} 行=${JSON.stringify(tlbN3)}（期望 t10/t30 各 [vanish 组位 ${VG}]）`); ok = false;
+          } else {
+            console.log(`PASS 组名 e2e 消失型：生成行组位 = ${VG}（sfxVanishCmd 索引 13），自持 CB`);
+          }
         }
       }
     }
