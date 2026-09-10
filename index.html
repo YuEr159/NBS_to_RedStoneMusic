@@ -121,7 +121,7 @@ input[type="number"] { width: 70px; }
 /* 参考车道「静音」成员（未勾选发声 = 仅节奏/音高参考，用户 2026-09-07 提醒措施）：琥珀色标记 */
 .lane-tag.ref-lane-tag-muted { background: #4a3a1e; color: #e0a33c; }
 .lane-tag.ref-lane-tag-muted:hover { background: #7a5a20; color: #ffd98c; }
-/* 粒子特效总览卡片（3 类框架：触发型·连接型已实现 / 背景型规划占位） */
+/* 粒子特效总览卡片（4 类：触发型/连接型/背景型/消失型均已实现） */
 .sfx-effect-card { background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; margin-bottom: 6px; font-size: 12px; line-height: 1.7; }
 .sfx-effect-card .sfx-effect-name { font-weight: 700; color: var(--accent); }
 .sfx-effect-card.sfx-effect-planned { opacity: 0.62; }
@@ -260,7 +260,7 @@ input[type="number"] { width: 70px; }
   </section>
 
   <section id="sfxEffect-section" hidden>
-    <h2>粒子特效总览（共规划 3 类：触发型 / 连接型 / 背景型；下方可按参考车道勾选涉及的特效）</h2>
+    <h2>粒子特效总览（共 4 类：触发型 / 连接型 / 背景型 / 消失型；下方可按参考车道勾选涉及的特效）</h2>
     <div id="sfxEffectList"></div>
     <div id="sfxEffectLanes"></div>
   </section>
@@ -435,6 +435,18 @@ const INSTRUMENT_NAMES_CN = [
 // 固定命名空间 nbs2sfx；命令方块 Command = function nbs2sfx:<tick>（0-based NBS tick）；
 // function 文件 <tick>.mcfunction，同一 tick 多个参考音符 → 文件内每音符一行。
 const SFX_NAMESPACE = 'nbs2sfx';
+// ===== ③ 背景型（2026-09-10 实现：按乐曲小节间隔周期性激活，与具体音符无关，铺底氛围）=====
+// NBS 格式：1 拍 = 18.125 tick（格式常数，与 tempo 无关）。
+// 小节长（tick）= 拍号 × 18.125 四舍五入（4/4 = 72.5 → 73；3/4 = 54.375 → 54）；
+//   拍号非法（非正整数）→ 按 4 拍兜底。小节 tick = 0, barLen, 2·barLen, …（< nTicks）。
+const SFX_NBS_TICK_PER_BEAT = 18.125;
+const sfxBarLen = (song) => {
+  const n = Number.isInteger(song.timeSignature) && song.timeSignature > 0 ? song.timeSignature : 4;
+  return Math.round(n * SFX_NBS_TICK_PER_BEAT);
+};
+// 背景型模板归一化：非空字符串（trim 后）→ 返回 trim 文本（用户全文命令，逐字执行）；否则 null（不产行）
+const sfxNormBackground = (v) => (typeof v === 'string' && v.trim() !== '') ? v.trim() : null;
+
 // 粒子命令文本：用户提供的参考命令第二行原样（particleex 为用户自定义/模组命令，不得改动）
 const SFX_PARTICLE_CMD =
   "particleex polarparameter minecraft:end_rod ~ ~2 ~ 1 0.95 0.89 1 0 0 0 -10 10 'dis=1;s1=2*t;s2=0' 0.1 20 'i=0.1;(vx,vy,vz)=((i)*cos(s1),0,(i)*sin(s1))' 1.0 null";
@@ -462,7 +474,7 @@ function normSfxParams(p) {
   return out;
 }
 // 持久化载荷形状：保留 5 结构化字段（字符串）+ 连接型结构化对象（合法 4 字段；非法 → 丢弃，旧字符串占位值不兼容 → 丢弃）
-//   + 消失型结构化对象（合法 3 字段；非法 → 丢弃）+ background 占位文本（字符串）；全空 → undefined（不写该键）
+//   + 消失型结构化对象（合法 3 字段；非法 → 丢弃）+ background 模板文本（字符串，trim 后非空才存）；全空 → undefined（不写该键）
 function sfxParamsPayload(l) {
   const p = (typeof l.sfxParams === 'object' && l.sfxParams !== null) ? l.sfxParams : {};
   const out = {};
@@ -955,6 +967,8 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
       refLaneEffects: isRef ? (refLanes[i - (defaultStart ? 1 : 0) - nOrd].effects || null) : null,
       // 车道级触发模板（lane.sfxParams，缺省 = 默认命令 SFX_PARTICLE_FIELDS）：绑定行按本车道模板生成
       refLaneParams: isRef ? normSfxParams(refLanes[i - (defaultStart ? 1 : 0) - nOrd].sfxParams) : null,
+      // 车道级背景型模板（lane.sfxParams.background，全命令文本 trim；空/缺省 → null → 不产背景行）
+      refLaneBackground: isRef ? sfxNormBackground(refLanes[i - (defaultStart ? 1 : 0) - nOrd].sfxParams ? refLanes[i - (defaultStart ? 1 : 0) - nOrd].sfxParams.background : null) : null,
       // 车道级连接模板（lane.sfxParams.connect，结构化对象；非法/缺省 → null → 生成时用 SFX_CONNECT_DEFAULTS）
       refLaneConnect: isRef ? normConnectParams(refLanes[i - (defaultStart ? 1 : 0) - nOrd].sfxParams ? refLanes[i - (defaultStart ? 1 : 0) - nOrd].sfxParams.connect : null) : null,
       // 车道级消失型模板（lane.sfxParams.vanish，结构化对象；非法/缺省 → null → 生成时用 SFX_VANISH_DEFAULTS）
@@ -1007,7 +1021,7 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
     notesPlaced: 0, notesDiscarded: 0, noteBlocks: 0,
     repeaters: 0, wires: 0,
     commandBlocks: 0, sfxNotes: 0,
-    sfxBoundNotes: 0, sfxStandaloneNotes: 0, sfxConnectLines: 0, sfxVanishNotes: 0,
+    sfxBoundNotes: 0, sfxStandaloneNotes: 0, sfxConnectLines: 0, sfxVanishNotes: 0, sfxBackgroundNotes: 0,
     sfxDiscarded: 0, sfxEmptyTicks: 0,
     discardedDetails: [],
   };
@@ -1170,6 +1184,34 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
       }
     }
   }
+  // --- ③ 背景型（2026-09-10 实现）：每小节 tick（0, barLen, 2·barLen…）为每个「勾选背景型
+  //   （缺省 = 勾选）且模板非空」的参考车道 push 1 行（用户全文命令，trim 后逐字；坐标 `~` 相对
+  //   该 tick 轨道 0 CB，与触发型同约定）。行序：消失行最前 → 背景行次之 → 触发/连接线随后
+  //   （背景 tick 一般无参考音符，与既有行序断言零冲突）。
+  //   门控：lane.effects 含 'background'（缺省语义与 trigger/connect 一致）+ refLaneBackground 非空
+  //   → 旧存档/未填模板的车道不产行，产物逐位不变。仅当某小节 tick 实际产了背景行才入
+  //   sfxBackgroundTicks 支撑轨道 0 CB（并入 isSfxTick 判定）；无车道产行的 tick 不入集合
+  //   （不放 CB、不触发空 tick 回退，旧产物逐位不变）。
+  //   遍历 chains（非 sfxLaneEvents）：无音符成员的参考车道也要产背景行。
+  const sfxBackgroundTicks = new Set();
+  if (railChain) {
+    const barLen = sfxBarLen(song);
+    for (let t = 0; t < nTicks; t += barLen) {
+      let any = false;
+      for (const lane of chains) {
+        if (!lane.isRefLane) continue;
+        const eff = lane.refLaneEffects;
+        if (eff && !eff.includes('background')) continue;   // 显式取消勾选 → 不产
+        const cmd = lane.refLaneBackground;                 // null = 未填模板 → 不产
+        if (!cmd) continue;
+        if (!sfxTickLines.has(t)) sfxTickLines.set(t, []);
+        sfxTickLines.get(t).push(cmd);
+        stats.sfxBackgroundNotes++;
+        any = true;
+      }
+      if (any) sfxBackgroundTicks.add(t);   // 仅当该小节 tick 实际产了背景行才支撑 CB
+    }
+  }
   for (let t = 0; t < nTicks; t++) {
     const d = delays[t];
     const cells = 2; // 主链恒 1 档：每 tick 恒 2 格（中继器格 + 主位传导格）
@@ -1237,7 +1279,7 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
           // 轨道 0 且该 tick 有任意参考音符（绑定∪独立）或消失型生成行（t−N 支撑）：主位底座由雪块替换为命令方块
           //   （上方红石粉激活，红石粉置于机制正上方会将其激活——wiki Redstone power；轨道 0 无音符故主位恒为粉，
           //   信号到达本格的 tick 即音符盒发声的同 tick）。<t>.mcfunction 行在放置循环内汇总。
-          const isSfxTick = c.isDefaultRail && (sfxEntries.has(t) || sfxVanishTicks.has(t));
+          const isSfxTick = c.isDefaultRail && (sfxEntries.has(t) || sfxVanishTicks.has(t) || sfxBackgroundTicks.has(t));
           W(xCur + 1, yb, zc, isSfxTick ? SFX_CB_STATE : 'minecraft:snow_block');
           stats.wires++;
           if (isSfxTick) {
@@ -1393,12 +1435,12 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
       }
     }
   }
-  // 空 tick 回退：该 tick 有参考音符但无任何粒子行（如单线式声道未分配车道）→ 无 function 文件可写，
-  //   底座还原雪块、TE 移除、CB 计数回退（避免产物出现指向不存在 function 的空命令方块）
-  for (const t of sfxEntries.keys()) {
-    if (sfxTickLines.has(t)) continue;
+  // 空 tick 回退：该 tick 有参考音符（或背景/消失型生成 tick）但无任何粒子行（如单线式声道未分配车道）
+  //   → 无 function 文件可写，底座还原雪块、TE 移除、CB 计数回退（避免产物出现指向不存在 function 的空命令方块）
+  const rollbackEmptySfxTick = (t) => {
+    if (sfxTickLines.has(t)) return;
     const cb = sfxCbs.get(t);
-    if (!cb) continue;
+    if (!cb) return;
     const gIdx = (cb.y * grid.sz + cb.z) * grid.sx + cb.x;
     if (grid.data[gIdx] !== 0) grid.data[gIdx] = grid.stateIds.get('minecraft:snow_block');
     stats.commandBlocks--;
@@ -1406,7 +1448,9 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
     tileEntities.splice(cb.teIndex, 1);
     for (const [k, v] of sfxCbs) if (v.teIndex > cb.teIndex) v.teIndex--;
     sfxCbs.delete(t);
-  }
+  };
+  for (const t of sfxEntries.keys()) rollbackEmptySfxTick(t);
+  for (const t of sfxBackgroundTicks) rollbackEmptySfxTick(t);   // 背景 tick 无粒子行（车道取消勾选/模板清空）→ 同样回退
   stats.sfxNotes = stats.sfxBoundNotes + stats.sfxStandaloneNotes;
   // 逐 tick 粒子命令行（tick 升序）：与轨道 0 CB 一一对应（有行 ⇔ 有 CB；空 tick 已回退）
   const sfxTickList = [...sfxTickLines.entries()].sort((a, b) => a[0] - b[0])
@@ -2146,7 +2190,7 @@ function saveStateNow() {
         type: l.type || 'independent',
         start: l.start ? { dz: l.start.dz, dy: l.start.dy } : null,
         effects: Array.isArray(l.effects) ? [...l.effects] : undefined, // 缺省 = 全选（不写该键，保持旧载荷形状）
-        sfxParams: sfxParamsPayload(l) // 车道级特效模板（触发 5 字段 + 连接/背景占位文本；空 = 不写该键）
+        sfxParams: sfxParamsPayload(l) // 车道级特效模板（触发 5 字段 + 连接/背景文本；空 = 不写该键）
       })),
       settings: {
         targetVersion: AppState.settings.targetVersion,
@@ -2929,13 +2973,14 @@ function renderRefLaneSection() {
   renderSfxEffectLanes(); // 粒子特效模块：车道勾选表随参考车道增删/变更联动刷新
 }
 
-// 粒子特效总览模块（独立 section，用户 2026-09-07 规划）：3 类框架展示 + 按参考车道勾选涉及的特效。
+// 粒子特效总览模块（独立 section，用户 2026-09-07 规划）：4 类框架展示 + 按参考车道勾选涉及的特效。
 //   ① 触发型（已实现）：由音符触发、参数由 1 个音符决定；勾选控制**本车道粒子行生成**
 //     （单线式 → 绑定行；MIDI式 → 独立行；空 tick 时 CB 回退雪块）
 //   ② 连接型（已实现，线段）：参考车道相邻演奏 tick A→B 画线段（tickpolarparameter 逐点生成，
 //     点距 ≤0.1 格，笔尖恰好 t_B 抵达 B；MIDI式按粒子中心 + 和弦配对、单线式中间槽位沿链 X）；
 //     勾选控制本车道成员是否连线；模板 = sfxParams.connect
-//   ③ 背景型（规划占位）：按乐曲小节间隔激活；勾选仅存状态，暂未实现生成逻辑
+//   ③ 背景型（2026-09-10 已实现）：按乐曲小节间隔（拍号×18.125 tick 取整）周期性激活车道模板命令
+//     （与具体音符无关，铺底氛围）；模板留空/取消勾选 → 不产行，产物逐位不变
 //   ④ 消失型（2026-09-07e 已实现）：演奏 tick 前 N tick（车道级 ahead，缺省 500）提前出现、恰在演奏 tick 消亡
 //     （寿命 = N 自动计算，构建替换原型 age 字段；#Cube 条件立方体，除坐标段/寿命外逐字）；
 //     **默认不勾选（opt-in）**——显式 lane.effects 含 'vanish' 才产行，旧存档/未勾选车道产物逐位不变
@@ -2980,9 +3025,10 @@ function renderSfxEffectList() {
     '单线式与音高无关 → 端点简并为车道中间槽位、沿链 X 方向连线（每 tick 2 格）。' +
     'tickpolarparameter 逐点生成（点距 ≤0.1 格），笔尖恰好在 B 的触发型/音符盒激活那一 tick 抵达 B，无缝衔接。' +
     '粒子/颜色/寿命 m/漂移在下方车道展开面板调。');
-  card('③ 背景型', 'todo',
-    '按一定乐曲小节间隔激活（与具体音符无关，按小节/拍位周期性触发，用于铺底氛围）。' +
-    '规划占位，暂未实现生成逻辑（下方勾选仅存状态）。');
+  card('③ 背景型', 'on',
+    '与具体音符无关，按乐曲小节间隔周期性激活（铺底氛围）。小节长 = 拍号 × 18.125 tick 四舍五入（4/4 → 73，3/4 → 54），' +
+    '每小节 tick 0/73/146… 为车道执行一条自定义 particleex 命令（下方车道模板文本框，全文逐字；坐标 ~ 相对该 tick 轨道 0 CB）。' +
+    '模板留空 = 不产行；勾选缺省 = 勾选（与触发/连接同语义）。');
   card('④ 消失型', 'on',
     '由音符触发，参数由 1 个音符决定：**演奏 tick 前 N tick 提前出现、恰在演奏 tick 消亡**（N = 车道级「提前量」，缺省 500 tick，' +
     '寿命 = N 由构建自动计算并写入命令；歌曲开头提前量不足时钳位到 tick 0、寿命 = 实际提前量）。' +
@@ -3063,7 +3109,7 @@ function renderSfxEffectLanes() {
         ? '连接型：控制本车道成员相邻演奏 tick 之间的线段是否生成（MIDI式按音高中心连线、单线式沿链 X 方向连线）'
         : t.key === 'vanish'
         ? '消失型（默认不勾选）：每个演奏 tick 前 N tick（车道级提前量，缺省 500）出现 #Cube 粒子、恰在该 tick 消亡（寿命自动计算）'
-        : `${t.name}：规划占位，暂未实现生成逻辑（勾选仅存状态）`;
+        : '背景型：按乐曲小节间隔（拍号×18.125 tick 取整，4/4 → 73）周期性执行车道模板命令（铺底氛围；模板留空不产行）';
       cb.addEventListener('change', onSfxEffectToggle);
       td.appendChild(cb);
       tr.appendChild(td);
@@ -3083,7 +3129,7 @@ function renderSfxEffectLanes() {
 // 车道展开面板：四类特效各一块——触发型 = 结构化 5 字段（车道级模板，参与绑定行生成）；
 //   连接型 = 结构化 4 字段（粒子/颜色/m 寿命/漂移；线段几何构建时算，参与连接线生成）；
 //   消失型 = 结构化 3 字段（粒子/颜色/提前量 N；#Cube 原型其余逐字，寿命自动 = N）；
-//   背景型 = 模板文本框（规划占位：随车道持久化，暂未消费，不阻断生成）。
+//   背景型 = 模板文本框（2026-09-10 实现：按乐曲小节间隔周期性执行；随车道持久化）。
 function renderSfxLaneParams(lane, li) {
   const box = document.createElement('div');
   box.className = 'sfx-lane-params';
@@ -3162,19 +3208,19 @@ function renderSfxLaneParams(lane, li) {
     rowConn.appendChild(lb); rowConn.appendChild(inC);
   });
   box.appendChild(rowConn);
-  // ③ 背景型：模板文本框（规划占位）
+  // ③ 背景型：全命令模板文本框（2026-09-10 实现：按乐曲小节间隔周期性执行）
   const h3 = document.createElement('h4');
-  h3.textContent = '③ 背景型 · 粒子命令模板（规划占位）';
+  h3.textContent = '③ 背景型 · 粒子命令模板（按小节周期性执行）';
   box.appendChild(h3);
   const tip3 = document.createElement('div');
   tip3.className = 'hint';
-  tip3.textContent = '按乐曲小节间隔激活（与具体音符无关）。暂未实现生成逻辑：此处文本仅随车道持久化、生成时不消费（不阻断生成）。';
+  tip3.textContent = '与具体音符无关：按乐曲小节间隔周期性激活（铺底氛围）。小节长 = 拍号 × 18.125 tick 四舍五入（4/4 → 73，3/4 → 54），每小节 tick 0/73/146… 执行一次此处命令（trim 后全文逐字，坐标 ~ 相对该 tick 轨道 0 CB）。模板留空 = 不产行；勾选缺省 = 勾选（取消勾选同样不产行）。';
   box.appendChild(tip3);
   const inC3 = document.createElement('input');
   inC3.type = 'text';
   inC3.className = 'sfx-param-plain';
   inC3.value = (typeof lane.sfxParams === 'object' && lane.sfxParams !== null && typeof lane.sfxParams.background === 'string') ? lane.sfxParams.background : '';
-  inC3.placeholder = 'particleex …（占位，待实现后生效）';
+  inC3.placeholder = 'particleex …（留空 = 不产背景行）';
   inC3.addEventListener('change', (e) => onSfxParamPlainEdit(li, 'background', e.target.value));
   box.appendChild(inC3);
   // ④ 消失型：结构化 3 字段（粒子/颜色 R G B A/提前量 N；#Cube 原型几何逐字写死，寿命自动 = 实际提前量）
@@ -3235,7 +3281,7 @@ function onSfxConnectEdit(li, k, v) {
   lane.sfxParams = (Object.keys(base).length > 0) ? base : undefined;
   scheduleStateSave();
 }
-// 背景模板文本编辑（规划占位，仅存状态）：空串 → 不存该键
+// 背景模板文本编辑（2026-09-10 实现：按小节周期性执行）：空串 → 不存该键（= 不产背景行）
 function onSfxParamPlainEdit(li, k, v) {
   const lane = AppState.refLanes[li];
   if (!lane) return;
@@ -4187,6 +4233,7 @@ window.__NBS2SCHEMATIC = {
   buildLayout, buildPalette, buildLitematic,
   SFX_NAMESPACE, SFX_PARTICLE_CMD, SFX_CB_STATE, SFX_PACKFORMAT, sfxPackFormat, sfxParticleCmd,
   SFX_PARTICLE_FIELDS, sfxParticleCmdFromParts, normSfxParams, sfxParamsPayload,
+  SFX_NBS_TICK_PER_BEAT, sfxBarLen, sfxNormBackground,
   SFX_CONNECT_DEFAULTS, SFX_CONNECT_POINT_GAP, SFX_CONNECT_MIN_LEN, SFX_CONNECT_NEAR_DT, normConnectParams, sfxNum, sfxConnectCmd, sfxChordPairs,
   SFX_VANISH_DEFAULTS, SFX_VANISH_PROTO, sfxVanishCmd, normVanishParams,
   SFX_EFFECT_TYPES, renderSfxEffectList, renderSfxEffectLanes, onSfxEffectToggle,
@@ -4333,7 +4380,8 @@ function renderStats() {
     ['红石线数', stats.wires],
     ...(stats.commandBlocks > 0 ? [['节奏参考 CB', `${stats.commandBlocks}（轨道 0）· 粒子 ${stats.sfxNotes}`
       + (stats.sfxConnectLines ? ` · 连接线 ${stats.sfxConnectLines}` : '')
-      + (stats.sfxVanishNotes ? ` · 消失型 ${stats.sfxVanishNotes}` : '')]] : []),
+      + (stats.sfxVanishNotes ? ` · 消失型 ${stats.sfxVanishNotes}` : '')
+      + (stats.sfxBackgroundNotes ? ` · 背景型 ${stats.sfxBackgroundNotes}` : '')]] : []),
   ];
   $('statsPanel').innerHTML = cards.map(([k, v]) =>
     `<div class="stat-card"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');

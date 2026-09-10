@@ -102,19 +102,21 @@ check(context.window.__NBS2SCHEMATIC.state.lanes[0].tracks.join(',') === '0,1,2'
 check(context.window.__NBS2SCHEMATIC.layoutEditor !== null, '布局编辑器已创建');
 check(elements.get('group-section').hidden === false, '车道池区已显示');
 check(elements.get('layer-section').hidden === false, '音轨池区已显示');
-// 粒子特效总览（4 类框架：触发/连接/消失已实现 / 背景型规划占位）
+// 粒子特效总览（4 类框架：触发/连接/背景/消失均已实现，2026-09-10 背景型落地）
 {
   const eff = elements.get('sfxEffectList').innerHTML;
   check(eff.includes('① 触发型') && eff.includes('② 连接型') && eff.includes('③ 背景型') && eff.includes('④ 消失型'),
     '粒子特效总览：4 类（触发/连接/背景/消失）全部渲染');
-  check((eff.match(/已实现/g) || []).length === 3 && (eff.match(/规划中/g) || []).length === 1,
-    '粒子特效总览：触发/连接/消失标「已实现」×3、背景标「规划中」×1');
+  check((eff.match(/已实现/g) || []).length === 4 && (eff.match(/规划中/g) || []).length === 0,
+    '粒子特效总览：4 类全标「已实现」（背景型 2026-09-10 落地，无规划中）');
   check(eff.includes('minecraft:end_rod') && eff.includes('sfxPitchStep'),
     '粒子特效总览：触发型条目含当前效果（end_rod 螺旋）与参数规则描述');
   check(eff.includes('tickpolarparameter') && eff.includes('点距 ≤0.1 格'),
     '粒子特效总览：连接型条目含实现描述（tickpolarparameter、点距 ≤0.1 格）');
   check(eff.includes('particleex conditional') && eff.includes('默认不勾选'),
     '粒子特效总览：消失型条目含 #Cube 条件立方体描述与默认不勾选注记');
+  check(eff.includes('18.125') && eff.includes('73'),
+    '粒子特效总览：背景型条目含小节长公式（拍号×18.125 取整，4/4 → 73）');
 }
 // 粒子特效独立模块 + 按车道勾选表（无参考车道时空提示）
 check(elements.get('sfxEffect-section').hidden === false, '粒子特效总览为独立 section（已显示）');
@@ -715,8 +717,8 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
     const panelHtml = () => panelBox.innerHTML;
     check(panelHtml().includes('① 触发型 · 粒子命令模板（结构化关键参数）')
       && panelHtml().includes('② 连接型 · 线段参数（A→B，抵达时刻 = B 触发）')
-      && panelHtml().includes('③ 背景型 · 粒子命令模板（规划占位）'),
-      '展开面板：三类模板区块齐全（触发型结构化 / 连接型结构化 4 字段 / 背景占位文本框）');
+      && panelHtml().includes('③ 背景型 · 粒子命令模板（按小节周期性执行）'),
+      '展开面板：三类模板区块齐全（触发型结构化 / 连接型结构化 4 字段 / 背景型小节周期模板）');
     // 表单回填 = 默认命令 5 字段
     const findIn = (cls) => {
       const out = [];
@@ -799,16 +801,23 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
     connIns[1].value = '0.5 0.5 0.5 1 9'; connIns[1].dispatch('change', { target: connIns[1] });
     check(!(st.refLanes[boundLi].sfxParams && 'connect' in (st.refLanes[boundLi].sfxParams || {})),
       '连接型非法字段（颜色 5 值）→ 回默认、connect 键删除');
-    // 重设 connect + 背景占位文本 → 生成不消费 connect（bound 车道无 MIDI式成员）→ 持久化往返
+    // 重设 connect + 背景模板文本 → 生成（bound 车道 tick0 有参考音符 → 小节 tick 0 产背景行）→ 持久化往返
     connIns[0].value = 'minecraft:dragon_breath'; connIns[0].dispatch('change', { target: connIns[0] });
     connIns[2].value = '20'; connIns[2].dispatch('change', { target: connIns[2] });
     const plainIn = findIn('sfx-param-plain');
-    check(plainIn.length === 1, '背景型 1 个占位文本框（连接型已升级为结构化表单）');
+    check(plainIn.length === 1, '背景型 1 个模板文本框（连接型已升级为结构化表单）');
     plainIn[0].value = 'particleex bg minecraft:portal ~ ~0.5 ~ 0.5 0.1 0.1 0 0 0 0 10 0.4 1.0 null';
     plainIn[0].dispatch('change', { target: plainIn[0] });
     await context.generate();
-    check(!Buffer.from(st.sfxZipBytes).toString('latin1').includes('bg minecraft:portal'),
-      '背景模板未进入数据包产物（规划占位，仅存状态）');
+    check(Buffer.from(st.sfxZipBytes).toString('latin1').includes('bg minecraft:portal')
+      && st.result.result.stats.sfxBackgroundNotes > 0,
+      `背景模板进入数据包产物（2026-09-10 实现：按小节周期执行，bg=${st.result.result.stats.sfxBackgroundNotes}）`);
+    // 清空背景模板 → 0 背景行（门控：勾选 ∧ 模板非空）
+    plainIn[0].value = ''; plainIn[0].dispatch('change', { target: plainIn[0] });
+    await context.generate();
+    check(st.result.result.stats.sfxBackgroundNotes === 0, '清空背景模板 → 0 背景行');
+    plainIn[0].value = 'particleex bg minecraft:portal ~ ~0.5 ~ 0.5 0.1 0.1 0 0 0 0 10 0.4 1.0 null';
+    plainIn[0].dispatch('change', { target: plainIn[0] });
     context.saveStateNow();
     const rawF = context.localStorage.getItem(context.stateKey(st.song));
     const parsedF = rawF && JSON.parse(rawF);
@@ -919,6 +928,60 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
     cbV4.checked = false; cbV4.dispatch('change', { target: cbV4 });
     vanIns2[2].value = '500'; vanIns2[2].dispatch('change', { target: vanIns2[2] });
     check(!st.refLanes[boundLi].effects.includes('vanish'), '消失型收尾还原（取消勾选，ahead 回默认删键）');
+  }
+  // 8f) 背景型（2026-09-10 实现）：按乐曲小节间隔（拍号×18.125 tick 取整）周期性执行车道模板命令 →
+  //     模板已填（8c 遗留 portal）+ 勾选（缺省）→ 产行 + zip；取消勾选 → 0；重新勾选 → 回归；持久化往返；收尾清空
+  {
+    const boundLi = st.refLanes.findIndex(l => l.tracks.includes(0));
+    const findTgl = (li, key) => {
+      const cbs = [];
+      const rec = (n) => { if (n.className === 'sfx-effect-check') cbs.push(n); (n.children || []).forEach(rec); };
+      rec(elements.get('sfxEffectLanes'));
+      return cbs.find(c => String(c.dataset.li) === String(li) && c.dataset.k === key);
+    };
+    const findIn = (cls) => {
+      const out = [];
+      const rec = (n) => { if (n.className === cls) out.push(n); (n.children || []).forEach(rec); };
+      rec(elements.get('sfxEffectLanes'));
+      return out;
+    };
+    check(st.refLanes[boundLi].sfxParams && st.refLanes[boundLi].sfxParams.background
+      && st.refLanes[boundLi].sfxParams.background.includes('portal'),
+      '8f 前置：背景模板文本（8c 遗留 portal 命令）');
+    await context.generate();
+    const resB = st.result.result;
+    check(resB.stats.sfxBackgroundNotes > 0,
+      `背景型按小节间隔产行（勾选 + 模板非空；实际 bg=${resB.stats.sfxBackgroundNotes}）`);
+    check(resB.sfxTickList.every(e => e.lines.filter(l => l.includes('bg minecraft:portal')).length <= 1),
+      '每个背景 tick 至多 1 行/车道（小节周期，与具体音符无关）');
+    // 取消勾选背景型 → 0 行（门控：勾选 ∧ 模板非空）
+    const cbB = findTgl(boundLi, 'background');
+    cbB.checked = false; cbB.dispatch('change', { target: cbB });
+    await context.generate();
+    check(!st.refLanes[boundLi].effects.includes('background') && st.result.result.stats.sfxBackgroundNotes === 0,
+      '取消背景型勾选 → 0 背景行');
+    // 重新勾选 → 行回归
+    const cbB2 = findTgl(boundLi, 'background');
+    cbB2.checked = true; cbB2.dispatch('change', { target: cbB2 });
+    await context.generate();
+    check(st.result.result.stats.sfxBackgroundNotes > 0, '重新勾选背景型 → 行回归');
+    // 持久化往返：sfxParams.background 字符串 + effects 含 background
+    context.saveStateNow();
+    const rawB = context.localStorage.getItem(context.stateKey(st.song));
+    const parsedB = rawB && JSON.parse(rawB);
+    const laneBP = parsedB && parsedB.refLanes && parsedB.refLanes[boundLi];
+    check(!!laneBP && laneBP.sfxParams && typeof laneBP.sfxParams.background === 'string'
+      && laneBP.sfxParams.background.includes('portal')
+      && Array.isArray(laneBP.effects) && laneBP.effects.includes('background'),
+      '背景模板 + 勾选持久化往返（sfxParams.background 字符串、effects 含 background）');
+    // 收尾还原：清空背景模板 → 0 行（避免污染后续场景）
+    const xbtns5 = [];
+    { const recX5 = (n) => { if (n.className === 'sfx-lane-x') xbtns5.push(n); (n.children || []).forEach(recX5); }; recX5(elements.get('sfxEffectLanes')); }
+    if (xbtns5[boundLi] && xbtns5[boundLi].textContent === '▼') xbtns5[boundLi].dispatch('click', {}); // 面板可能仍展开
+    const bgIns = findIn('sfx-param-plain');
+    bgIns[0].value = ''; bgIns[0].dispatch('change', { target: bgIns[0] });
+    await context.generate();
+    check(st.result.result.stats.sfxBackgroundNotes === 0, '收尾还原：清空背景模板 → 0 背景行');
   }
   // 9) 旧格式迁移：手工写入旧 bool 载荷 → 重载按MIDI式迁移
   if (parsed) {

@@ -579,7 +579,7 @@ try {
 }
 
 // ---------- M3：合成 NBS 文件测固定挡位 D=1 / D=8 扩展 ----------
-function makeNbs({ version = 5, tempoTps = 20, layers = 1, songLength = 8, noteSpecs = [] }) {
+function makeNbs({ version = 5, tempoTps = 20, layers = 1, songLength = 8, noteSpecs = [], timeSig = 4 }) {
   // noteSpecs: [{tick, layer, instrument, key}]
   const out = [];
   const u8 = v => out.push(v & 0xFF);
@@ -598,7 +598,7 @@ function makeNbs({ version = 5, tempoTps = 20, layers = 1, songLength = 8, noteS
   u16(layers);       // song_layers
   str('synth'); str(''); str(''); str(''); // 4 字符串
   u16(Math.round(tempoTps * 100)); // tempo
-  u8(0); u8(1); u8(4);             // autosave, duration, timesig 4/4
+  u8(0); u8(1); u8(timeSig);         // autosave, duration, timesig (默认 4/4；L5 用 3)
   u32(0); u32(0); u32(0); u32(0); u32(0); // 统计
   str('');           // origin
   u8(0); u8(0); u16(0); // loop 字段 (v4+)
@@ -1303,7 +1303,8 @@ try {
 {
   const { SFX_NAMESPACE, SFX_CB_STATE, sfxParticleCmd, sfxParticleCmdFromParts,
     SFX_CONNECT_DEFAULTS, SFX_CONNECT_POINT_GAP, SFX_CONNECT_NEAR_DT, sfxConnectCmd, sfxChordPairs,
-    SFX_VANISH_DEFAULTS, sfxVanishCmd, normVanishParams } = context.window.__NBS2SCHEMATIC;
+    SFX_VANISH_DEFAULTS, sfxVanishCmd, normVanishParams,
+    sfxBarLen, sfxNormBackground } = context.window.__NBS2SCHEMATIC;
   // 单线式连接线（2026-09-07c「连接前后节奏」）：端点 = 车道虚拟主位（中间槽位），沿链 +X（每 tick 2 格）。
   //   A/D/E2/H/H2 用 refLanes start {dz:6,dy:1} → mid=(0,2,6)；F 用 {dz:3,dy:0} → mid=(0,1,3)
   const boundConn = (my, mz, dt) => {
@@ -1853,6 +1854,109 @@ try {
         console.log(`FAIL 消失型孤立 CB：vanish=${statJ5.sfxVanishNotes} CB=${statJ5.commandBlocks} empty=${statJ5.sfxEmptyTicks} 行=${JSON.stringify(tlbJ5)}（期望 行落 t10/t30 各 [VANISH(10)]、CB=2 自持、t20/t40 空 tick 回退）`); ok = false;
       } else {
         console.log('PASS 消失型 sfxVanishTicks 支撑孤立 CB：生成 tick（无参考音符）自持 function/CB，演奏 tick 无行 → 空 tick 回退');
+      }
+      // L) 背景型（2026-09-10 实现：按乐曲小节间隔周期性激活，与具体音符无关，铺底氛围）：
+      //    小节长 = 拍号×18.125 tick 取整（4/4→73、3/4→54）；行 = 用户全文命令（trim 后逐字）；
+      //    门控 = effects 含 'background'（缺省 = 勾选）+ 模板非空 → 旧存档/未填模板产物逐位不变；
+      //    行落 tick 0/barLen/2·barLen…，sfxBackgroundTicks 支撑轨道 0 CB。
+      {
+        const BG_CMD = 'particleex bg minecraft:portal ~ ~0.5 ~ 0.5 0.1 0.1 0 0 0 0 10 0.4 1.0 null';
+        const REFIND = new Map([[0, { type: 'independent', sound: true }]]);
+        // L1 单元：sfxBarLen 拍号映射 + 非法兜底；sfxNormBackground trim/空/类型
+        if (sfxBarLen({ timeSignature: 4 }) !== 73 || sfxBarLen({ timeSignature: 3 }) !== 54
+          || sfxBarLen({ timeSignature: 0 }) !== 73 || sfxBarLen({}) !== 73
+          || sfxNormBackground('  ' + BG_CMD + '  ') !== BG_CMD
+          || sfxNormBackground('') !== null || sfxNormBackground('   ') !== null
+          || sfxNormBackground(null) !== null || sfxNormBackground(123) !== null) {
+          console.log(`FAIL 背景型单元：barLen(4)=${sfxBarLen({ timeSignature: 4 })} barLen(3)=${sfxBarLen({ timeSignature: 3 })}（期望 73/54；非法拍号 → 73）normBg 空/非字符串 → null`); ok = false;
+        } else {
+          console.log('PASS 背景型单元：sfxBarLen 拍号×18.125 取整（4→73、3→54、非法→73）+ sfxNormBackground trim/空/类型校验');
+        }
+        // L2 默认不产：refLane 无 background 文本（J1 配置）→ sfxBackgroundNotes=0、行与 A 场景逐位一致
+        const rL2 = runE2E(tmpFile, {
+          lane0: { dz: 0, dy: 0 }, refLayers: REF,
+          groups: [{ layers: [0] }], groupStarts: [{ dz: 3, dy: 0 }],
+          refLanes: [{ tracks: [0], type: 'bound', start: { dz: 6, dy: 1 } }],
+        });
+        const statL2 = rL2.result.stats;
+        const tlbL2 = rL2.result.sfxTickList;
+        if (statL2.sfxBackgroundNotes !== 0 || tlbL2.length !== 2
+          || JSON.stringify(tlbL2[0].lines) !== JSON.stringify([P0R, BC_26])
+          || JSON.stringify(tlbL2[1].lines) !== JSON.stringify([P0R])) {
+          console.log(`FAIL 背景型默认不产：bg=${statL2.sfxBackgroundNotes} 行=${JSON.stringify(tlbL2)}（期望 0 行、行与缺省一致 [P0R,BC_26]/[P0R]）`); ok = false;
+        } else {
+          console.log('PASS 背景型默认不产（模板留空）：不产行、产物与未实现时逐位一致（旧存档向后兼容）');
+        }
+        // L3 e2e 4/4（barLen=73）：3 小节内音符 t0/t100/t200 → 背景行落 tick 0/73/146（219 ≥ nTicks=209 不产）；
+        //   tick0 行序 = [背景行, 绑定行, 连接线]（背景块在绑定行段之前；bound 车道 connect 缺省开 → t0→t100 连接线 Δt=100）；CB = {0,73,100,146,200} 共 5
+        const BC_100 = boundConn(2, 6, 100);   // (0,2,6) 沿 X 200 格
+        const nbsL3 = makeNbs({ tempoTps: 20, songLength: 208, layers: 1, noteSpecs: [
+          { tick: 0, layer: 0, instrument: 0, key: 45 },
+          { tick: 100, layer: 0, instrument: 0, key: 50 },
+          { tick: 200, layer: 0, instrument: 0, key: 45 },
+        ]});
+        writeFileSync(path.join(__dirname, 'synth_bg.nbs'), nbsL3);
+        const rL3 = runE2E('synth_bg.nbs', {
+          lane0: { dz: 0, dy: 0 }, refLayers: REF,
+          groups: [{ layers: [0] }], groupStarts: [{ dz: 3, dy: 0 }],
+          refLanes: [{ tracks: [0], type: 'bound', start: { dz: 6, dy: 1 },
+            sfxParams: { background: BG_CMD } }],
+        });
+        ok = verifyE2E('参考车道池·背景型 4/4', rL3) && ok;
+        const statL3 = rL3.result.stats;
+        const tlbL3 = rL3.result.sfxTickList;
+        if (statL3.sfxBackgroundNotes !== 3 || statL3.commandBlocks !== 5
+          || statL3.sfxEmptyTicks !== 0 || tlbL3.length !== 5
+          || tlbL3[0].tick !== 0 || tlbL3[1].tick !== 73 || tlbL3[2].tick !== 100
+          || tlbL3[3].tick !== 146 || tlbL3[4].tick !== 200
+          || JSON.stringify(tlbL3[0].lines) !== JSON.stringify([BG_CMD, P0R, BC_100])
+          || JSON.stringify(tlbL3[1].lines) !== JSON.stringify([BG_CMD])
+          || JSON.stringify(tlbL3[3].lines) !== JSON.stringify([BG_CMD])
+          || JSON.stringify(tlbL3[2].lines) !== JSON.stringify([P0R, BC_100])
+          || JSON.stringify(tlbL3[4].lines) !== JSON.stringify([P0R])) {
+          console.log(`FAIL 背景型 4/4 e2e：bg=${statL3.sfxBackgroundNotes} CB=${statL3.commandBlocks} empty=${statL3.sfxEmptyTicks} 行=${JSON.stringify(tlbL3)}（期望 bg=3 落 t0/73/146、CB=5、tick0 [BG,P0R]、小节空 tick [BG] 自持 CB）`); ok = false;
+        } else {
+          console.log('PASS 背景型 4/4 e2e：行落 tick 0/73/146（小节长 73）、sfxBackgroundTicks 支撑孤立 CB、tick0 行序 [背景,绑定]');
+        }
+        // L4 显式取消勾选背景型（effects 无 background，trigger/connect 显式开启）+ 模板有值 → 不产（勾选门控）
+        const rL4 = runE2E(tmpFile, {
+          lane0: { dz: 0, dy: 0 }, refLayers: REF,
+          groups: [{ layers: [0] }], groupStarts: [{ dz: 3, dy: 0 }],
+          refLanes: [{ tracks: [0], type: 'bound', start: { dz: 6, dy: 1 },
+            effects: ['trigger', 'connect'],
+            sfxParams: { background: BG_CMD } }],
+        });
+        const statL4 = rL4.result.stats;
+        if (statL4.sfxBackgroundNotes !== 0 || JSON.stringify(rL4.result.sfxTickList) !== JSON.stringify(tlbL2)) {
+          console.log(`FAIL 背景型取消勾选：bg=${statL4.sfxBackgroundNotes} 行=${JSON.stringify(rL4.result.sfxTickList)}（期望 0 行、行与 L2 逐位一致）`); ok = false;
+        } else {
+          console.log('PASS 背景型显式取消勾选：模板有值也不产（门控 = 勾选 ∧ 模板非空）');
+        }
+        // L5 3/4 拍号（barLen=54）：音符 t0/t100、songLength=120 → 小节 tick 0/54/108（162 ≥ nTicks=121 不产）
+        const nbsL5 = makeNbs({ tempoTps: 20, songLength: 120, layers: 1, timeSig: 3, noteSpecs: [
+          { tick: 0, layer: 0, instrument: 0, key: 45 },
+          { tick: 100, layer: 0, instrument: 0, key: 50 },
+        ]});
+        writeFileSync(path.join(__dirname, 'synth_bg_34.nbs'), nbsL5);
+        const rL5 = runE2E('synth_bg_34.nbs', {
+          lane0: { dz: 0, dy: 0 }, refLayers: REF,
+          groups: [{ layers: [0] }], groupStarts: [{ dz: 3, dy: 0 }],
+          refLanes: [{ tracks: [0], type: 'bound', start: { dz: 6, dy: 1 },
+            sfxParams: { background: BG_CMD } }],
+        });
+        const statL5 = rL5.result.stats;
+        const tlbL5 = rL5.result.sfxTickList;
+        if (statL5.sfxBackgroundNotes !== 3 || statL5.commandBlocks !== 4
+          || tlbL5.length !== 4
+          || tlbL5[0].tick !== 0 || tlbL5[1].tick !== 54 || tlbL5[2].tick !== 100 || tlbL5[3].tick !== 108
+          || JSON.stringify(tlbL5[0].lines) !== JSON.stringify([BG_CMD, P0R, BC_100])
+          || JSON.stringify(tlbL5[1].lines) !== JSON.stringify([BG_CMD])
+          || JSON.stringify(tlbL5[2].lines) !== JSON.stringify([P0R])
+          || JSON.stringify(tlbL5[3].lines) !== JSON.stringify([BG_CMD])) {
+          console.log(`FAIL 背景型 3/4 e2e：bg=${statL5.sfxBackgroundNotes} CB=${statL5.commandBlocks} 行=${JSON.stringify(tlbL5)}（期望 barLen=54 → 行落 0/54/108、CB=4）`); ok = false;
+        } else {
+          console.log('PASS 背景型 3/4 拍号：小节长 54（3×18.125 取整）→ 行落 0/54/108');
+        }
       }
     }
   } catch (e) {
