@@ -1736,6 +1736,63 @@ try {
         } else {
           console.log('PASS 和弦连线远距（Δt>32）：严格 1:1、落单音不连（0 条线）');
         }
+        // K6c 密集和弦边界（2026-09-10 e2e 回归）：Δt=31（≤32 近距）1:3/3:1 挂靠 + Δt=33（>32）严格 1:1；
+        //   同 tick 3 声部和弦 + 跨 32 边界两档（31/33）+ 落单音挂靠顺序
+        //   t0 [44,45,48] → t4 [45]：1:1 (44→45)+落单 48→45（45→45 L=0 跳）
+        //   t4 [45] → t35 [48,50,44]：3:1 (44→45) + 落单 45→48、45→50
+        //   t35 [44,48,50] → t37 [48]：1:1 (44→48)+落单 50→48（48→48 L=0 跳）
+        //   t37 [48,50] → t70 [48,50]：Δt=33 严格 1:1（48→48 跳）、50 落单不连 → 0 线
+        const nbsK6c = makeNbs({ tempoTps: 20, songLength: 72, layers: 4, noteSpecs: [
+          { tick: 0, layer: 0, instrument: 0, key: 44 },
+          { tick: 0, layer: 1, instrument: 0, key: 45 },
+          { tick: 0, layer: 2, instrument: 0, key: 48 },
+          { tick: 4, layer: 0, instrument: 0, key: 45 },
+          { tick: 35, layer: 1, instrument: 0, key: 48 },
+          { tick: 35, layer: 2, instrument: 0, key: 50 },
+          { tick: 35, layer: 3, instrument: 0, key: 44 },
+          { tick: 37, layer: 0, instrument: 0, key: 48 },
+          { tick: 70, layer: 0, instrument: 0, key: 48 },
+          { tick: 70, layer: 2, instrument: 0, key: 50 },
+        ]});
+        const tmpK6c = 'synth_chord_edge.nbs';
+        writeFileSync(path.join(__dirname, tmpK6c), nbsK6c);
+        const refK6c = new Map([[0, { type: 'independent', sound: true }],
+          [1, { type: 'independent', sound: true }], [2, { type: 'independent', sound: true }],
+          [3, { type: 'independent', sound: true }]]);
+        const rK6c = runE2E(tmpK6c, { ...k1Opts, refLayers: refK6c, refLanes: [{ tracks: [0, 1, 2, 3], start: { dz: 0, dy: 0 } }] });
+        ok = verifyE2E('参考车道池·和弦连线边界', rK6c) && ok;
+        const statK6c = rK6c.result.stats;
+        const tlbK6c = rK6c.result.sfxTickList;
+        const I24c = (n) => sfxParticleCmd(0, 0, n);
+        const connZ = (za, zb, dt) => {
+          const d = zb - za, L = Math.abs(d);
+          const n0 = Math.ceil(L / SFX_CONNECT_POINT_GAP);
+          const cpt = Math.max(1, Math.ceil((n0 + 1) / (dt + 1)));
+          const P = (dt + 1) * cpt;
+          return sfxConnectCmd([0, 0, za], [0, 0, d], L, P,
+            SFX_CONNECT_DEFAULTS.m, SFX_CONNECT_DEFAULTS.alpha, SFX_CONNECT_DEFAULTS);
+        };
+        // Z(key) = key − 45：44→−1、45→0、48→3、50→5；端点 A=(0,0,Z(ka)) → B=(0,0,Z(kb))
+        const eC1 = connZ(-1, 0, 4);  // 44→45 Δt=4 L=1 P=15
+        const eC2 = connZ(3, 0, 4);   // 48→45 落单 Δt=4 L=3 P=35
+        const eC3 = connZ(0, -1, 31); // 45→44 Δt=31 L=1 N0=10 cpt=1 P=32
+        const eC4 = connZ(0, 3, 31);  // 45→48 落单 Δt=31 L=3 N0=30 cpt=1 P=32
+        const eC5 = connZ(0, 5, 31);  // 45→50 落单 Δt=31 L=5 N0=50 cpt=2 P=64
+        const eC6 = connZ(-1, 3, 2);  // 44→48 Δt=2 L=4 N0=40 cpt=14 P=42
+        const eC7 = connZ(5, 3, 2);   // 50→48 落单 Δt=2 L=2 N0=20 cpt=7 P=21
+        if (statK6c.sfxStandaloneNotes !== 10 || statK6c.sfxConnectLines !== 7
+          || statK6c.commandBlocks !== 5 || tlbK6c.length !== 5
+          || tlbK6c[0].tick !== 0 || tlbK6c[1].tick !== 4 || tlbK6c[2].tick !== 35
+          || tlbK6c[3].tick !== 37 || tlbK6c[4].tick !== 70
+          || JSON.stringify(tlbK6c[0].lines) !== JSON.stringify([I24c(-1), I24c(0), I24c(3), eC1, eC2])
+          || JSON.stringify(tlbK6c[1].lines) !== JSON.stringify([I24c(0), eC3, eC4, eC5])
+          || JSON.stringify(tlbK6c[2].lines) !== JSON.stringify([I24c(3), I24c(5), I24c(-1), eC6, eC7])
+          || JSON.stringify(tlbK6c[3].lines) !== JSON.stringify([I24c(3)])
+          || JSON.stringify(tlbK6c[4].lines) !== JSON.stringify([I24c(3), I24c(5)])) {
+          console.log(`FAIL 和弦连线边界：indep=${statK6c.sfxStandaloneNotes} conn=${statK6c.sfxConnectLines} CB=${statK6c.commandBlocks} 行=${JSON.stringify(tlbK6c)}（期望 7 线：Δt=4 两条 / Δt=31 三条（3:1 挂靠）/ Δt=2 两条；Δt=33 严格 1:1 → 0 线）`); ok = false;
+        } else {
+          console.log('PASS 和弦连线边界（Δt 31/33 跨 32）：近距 3:1/1:3 挂靠、远距严格 1:1（落单不连）、L=0 对跳过；行序独立行按声部升序 + 连接线在后');
+        }
       }
     }
     // J) 消失型（2026-09-07e 用户定规格：演奏 tick 前 N tick 提前出现、恰在演奏 tick 消亡）：
