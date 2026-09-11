@@ -547,8 +547,11 @@ const sfxParticleCmdWithGroup = (dx, dy, dz, p, g) => {
 // 球坐标（模组约定 ParticleUtil：dx=dis·cos(s2)·cos(s1), dy=dis·sin(s2), dz=dis·cos(s2)·sin(s1)）：
 //   φ=atan2(dz,dx)、θ=atan2(dy,√(dx²+dz²))；纯 +Z 方向 → φ=π/2、θ=0；纯 +X 方向 → φ=0、θ=0。
 // 两种参考车道类型的端点几何（2026-09-07c）：
-//   · MIDI式：端点 = 两 tick 各音的粒子中心（Z 按音高展开，基准 = 车道 start）。和弦配对见 sfxChordPairs：
+//   · MIDI式：端点 = 真空间粒子中心：A = t_A 音的粒子中心 (0, 车道start, z_A)、B = t_B 音的粒子中心
+//     沿链前移 (2Δt, 车道start, z_B)（主链每 tick 恒 2 格，与单线式同约定）→ 斜线「时间×音高」轨迹，
+//     笔尖末点恰在 t_B 抵达 B 的粒子中心；同音高退化为沿链 +X 水平线。和弦配对见 sfxChordPairs：
 //     Δt ≤ SFX_CONNECT_NEAR_DT(32) → 1:1 最近邻 + 落单音就近挂靠（允许 1对3/3对1）；Δt > 32 → 严格 1:1。
+//     （2026-09-10 用户实测修正：原 B 端与 A 同 X=0 → 线段平行于 Z、垂直于链传播方向，视觉错误）
 //   · 单线式：与音高无关 → 端点简并为车道中间槽位（主位），沿链 +X 方向连线（主链每 tick 恒 2 格），
 //     「连接前后节奏」：每个演奏 tick 与下一个演奏 tick 之间都有连线（每 tick 对只一条线）。
 const SFX_CONNECT_DEFAULTS = {
@@ -1453,7 +1456,7 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
   // --- ② 连接型：参考车道「相邻演奏 tick 之间」线段（用户 2026-09-07/07c 规格，见 sfxConnectCmd 注释） ---
   // 按**参考车道**连（车道级事件 = 该 tick 车道全部成员音符集合）；仅当车道勾选连接型
   //   （lane.effects 含 'connect'，缺省 = 全选）时生效；模板 = 车道 sfxParams.connect。
-  //   · MIDI式：端点 = 两 tick 各音的粒子中心（基准 = 车道 start + 音高 Z 展开）；
+  //   · MIDI式：端点 = 真空间粒子中心 A=(0,dy,z_A) → B=(2Δt,dy,z_B)（B 端沿链前移，斜线轨迹）；
   //     和弦配对：Δt ≤ 32 → 1:1 最近邻 + 落单就近挂靠（1对3/3对1），Δt > 32 → 严格 1:1。
   //   · 单线式：与音高无关 → 端点简并为车道中间槽位（主位），沿链 +X 方向连线（主链每 tick 恒 2 格）。
   // 行落在 t_A：t_A 必有参考音符（事件来源）→ CB 已在，空 tick 回退天然不触；litematic 零改动（纯函数行增量）。
@@ -1491,8 +1494,13 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
           pushLine([0, mid[1], mid[2]], [dt * 2, mid[1], mid[2]]);
         } else {
           // MIDI式：和弦配对（sfxChordPairs，Δt ≤ 32 允许落单就近挂靠 1:3/3:1，否则严格 1:1）
+          // 端点 = 真空间粒子中心：A = t_A 音的粒子中心 (0, dy, z_A)，B = t_B 音的粒子中心沿链前移
+          //   (2Δt, dy, z_B)（主链每 tick 恒 2 格，与单线式同约定）→ 斜线「时间×音高」轨迹，
+          //   笔尖末点恰在 t_B 抵达 B 的粒子中心；同音高退化为沿链 +X 水平线（2026-09-10 用户实测修正：
+          //   原 B 端不随时间前移 → 线段平行于 Z（垂直于链传播方向），视觉错误）
           for (const [ka, kb] of sfxChordPairs(A.keys, B.keys, dt <= SFX_CONNECT_NEAR_DT)) {
-            pushLine(centerOf(ka), centerOf(kb));
+            const cA = centerOf(ka), cB = centerOf(kb);
+            pushLine(cA, [cB[0] + dt * 2, cB[1], cB[2]]);
           }
         }
       }
@@ -3084,7 +3092,7 @@ function renderSfxEffectList() {
     '20 个粒子、寿命 0.1s、半径 1、角度随 t 扫描的平面螺旋，坐标段由构建时按车道起点/槽位/音高求解替换）。');
   card('② 连接型', 'on',
     '由音符触发，参数由 2 个音符决定：连接参考车道**相邻演奏 tick**（t_A < t_B，按车道连；和弦 = 多成员同 tick 齐响，按 ≤32 tick 规则配对连线）——' +
-    'MIDI式按各音粒子中心（音高 Z 展开）画 A→B 线段，同 tick 和弦配对（间隔 ≤32 tick 时 1:1 最近邻 + 落单音就近挂靠，否则严格 1:1）；' +
+    'MIDI式按各音粒子中心画**真空间斜线**（A = t_A 粒子中心、B = t_B 粒子中心沿链前移 2Δt 格，同音高退化为沿链 +X 水平线），同 tick 和弦配对（间隔 ≤32 tick 时 1:1 最近邻 + 落单音就近挂靠，否则严格 1:1）；' +
     '单线式与音高无关 → 端点简并为车道中间槽位、沿链 X 方向连线（每 tick 2 格）。' +
     'tickpolarparameter 逐点生成（点距 ≤0.1 格），笔尖恰好在 B 的触发型/音符盒激活那一 tick 抵达 B，无缝衔接。' +
     '粒子/颜色/寿命 m/漂移在下方车道展开面板调。');

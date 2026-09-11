@@ -637,9 +637,11 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
   check(indepRes.sfxTickList.every(e => e.lines.every(l => /^particleex (?:polarparameter|tickpolarparameter) minecraft:end_rod ~0 ~0 /.test(l))),
     'MIDI式行垂直偏移恒 0（触发独立行 ~0 ~0 ~<z> 与连接线起点 ~0 ~0 ~<z>，dy=0）');
   check(indepRes.stats.sfxConnectLines > 0
+    && indepRes.sfxTickList.flatMap(e => e.lines).filter(l => l.startsWith('particleex tickpolarparameter '))
+      .every(l => { const m = l.match(/"s1,s2,dis=([-0-9.]+),0,([0-9.]+)\*t"/); return !!m && Math.abs(Number(m[1])) < 1.5707963; })
     && indepRes.sfxTickList.some(e => e.lines.some(l => /^particleex tickpolarparameter /.test(l)
       && l.includes('"s1,s2,dis=') && / 10 null 1\.0 null$/.test(l))),
-    `纯MIDI式含连接线（conn=${indepRes.stats.sfxConnectLines}，缺省模板 age=m=10）`);
+    `纯MIDI式含连接线（conn=${indepRes.stats.sfxConnectLines}，缺省模板 age=m=10；真空间斜线：|φ|<π/2，方向恒含 +X 分量（B 端沿链前移 2Δt），非垂直于链的纯 Z 线）`);
   // 7) 参考全取消 → 重新生成：zip 隐藏、无 CB
   onRefToggle(0, false);
   onRefToggle(2, false);
