@@ -1079,6 +1079,52 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
     check(boundG3.length > 0 && boundG3.every(l => !/\s+g1$/.test(l)),
       '收尾还原：① 触发组名清空 → 绑定行组位回 null');
   }
+  // 8h) 触发型预设模板库（2026-09-10）：另存当前 5 字段+组名为命名预设（localStorage 跨歌）→
+  //     点选回填本表单 → 删除选中。复用 8g 展开的面板与 boundLi；收尾清空库，不污染 9) 段。
+  //     ⚠ 每次 save/select/delete 处理器都 renderSfxEffectLanes() 整表重建 → 旧元素引用失效，
+  //     每次操作后须重新按 className 收集（同 8g 面板重开 sfxLanesOpen 坑）
+  {
+    const AP = context.window.__NBS2SCHEMATIC;
+    const boundLi = st.refLanes.findIndex(l => l.tracks.includes(0));
+    const recH = (cls) => {
+      const out = [];
+      (function rec(n) { if (n.className === cls) out.push(n); (n.children || []).forEach(rec); })(elements.get('sfxEffectLanes'));
+      return out;
+    };
+    const selH = recH('sfx-preset-sel'), nameH = recH('sfx-preset-name'),
+      saveH = recH('sfx-preset-save'), delH = recH('sfx-preset-del');
+    check(selH.length >= 1 && nameH.length >= 1 && saveH.length >= 1 && delH.length >= 1,
+      `8h 前置：预设库控件在列（sel=${selH.length} name=${nameH.length} save=${saveH.length} del=${delH.length}）`);
+    const lane = st.refLanes[boundLi];
+    // 前置：当前表单 = 默认 5 字段模板（8g 收尾后 sfxParams 为有效 5 字段、无 group）
+    const baseP = AP.SFX_PARTICLE_FIELDS;
+    lane.sfxParams = { ...baseP };
+    // 另存当前为预设 p1 → 库含 p1、params = 当前 5 字段
+    nameH[0].value = 'p1';
+    saveH[0].dispatch('click', {});
+    const libH = AP.sfxPresetLoad();
+    check(libH.length === 1 && libH[0].name === 'p1'
+      && JSON.stringify(libH[0].params) === JSON.stringify(baseP),
+      '另存当前为预设：库含 p1、params = 当前 5 字段（无 group）');
+    // 重渲染后 select 选项应含 p1（renderSfxEffectLanes 已刷新面板）→ 重新收集
+    const selH2 = recH('sfx-preset-sel');
+    const optNames = selH2[0].children.map(o => o.value);
+    check(optNames.includes('p1'), `select 选项含 p1（实际 ${JSON.stringify(optNames)}）`);
+    // 改表单为明显不同值 + group pg1 → 选 p1 回填 → 表单回到 p1 的 5 字段、group 清除
+    lane.sfxParams = { head: 'particleex polarparameter minecraft:heart', x: '~', y: '~', z: '~', tail: '0.5 0.5 0.5 1 1 1 1 1.0 pg1', group: 'pg1' };
+    const selH2b = recH('sfx-preset-sel');
+    selH2b[0].value = 'p1';
+    selH2b[0].dispatch('change', { target: selH2b[0] });
+    check(JSON.stringify(st.refLanes[boundLi].sfxParams) === JSON.stringify(baseP),
+      '点选预设 p1 回填：lane.sfxParams 恢复为 p1 的 5 字段（group 清除）');
+    // 删除选中 p1 → 库空、select 选项刷新（不含 p1）
+    const selH3 = recH('sfx-preset-sel'), delH3 = recH('sfx-preset-del');
+    selH3[0].value = 'p1';
+    delH3[0].dispatch('click', {});
+    check(AP.sfxPresetLoad().length === 0, '删除选中：库清空');
+    const selH4 = recH('sfx-preset-sel');
+    check(!selH4[0].children.map(o => o.value).includes('p1'), '删除后 select 选项刷新（不含 p1）');
+  }
   // 9) 旧格式迁移：手工写入旧 bool 载荷 → 重载按MIDI式迁移
   if (parsed) {
     parsed.refLayers = [[1, true]];

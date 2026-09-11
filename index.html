@@ -493,7 +493,31 @@ function sfxParamsPayload(l) {
   for (const k of ['background']) if (typeof p[k] === 'string') out[k] = p[k];
   return Object.keys(out).length > 0 ? out : undefined;
 }
-// 按构建时计算的相对偏移生成粒子命令行：坐标段替换为 `~dx ~dy ~dz`，命令其余部分逐字保持用户原样。
+// 触发型命令预设库（2026-09-10）：用户把调好的触发型 5 字段 + 可选组名另存为命名预设，
+//   点选即回填本车道触发型表单。独立全局 localStorage key（跨歌保留，不进 per-song state）。
+//   预设项 = { name, params }，params = normSfxParams 结果（5 字段全合法）；name 单 token。
+const SFX_PRESET_KEY = 'nbs2schematic:sfxpresets';
+const sfxPresetLoad = () => {
+  let raw;
+  try { raw = localStorage.getItem(SFX_PRESET_KEY); } catch (e) { return []; }
+  let arr;
+  try { arr = raw ? JSON.parse(raw) : null; } catch (e) { return []; }
+  if (!Array.isArray(arr)) return [];
+  const out = [];
+  for (const it of arr) {
+    if (!it || typeof it.name !== 'string') continue;
+    const name = it.name.trim();
+    if (name === '' || /\s/.test(name)) continue;   // 单 token，去重（首个胜）
+    const params = normSfxParams(it.params);
+    if (!params || out.some(o => o.name === name)) continue;
+    out.push({ name, params });
+  }
+  return out;
+};
+const sfxPresetSave = (list) => {
+  try { localStorage.setItem(SFX_PRESET_KEY, JSON.stringify(list || [])); } catch (e) { /* 存储满/隐私模式：忽略，下次 load 回退 */ }
+};
+const sfxPresetByName = (name) => sfxPresetLoad().find(p => p.name === name) || null;
 //   偏移 = 粒子中心坐标 − CB 坐标（布局坐标，CB 恒在轨道 0 主位底座）。
 const sfxParticleCmd = (dx, dy, dz) => sfxParticleCmdFromParts(dx, dy, dz, SFX_PARTICLE_FIELDS);
 // 车道级模板版：p = normSfxParams 结果（缺省 = SFX_PARTICLE_FIELDS）；
@@ -3230,6 +3254,45 @@ function renderSfxLaneParams(lane, li) {
   inG.addEventListener('change', (e) => onSfxParamEdit(li, 'group', e.target.value));
   rowGroup.appendChild(lbG); rowGroup.appendChild(inG);
   box.appendChild(rowGroup);
+  // ① 触发型 · 预设模板库（2026-09-10）：另存当前 5 字段+组名为命名预设（localStorage 跨歌保留）、
+  //   点选回填本表单、删除选中。一个预设 = 一种触发型粒子命令样式（坐标段占位一并存，构建时恒替换）。
+  const rowPreset = document.createElement('div');
+  rowPreset.className = 'sfx-pf-preset';
+  const lbP = document.createElement('label');
+  lbP.textContent = '预设模板库';
+  const selP = document.createElement('select');
+  selP.className = 'sfx-preset-sel';
+  selP.title = '选择预设 → 回填本表单（5 字段 + 组名）';
+  const optP0 = document.createElement('option');
+  optP0.value = '';
+  optP0.textContent = '选择预设…回填本表单';
+  selP.appendChild(optP0);
+  for (const pr of sfxPresetLoad()) {
+    const op = document.createElement('option');
+    op.value = pr.name;
+    op.textContent = pr.name;
+    selP.appendChild(op);
+  }
+  selP.addEventListener('change', () => onSfxPresetSelect(li, selP.value));
+  const inP = document.createElement('input');
+  inP.type = 'text';
+  inP.className = 'sfx-preset-name';
+  inP.placeholder = '新预设名（单 token）';
+  const btnPsave = document.createElement('button');
+  btnPsave.type = 'button';
+  btnPsave.className = 'sfx-preset-save';
+  btnPsave.textContent = '另存当前';
+  btnPsave.title = '把本表单当前 5 字段 + 组名另存为命名预设（同名覆盖）';
+  btnPsave.addEventListener('click', () => onSfxPresetSave(li, inP.value));
+  const btnPdel = document.createElement('button');
+  btnPdel.type = 'button';
+  btnPdel.className = 'sfx-preset-del';
+  btnPdel.textContent = '删除选中';
+  btnPdel.title = '删除下拉中选中的预设';
+  btnPdel.addEventListener('click', () => onSfxPresetDelete(li, selP.value));
+  rowPreset.appendChild(lbP); rowPreset.appendChild(selP);
+  rowPreset.appendChild(inP); rowPreset.appendChild(btnPsave); rowPreset.appendChild(btnPdel);
+  box.appendChild(rowPreset);
   // ② 连接型：结构化 5 字段（粒子/颜色/m 寿命/漂移/组名；线段几何 = 构建时按音符数据计算，不可用户输入）
   const h2 = document.createElement('h4');
   h2.textContent = '② 连接型 · 线段参数（A→B，抵达时刻 = B 触发）';
@@ -3326,6 +3389,37 @@ function onSfxParamEdit(li, k, v) {
   const p = { ...src, [k]: String(v == null ? '' : v).trim() };
   lane.sfxParams = (p.head || p.x || p.y || p.z || p.tail) ? p : undefined;
   scheduleStateSave();
+}
+// 触发型预设库（2026-09-10）：回填 = 把预设 params 写回本车道 sfxParams（5 字段 + 可选组名）；
+//   另存 = 读当前表单经 normSfxParams 校验后入库（同名覆盖）；删除 = 按选中名剔除。三者落盘 + 重渲染。
+function onSfxPresetSelect(li, name) {
+  const lane = AppState.refLanes[li];
+  if (!lane || !name) return;
+  const pr = sfxPresetByName(name);
+  if (!pr) return;
+  const out = { ...pr.params };
+  if (typeof out.group !== 'string' || out.group === '') delete out.group;
+  lane.sfxParams = out;
+  scheduleStateSave();
+  renderSfxEffectLanes();
+}
+function onSfxPresetSave(li, rawName) {
+  const lane = AppState.refLanes[li];
+  if (!lane) return;
+  const name = String(rawName == null ? '' : rawName).trim();
+  if (name === '' || /\s/.test(name)) { alert('预设名须为单 token（不含空白）'); return; }
+  const params = normSfxParams(lane.sfxParams);
+  if (!params) { alert('当前触发型表单 5 字段不全（留空任一项无法保存为预设）'); return; }
+  const list = sfxPresetLoad().filter(p => p.name !== name);
+  list.push({ name, params });
+  sfxPresetSave(list);
+  scheduleStateSave();
+  renderSfxEffectLanes();
+}
+function onSfxPresetDelete(li, name) {
+  if (!name) return;
+  sfxPresetSave(sfxPresetLoad().filter(p => p.name !== name));
+  renderSfxEffectLanes();
 }
 // 连接型结构化字段编辑：合并进 lane.sfxParams.connect（4 字段）；该字段留空 → 回默认值（用户显式清空
 //   不应把其余 3 个字段冲掉，与触发型同语义）。全部字段 = 默认值时不存键（载荷保持旧形状）。
@@ -4305,6 +4399,7 @@ window.__NBS2SCHEMATIC = {
   buildLayout, buildPalette, buildLitematic,
   SFX_NAMESPACE, SFX_PARTICLE_CMD, SFX_CB_STATE, SFX_PACKFORMAT, sfxPackFormat, sfxParticleCmd,
   SFX_PARTICLE_FIELDS, sfxParticleCmdFromParts, sfxParticleCmdWithGroup, normSfxParams, sfxParamsPayload,
+  SFX_PRESET_KEY, sfxPresetLoad, sfxPresetSave, sfxPresetByName,
   SFX_NBS_TICK_PER_BEAT, sfxBarLen, sfxNormBackground,
   SFX_CONNECT_DEFAULTS, SFX_CONNECT_POINT_GAP, SFX_CONNECT_MIN_LEN, SFX_CONNECT_NEAR_DT, normConnectParams, sfxNum, sfxConnectCmd, sfxChordPairs,
   SFX_VANISH_DEFAULTS, SFX_VANISH_PROTO, sfxVanishCmd, normVanishParams,
