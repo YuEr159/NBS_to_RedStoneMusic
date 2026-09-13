@@ -1313,7 +1313,7 @@ try {
     const n0 = Math.ceil(L / SFX_CONNECT_POINT_GAP);
     const cpt = Math.max(1, Math.ceil((n0 + 1) / (dt + 1)));
     const P = (dt + 1) * cpt;
-    return sfxConnectCmd([0, my, mz], [L, 0, 0], L, P,
+    return sfxConnectCmd([0, my, mz], [L, 0, 0], L, P, cpt,
       SFX_CONNECT_DEFAULTS.m, SFX_CONNECT_DEFAULTS.alpha, SFX_CONNECT_DEFAULTS);
   };
   const BC_26 = boundConn(2, 6, 2);   // (0,2,6) 沿 X 4 格、P=42（与失败样本交叉核对：dis=4*t 0.024390244 42）
@@ -1586,7 +1586,7 @@ try {
     {
       // K1 期望（默认模板）：A=(0,0,0) → B=(4,0,5)（音高 12→17，B 端沿链前移 2Δt=4 格，真空间斜线）
       //   d=(4,0,5)、L=√41、Δt=2、N0=⌈√41/0.1⌉=65、cpt=⌈66/3⌉=22、P=66、step=1/65、end=1.007692308、age=m=10
-      const expK1 = sfxConnectCmd([0, 0, 0], [4, 0, 5], Math.sqrt(41), 66,
+      const expK1 = sfxConnectCmd([0, 0, 0], [4, 0, 5], Math.sqrt(41), 66, 22,
         SFX_CONNECT_DEFAULTS.m, SFX_CONNECT_DEFAULTS.alpha, SFX_CONNECT_DEFAULTS);
       const k1Opts = {
         lane0: { dz: 0, dy: 0 },
@@ -1603,10 +1603,26 @@ try {
         || JSON.stringify(tlbK1[0].lines) !== JSON.stringify([sfxParticleCmd(0, 0, 0), expK1])
         || JSON.stringify(tlbK1[1].lines) !== JSON.stringify([sfxParticleCmd(0, 0, 5)])
         || !expK1.startsWith('particleex tickpolarparameter minecraft:end_rod ~0 ~0 ~0 1 0.95 0.89 1 0 0 0 0 1.007692308')
-        || !expK1.includes('"s1,s2,dis=0.896055385,0,6.403124237*t" 0.015384615 66 10 null 1.0 null')) {
+        || !expK1.includes('"s1,s2,dis=0.896055385,0,6.403124237*t" 0.015384615 22 10 null 1.0 null')) {
         console.log(`FAIL 连接线缺省：indep=${statK1.sfxStandaloneNotes} conn=${statK1.sfxConnectLines} CB=${statK1.commandBlocks} 行=${JSON.stringify(tlbK1)}（期望 tick0 [独立行, 连接线] / tick1 [独立行]；命令 A=(0,0,0)→B=(4,0,5) 真空间斜线：φ=atan2(5,4)、L=√41、step=1/65、P=66、age=10）`); ok = false;
       } else {
         console.log('PASS 连接线缺省（全选）：tA 行 = 独立行+连接线（B 端沿链前移 2Δt，真空间斜线，t_B=t_A+2 笔尖抵达 B 粒子中心，无缝衔接），litematic 结构不变');
+      }
+      // K1b 分 tick 语义不变式（2026-09-12 修正的回归护栏）：连接线命令第 10 字段必须是 **cpt（每 tick 生成点数）**，
+      //   模组源码 ParticleUtil.TickParticleTask.run = `for (i=0; i<cpt && t<=end; t+=step)` + t<=end 时自调度下一 tick
+      //   → 总点数 P 跨 ⌈P/cpt⌉ tick 铺完；曾误传 P（总点数）→ 整条线在 t_A 一个 tick 内全部生成，不「依次显现」。
+      //   由命令自身反推：P = 1/step + 1；铺完 tick 数 = ⌈P/cpt⌉（须 = Δt+1）。
+      {
+        const fC = expK1.split(' ');                 // 末 6 段 = step cpt age speedExpression speedStep group
+        const fStep = Number(fC[fC.length - 6]);
+        const fCpt = Number(fC[fC.length - 5]);
+        const pTotal = Math.round(1 / fStep) + 1;    // step = 1/(P−1)
+        const ticksUsed = Math.ceil(pTotal / fCpt);
+        if (!(Number.isInteger(fCpt) && fCpt === 22 && pTotal === 66 && ticksUsed === 3 && Math.abs(fStep * 65 - 1) < 1e-6)) {
+          console.log(`FAIL 连接线分 tick 语义：第 10 字段=${fCpt}（期望 cpt=22=⌈(N0+1)/(Δt+1)⌉）、由 step 反推 P=${pTotal}（期望 66）、铺完 tick 数=${ticksUsed}（期望 Δt+1=3）——传总点数会让整条线在 t_A 一次生成`); ok = false;
+        } else {
+          console.log('PASS 连接线分 tick 语义：第 10 字段 = cpt=22（每 tick 点数），总点数 P=66 恰跨 Δt+1=3 tick 铺完（t_A→t_B 沿方向依次显现，末点落 t_B）');
+        }
       }
       // K2 取消连接（effects 仅 trigger）：无连接线；网格/盒/中继器与 K1 逐位一致（零 litematic 改动）
       const rK2 = runE2E(tmpFile, { ...k1Opts, refLanes: [{ tracks: [0], start: { dz: 0, dy: 0 }, effects: ['trigger'] }] });
@@ -1634,10 +1650,10 @@ try {
       const connK4 = { particle: 'minecraft:dragon_breath', color: '0.5 0.5 0.5 1', m: 20, alpha: 0.1 };
       const rK4 = runE2E(tmpFile, { ...k1Opts, refLanes: [{ tracks: [0], start: { dz: 0, dy: 0 }, sfxParams: { connect: connK4 } }] });
       const tlbK4 = rK4.result.sfxTickList;
-      const expK4 = sfxConnectCmd([0, 0, 0], [4, 0, 5], Math.sqrt(41), 66, 20, 0.1, { particle: 'minecraft:dragon_breath', color: '0.5 0.5 0.5 1' });
+      const expK4 = sfxConnectCmd([0, 0, 0], [4, 0, 5], Math.sqrt(41), 66, 22, 20, 0.1, { particle: 'minecraft:dragon_breath', color: '0.5 0.5 0.5 1' });
       if (JSON.stringify(tlbK4[0].lines) !== JSON.stringify([sfxParticleCmd(0, 0, 0), expK4])
         || !expK4.startsWith('particleex tickpolarparameter minecraft:dragon_breath ~0 ~0 ~0 0.5 0.5 0.5 1 0.062469505 0 0.078086881 0 1.007692308')
-        || !expK4.includes('"s1,s2,dis=0.896055385,0,6.403124237*t" 0.015384615 66 20 null 1.0 null')) {
+        || !expK4.includes('"s1,s2,dis=0.896055385,0,6.403124237*t" 0.015384615 22 20 null 1.0 null')) {
         console.log(`FAIL 车道级连接模板：行=${JSON.stringify(tlbK4[0].lines)}（期望 dragon_breath、色 0.5 0.5 0.5 1、漂移 α·d/L=(0.062469505,0,0.078086881)、age=20）`); ok = false;
       } else {
         console.log('PASS 车道级连接模板（sfxParams.connect）：粒子/颜色/m/α 定制进命令，独立行不受影响');
@@ -1656,17 +1672,17 @@ try {
       ok = verifyE2E('参考车道池·连接线短Δt', rK5) && ok;
       const statK5 = rK5.result.stats;
       const tlbK5 = rK5.result.sfxTickList;
-      const expK5a = sfxConnectCmd([0, 0, 0], [4, 0, 0], 4, 42,
+      const expK5a = sfxConnectCmd([0, 0, 0], [4, 0, 0], 4, 42, 14,
         SFX_CONNECT_DEFAULTS.m, SFX_CONNECT_DEFAULTS.alpha, SFX_CONNECT_DEFAULTS);
-      const expK5b = sfxConnectCmd([0, 0, 0], [8, 0, -5], Math.sqrt(89), 100,
+      const expK5b = sfxConnectCmd([0, 0, 0], [8, 0, -5], Math.sqrt(89), 100, 20,
         SFX_CONNECT_DEFAULTS.m, SFX_CONNECT_DEFAULTS.alpha, SFX_CONNECT_DEFAULTS);
       if (statK5.sfxStandaloneNotes !== 3 || statK5.sfxConnectLines !== 2
         || tlbK5.length !== 3
         || JSON.stringify(tlbK5[0].lines) !== JSON.stringify([sfxParticleCmd(0, 0, 0), expK5a])
         || JSON.stringify(tlbK5[1].lines) !== JSON.stringify([sfxParticleCmd(0, 0, 0), expK5b])
         || JSON.stringify(tlbK5[2].lines) !== JSON.stringify([sfxParticleCmd(0, 0, -5)])
-        || !expK5a.includes('"s1,s2,dis=0,0,4*t" 0.024390244 42 10 null 1.0 null')
-        || !expK5b.includes('"s1,s2,dis=-0.558599315,0,9.433981132*t" 0.01010101 100 10 null 1.0 null')) {
+        || !expK5a.includes('"s1,s2,dis=0,0,4*t" 0.024390244 14 10 null 1.0 null')
+        || !expK5b.includes('"s1,s2,dis=-0.558599315,0,9.433981132*t" 0.01010101 20 10 null 1.0 null')) {
         console.log(`FAIL 连接线短Δt：indep=${statK5.sfxStandaloneNotes} conn=${statK5.sfxConnectLines} 行=${JSON.stringify(tlbK5)}（期望 (0,2) 同音高沿链水平线 L=4/P=42、(2,6) 斜线 L=√89/P=100；行落各 t_A）`); ok = false;
       } else {
         console.log('PASS 连接线短Δt：真空间斜线（同音高退化为沿链 +X 水平线）；cpt=⌈(N0+1)/(Δt+1)⌉ 量化点距 ≤0.1；L<0.05 跳过仍生效');
@@ -1707,11 +1723,11 @@ try {
         const tlbK6a = rK6a.result.sfxTickList;
         // 独立行：t0 I(44)=(0,0,-1)、I(50)=(0,0,5)；t4 I(45)=(0,0,0)、I(50)=(0,0,5)、I(55)=(0,0,10)
         const I24 = (n) => sfxParticleCmd(0, 0, n);
-        const expK6a1 = sfxConnectCmd([0, 0, -1], [8, 0, 1], Math.sqrt(65), 85,
+        const expK6a1 = sfxConnectCmd([0, 0, -1], [8, 0, 1], Math.sqrt(65), 85, 17,
           SFX_CONNECT_DEFAULTS.m, SFX_CONNECT_DEFAULTS.alpha, SFX_CONNECT_DEFAULTS); // (44→45) Δt=4 → N0=81 cpt=17 P=85
-        const expK6a2 = sfxConnectCmd([0, 0, 5], [8, 0, 0], 8, 85,
+        const expK6a2 = sfxConnectCmd([0, 0, 5], [8, 0, 0], 8, 85, 17,
           SFX_CONNECT_DEFAULTS.m, SFX_CONNECT_DEFAULTS.alpha, SFX_CONNECT_DEFAULTS); // (50→50 同音高) 沿链水平线 L=8 P=85
-        const expK6a3 = sfxConnectCmd([0, 0, 5], [8, 0, 5], Math.sqrt(89), 100,
+        const expK6a3 = sfxConnectCmd([0, 0, 5], [8, 0, 5], Math.sqrt(89), 100, 20,
           SFX_CONNECT_DEFAULTS.m, SFX_CONNECT_DEFAULTS.alpha, SFX_CONNECT_DEFAULTS); // (50→55 挂靠) L=√89 → N0=95 cpt=20 P=100
         if (statK6a.sfxStandaloneNotes !== 5 || statK6a.sfxConnectLines !== 3
           || JSON.stringify(tlbK6a[0].lines) !== JSON.stringify([I24(-1), I24(5), expK6a1, expK6a2, expK6a3])
@@ -1735,7 +1751,7 @@ try {
         ok = verifyE2E('参考车道池·和弦连线远距', rK6b) && ok;
         const statK6b = rK6b.result.stats;
         const tlbK6b = rK6b.result.sfxTickList;
-        const expK6b1 = sfxConnectCmd([0, 0, 0], [80, 0, 0], 80, 820,
+        const expK6b1 = sfxConnectCmd([0, 0, 0], [80, 0, 0], 80, 820, 20,
           SFX_CONNECT_DEFAULTS.m, SFX_CONNECT_DEFAULTS.alpha, SFX_CONNECT_DEFAULTS); // (45→45 同音高) Δt=40 → L=80 N0=800 cpt=20 P=820
         if (statK6b.sfxStandaloneNotes !== 4 || statK6b.sfxConnectLines !== 1
           || JSON.stringify(tlbK6b[0].lines) !== JSON.stringify([I24(0), expK6b1])
@@ -1778,7 +1794,7 @@ try {
           const n0 = Math.ceil(L / SFX_CONNECT_POINT_GAP);
           const cpt = Math.max(1, Math.ceil((n0 + 1) / (dt + 1)));
           const P = (dt + 1) * cpt;
-          return sfxConnectCmd([0, 0, za], d, L, P,
+          return sfxConnectCmd([0, 0, za], d, L, P, cpt,
             SFX_CONNECT_DEFAULTS.m, SFX_CONNECT_DEFAULTS.alpha, SFX_CONNECT_DEFAULTS);
         };
         // Z(key) = key − 45：44→−1、45→0、48→3、50→5；端点 A=(0,0,Z(ka)) → B=(2Δt,0,Z(kb))
@@ -2033,8 +2049,8 @@ try {
         {
           const CG = 'cg1', VG = 'vg1', TG = 'tg1';
           // N1 单元：三处组位写入 + 校验规则（多 token/非字符串组名 → 丢弃该字段）
-          const connG = sfxConnectCmd([0, 0, 0], [2, 0, 0], 2, 5, 10, 0, { ...SFX_CONNECT_DEFAULTS, group: CG });
-          const connG0 = sfxConnectCmd([0, 0, 0], [2, 0, 0], 2, 5, 10, 0, SFX_CONNECT_DEFAULTS);
+          const connG = sfxConnectCmd([0, 0, 0], [2, 0, 0], 2, 5, 3, 10, 0, { ...SFX_CONNECT_DEFAULTS, group: CG });   // cpt=3（本用例只断言组位，几何不参与）
+          const connG0 = sfxConnectCmd([0, 0, 0], [2, 0, 0], 2, 5, 3, 10, 0, SFX_CONNECT_DEFAULTS);
           const vanG = sfxVanishCmd(0, 2, 6, 9, { ...SFX_VANISH_DEFAULTS, ahead: 9, group: VG });
           const tgBase = { ...SFX_PARTICLE_FIELDS };
           const tgCmd = sfxParticleCmdWithGroup(0, 2, 6, { ...tgBase, group: TG }, TG);

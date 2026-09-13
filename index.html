@@ -542,7 +542,8 @@ const sfxParticleCmdWithGroup = (dx, dy, dz, p, g) => {
 // 工具构建时计算（不可用户输入，依赖音符数据）：A、方向角 φ/θ、L、cpt、P、step、age——
 //   相邻演奏 tick A(t_A)→B(t_B)，Δt=t_B−t_A；L=|B−A|；N0=⌈L/0.1⌉（固定 0.1 格点距为密度上限）；
 //   cpt=max(1,⌈(N0+1)/(Δt+1)⌉)、P=(Δt+1)·cpt、step=1/(P−1)。模组 tickpolarparameter 每 tick 生成 cpt 个采样点
-//   （客户端任务自调度，源码 ParticleEx TickParticleTask 实锤）→ 末点 k=P−1 生于 t_A+⌊k/cpt⌋=t_A+Δt=t_B，
+//   （模组源码 ParticleUtil.TickParticleTask.run 实锤：每 tick 至多生成 cpt 点、t<=end 时自调度下一 tick；
+//   命令第 10 字段 = cpt（每 tick 点数），非总点数 P）→ 末点 k=P−1 生于 t_A+⌊k/cpt⌋=t_A+Δt=t_B，
 //   与 B 的触发型/音符盒激活同 tick 无缝衔接；实际点距 = L/(P−1) ≤ 0.1（量化只会更密）。
 // 球坐标（模组约定 ParticleUtil：dx=dis·cos(s2)·cos(s1), dy=dis·sin(s2), dz=dis·cos(s2)·sin(s1)）：
 //   φ=atan2(dz,dx)、θ=atan2(dy,√(dx²+dz²))；纯 +Z 方向 → φ=π/2、θ=0；纯 +X 方向 → φ=0、θ=0。
@@ -667,7 +668,11 @@ function normVanishParams(p) {
 const sfxNum = (n) => String(Math.round(n * 1e9) / 1e9);
 // 连接线命令（tickpolarparameter，14 段）：A 处生成，沿 AB 方向以 dis=L·t 展开，t∈[0,1+ε]
 //   （ε=半采样点余量：t += step 浮点累加漂移兜底，最坏偏差半个点距，B 端由触发环接住）
-function sfxConnectCmd(a, d, L, P, m, alpha, cp) {
+//   **第 10 字段 = cpt（每 tick 生成点数），不是总点数 P**（2026-09-12 修正，模组源码实锤）：
+//   ParticleUtil.TickParticleTask.run 为 `for (i=0; i<cpt && t<=end; t+=step)`——每 tick 至多生成 cpt 点、
+//   t>end 才停（t<=end 时 addTask(TickEndTask) 自调度下一 tick）→ 总点数 P 恰跨 ⌈P/cpt⌉ = Δt+1 tick 铺完、
+//   末点落 t_B「沿 AB 依次显现」；曾误传 P → 整条线在 t_A 一个 tick 内全部生成（视觉上不依次显现）。
+function sfxConnectCmd(a, d, L, P, cpt, m, alpha, cp) {
   const dx = d[0], dy = d[1], dz = d[2];
   const phi = Math.atan2(dz, dx);
   const theta = Math.atan2(dy, Math.hypot(dx, dz));
@@ -680,7 +685,7 @@ function sfxConnectCmd(a, d, L, P, m, alpha, cp) {
     sfxNum(vx), sfxNum(vy), sfxNum(vz),
     '0', sfxNum(end),
     `"s1,s2,dis=${sfxNum(phi)},${sfxNum(theta)},${sfxNum(L)}*t"`,
-    sfxNum(step), String(P), String(m), 'null', '1.0', cp.group || 'null',
+    sfxNum(step), String(cpt), String(m), 'null', '1.0', cp.group || 'null',
   ].join(' ');
 }
 // 命令方块方块状态：facing=up（1.21.11 jar 查证：command_block 的 blockstate 仅 facing 属性；
@@ -1486,7 +1491,7 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
           const cpt = Math.max(1, Math.ceil((n0 + 1) / (dt + 1)));
           const P = (dt + 1) * cpt;                // 末点生于 t_A+⌊(P−1)/cpt⌋ = t_A+dt = t_B（无缝衔接）
           if (!sfxTickLines.has(A.t)) sfxTickLines.set(A.t, []);
-          sfxTickLines.get(A.t).push(sfxConnectCmd(ca, d, L, P, cp.m, cp.alpha, cp));
+          sfxTickLines.get(A.t).push(sfxConnectCmd(ca, d, L, P, cpt, cp.m, cp.alpha, cp));
           stats.sfxConnectLines++;
         };
         if (isBound) {
@@ -3094,7 +3099,7 @@ function renderSfxEffectList() {
     '由音符触发，参数由 2 个音符决定：连接参考车道**相邻演奏 tick**（t_A < t_B，按车道连；和弦 = 多成员同 tick 齐响，按 ≤32 tick 规则配对连线）——' +
     'MIDI式按各音粒子中心画**真空间斜线**（A = t_A 粒子中心、B = t_B 粒子中心沿链前移 2Δt 格，同音高退化为沿链 +X 水平线），同 tick 和弦配对（间隔 ≤32 tick 时 1:1 最近邻 + 落单音就近挂靠，否则严格 1:1）；' +
     '单线式与音高无关 → 端点简并为车道中间槽位、沿链 X 方向连线（每 tick 2 格）。' +
-    'tickpolarparameter 逐点生成（点距 ≤0.1 格），笔尖恰好在 B 的触发型/音符盒激活那一 tick 抵达 B，无缝衔接。' +
+    'tickpolarparameter 分 tick 逐点生成（每 tick 至多 cpt 点、总点数跨 Δt+1 tick 铺完，点距 ≤0.1 格）→ 粒子在 A→B 之间沿方向**依次显现**，笔尖恰好在 B 的触发型/音符盒激活那一 tick 抵达 B，无缝衔接。' +
     '粒子/颜色/寿命 m/漂移在下方车道展开面板调。');
   card('③ 背景型', 'on',
     '与具体音符无关，按乐曲小节间隔周期性激活（铺底氛围）。小节长 = 拍号 × 18.125 tick 四舍五入（4/4 → 73，3/4 → 54），' +
