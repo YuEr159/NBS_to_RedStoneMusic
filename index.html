@@ -143,6 +143,11 @@ input[type="number"] { width: 70px; }
 .sfx-pf { margin: 4px 0; display: flex; gap: 8px; align-items: center; }
 .sfx-pf label { min-width: 128px; font-size: 12px; }
 .sfx-pf input[type="text"] { flex: 1; min-width: 180px; }
+.sfx-pf textarea.sfx-extra-field { flex: 1; width: auto; min-width: 0; box-sizing: border-box;
+  background: var(--panel2); color: var(--text); border: 1px solid var(--border);
+  border-radius: 4px; padding: 4px 8px; font-size: 13px; font-family: inherit;
+  resize: vertical; line-height: 1.4; }
+.sfx-pf textarea.sfx-extra-field:focus { outline: none; border-color: #4a90d9; }
 .sfx-pf-coord { display: flex; gap: 8px; margin: 4px 0; }
 .sfx-pf-coord label { font-size: 12px; }
 .sfx-pf-coord input[type="text"] { width: 90px; }
@@ -536,14 +541,18 @@ const sfxParticleCmdWithGroup = (dx, dy, dz, p, g) => {
 // 逐行整条原文处理（含单引号条件表达式，不拆字段）：每行 = 一条完整 particleex 命令，
 //   构建时把坐标段（前 3 词后首个 ~ 开头 token 起 3 个，同 SFX_PARTICLE_FIELDS 解析规则）整体替换为
 //   与本车道主命令相同的 ~dx ~dy ~dz；无坐标段的行无效 → 跳过 + 一次性告警。
+// 缺省（未填）= 内置 conditional 条件粒子默认命令（2026-09-25 用户提供，原样内置）；
+//   用户清空输入框（显式空串）= 不追加。
+const SFX_EXTRA_DEFAULT_CMD = "particleex conditional minecraft:end_rod ~ ~1 ~ 1 0.95 0.89 1 0 0 0 0.5 0.5 0.5 '(abs(y)==0.5&!(abs(z)<0.5))|(abs(x)==0.5&(!(abs(z)<0.5)|!(abs(y)<0.5)))' 0.1 50 'vy=0.05' 1.0 null";
 const sfxParseCmdCoord = (line) => {
   const parts = String(line || '').split(' ');
   const ci = parts.findIndex((p, i) => i >= 3 && p.startsWith('~'));
   if (ci < 3 || ci + 2 >= parts.length) return null;
   return { head: parts.slice(0, ci).join(' '), x: parts[ci], y: parts[ci + 1], z: parts[ci + 2], tail: parts.slice(ci + 3).join(' ') };
 };
-// 追加命令归一化（存原始多行文本）：trim 后非空字符串才有效；生成时再逐行解析（无效行跳过+告警）。
-const sfxNormExtra = (v) => (typeof v === 'string' && v.trim() !== '') ? v.trim() : null;
+// 追加命令归一化（存原始多行文本）：字符串 → trim 后原样保留（显式空串 = 用户清空 = 不追加）；
+//   非字符串（undefined/null）→ null（缺省，生成侧兜底为 SFX_EXTRA_DEFAULT_CMD）。
+const sfxNormExtra = (v) => (typeof v === 'string') ? v.trim() : null;
 const sfxParseExtraCommands = (raw) => {
   const out = [];
   if (!raw) return out;
@@ -1064,9 +1073,14 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
       refLaneConnect: isRef ? normConnectParams(refLanes[i - (defaultStart ? 1 : 0) - nOrd].sfxParams ? refLanes[i - (defaultStart ? 1 : 0) - nOrd].sfxParams.connect : null) : null,
       // 车道级消失型模板（lane.sfxParams.vanish，结构化对象；非法/缺省 → null → 生成时用 SFX_VANISH_DEFAULTS）
       refLaneVanish: isRef ? normVanishParams(refLanes[i - (defaultStart ? 1 : 0) - nOrd].sfxParams ? refLanes[i - (defaultStart ? 1 : 0) - nOrd].sfxParams.vanish : null) : null,
-      // 车道级触发型追加命令（lane.sfxParams.extra，多行文本每行一条完整命令；空/缺省 → null）
+      // 车道级触发型追加命令（lane.sfxParams.extra，多行文本每行一条完整命令）：
+      //   缺省（undefined）→ 内置默认命令 SFX_EXTRA_DEFAULT_CMD；显式空串（用户清空）→ null = 不追加。
       //   绑定行 = 主命令行 + 逐行追加行（坐标段替换为与主命令相同偏移）
-      refLaneExtra: isRef ? sfxNormExtra(refLanes[i - (defaultStart ? 1 : 0) - nOrd].sfxParams ? refLanes[i - (defaultStart ? 1 : 0) - nOrd].sfxParams.extra : null) : null,
+      refLaneExtra: isRef ? (refLanes[i - (defaultStart ? 1 : 0) - nOrd].sfxParams
+        ? (typeof refLanes[i - (defaultStart ? 1 : 0) - nOrd].sfxParams.extra === 'string'
+            ? refLanes[i - (defaultStart ? 1 : 0) - nOrd].sfxParams.extra.trim()
+            : SFX_EXTRA_DEFAULT_CMD)
+        : SFX_EXTRA_DEFAULT_CMD) : null,
       // MIDI式粒子中心基准（用户 2026-09-07 需求 5：参考窗口可拖）= 本车道 start（虚拟起点）；
       //   独立行 = 轨道 0 CB + (0, dy, dz) + (0, 0, 音高×sfxPitchStep)；未拖过的车道 start=(0,0)（v1 存档迁移保证）
       refLaneStart: isRef ? (refLanes[i - (defaultStart ? 1 : 0) - nOrd].start || null) : null,
@@ -3321,9 +3335,9 @@ function renderSfxLaneParams(lane, li) {
   const inE = document.createElement('textarea');
   inE.className = 'sfx-extra-field';
   inE.rows = 3;
-  inE.value = (typeof (lane.sfxParams && lane.sfxParams.extra) === 'string') ? lane.sfxParams.extra : '';
+  inE.value = (typeof (lane.sfxParams && lane.sfxParams.extra) === 'string') ? lane.sfxParams.extra : SFX_EXTRA_DEFAULT_CMD;
   inE.placeholder = '每行一条完整 particleex 命令（如 conditional 条件粒子）；坐标段 ~x ~y ~z 按本车道偏移替换';
-  inE.title = '每行一条完整命令（含单引号表达式，整行原文保留）；构建时坐标段（前 3 词后首个 ~ 起 3 个）替换为与主命令相同的 ~dx ~dy ~dz；无坐标段的行跳过并告警。留空 = 不追加';
+  inE.title = '每行一条完整命令（含单引号表达式，整行原文保留）；构建时坐标段（前 3 词后首个 ~ 起 3 个）替换为与主命令相同的 ~dx ~dy ~dz；无坐标段的行跳过并告警。缺省 = 内置 conditional 默认命令（下方预填），清空 = 不追加';
   inE.addEventListener('change', (e) => onSfxExtraEdit(li, e.target.value));
   rowExtra.appendChild(lbE); rowExtra.appendChild(inE);
   box.appendChild(rowExtra);
@@ -3471,14 +3485,14 @@ function onSfxParamEdit(li, k, v) {
   lane.sfxParams = (Object.keys(base).length > 0) ? base : undefined;
   scheduleStateSave();
 }
-// 触发型追加命令编辑（2026-09-25）：存原始多行文本（extra）；trim 后为空 → 删键（不追加）。
-//   独立于 5 字段判定——清空追加框不应把主命令表单冲掉，与组名同语义。
+// 触发型追加命令编辑（2026-09-25）：存原始多行文本（extra）；trim 后为空 → 存空串（显式「不追加」，
+//   区别于缺省 undefined = 用内置默认命令）。独立于 5 字段判定——清空追加框不应把主命令表单冲掉。
 function onSfxExtraEdit(li, v) {
   const lane = AppState.refLanes[li];
   if (!lane) return;
   const t = String(v == null ? '' : v).trim();
   const base = (typeof lane.sfxParams === 'object' && lane.sfxParams !== null) ? { ...lane.sfxParams } : {};
-  if (t === '') delete base.extra; else base.extra = t;
+  base.extra = t;
   lane.sfxParams = (Object.keys(base).length > 0) ? base : undefined;
   scheduleStateSave();
 }
@@ -4491,7 +4505,7 @@ window.__NBS2SCHEMATIC = {
   buildLayout, buildPalette, buildLitematic,
   SFX_NAMESPACE, SFX_PARTICLE_CMD, SFX_CB_STATE, SFX_PACKFORMAT, sfxPackFormat, sfxParticleCmd,
   SFX_PARTICLE_FIELDS, sfxParticleCmdFromParts, sfxParticleCmdWithGroup, normSfxParams, sfxParamsPayload,
-  sfxParseCmdCoord, sfxNormExtra, sfxParseExtraCommands,
+  sfxParseCmdCoord, sfxNormExtra, sfxParseExtraCommands, SFX_EXTRA_DEFAULT_CMD,
   SFX_PRESET_KEY, sfxPresetLoad, sfxPresetSave, sfxPresetByName,
   SFX_NBS_TICK_PER_BEAT, sfxBarLen, sfxNormBackground,
   SFX_CONNECT_DEFAULTS, SFX_CONNECT_POINT_GAP, SFX_CONNECT_MIN_LEN, SFX_CONNECT_NEAR_DT, normConnectParams, sfxNum, sfxConnectCmd, sfxChordPairs,

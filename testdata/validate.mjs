@@ -1304,7 +1304,7 @@ try {
   const { SFX_NAMESPACE, SFX_CB_STATE, sfxParticleCmd, sfxParticleCmdFromParts,
     SFX_PARTICLE_FIELDS, sfxParticleCmdWithGroup, normSfxParams, normConnectParams,
     SFX_CONNECT_DEFAULTS, SFX_CONNECT_POINT_GAP, SFX_CONNECT_NEAR_DT, sfxConnectCmd, sfxChordPairs,
-    SFX_VANISH_DEFAULTS, sfxVanishCmd, normVanishParams,
+    SFX_VANISH_DEFAULTS, sfxVanishCmd, normVanishParams, SFX_EXTRA_DEFAULT_CMD,
     sfxBarLen, sfxNormBackground } = context.window.__NBS2SCHEMATIC;
   // 单线式连接线（2026-09-07c「连接前后节奏」）：端点 = 车道虚拟主位（中间槽位），沿链 +X（每 NBS tick 2 格）。
   //   A/D/E2/H/H2 用 refLanes start {dz:6,dy:1} → mid=(0,2,6)；F 用 {dz:3,dy:0} → mid=(0,1,3)
@@ -1320,6 +1320,15 @@ try {
   };
   const BC_26 = boundConn(2, 6, 2);   // (0,2,6) 沿 X 4 格、Δt=2 → N0=40 cpt=9 P=45
   const BC_13 = boundConn(1, 3, 2);
+  // 触发型追加命令缺省 = 内置 conditional 默认命令（2026-09-25 用户提供）：绑定行恒在主行后追加，
+  //   坐标段（~ ~1 ~）替换为本车道偏移 → (0,2,6)/(0,1,3) 两条期望行
+  const exParts = (() => {
+    const parts = SFX_EXTRA_DEFAULT_CMD.split(' ');
+    const ci = parts.findIndex((p, i) => i >= 3 && p.startsWith('~'));
+    return { head: parts.slice(0, ci).join(' '), x: parts[ci], y: parts[ci + 1], z: parts[ci + 2], tail: parts.slice(ci + 3).join(' ') };
+  })();
+  const EX26 = sfxParticleCmdFromParts(0, 2, 6, exParts);
+  const EX13 = sfxParticleCmdFromParts(0, 1, 3, exParts);
   // layer 0：tick0 key45（音高 12）、tick2 key50（音高 17）
   const nbs = makeNbs({ tempoTps: 20, songLength: 8, layers: 1, noteSpecs: [
     { tick: 0, layer: 0, instrument: 0, key: 45 },
@@ -1365,8 +1374,8 @@ try {
     //   2026-09-07c 起单线式连线恒产生（缺省全选）：tick0 追加沿链 X 的 A→B 线段（t0→t2，Δt=2 → X 移 4 格）
     const P0R = sfxParticleCmd(0, 2, 6);
     const tlbA = gA.sfxTickList;
-    if (tlbA.length !== 2 || JSON.stringify(tlbA[0].lines) !== JSON.stringify([P0R, BC_26])
-      || JSON.stringify(tlbA[1].lines) !== JSON.stringify([P0R])) {
+    if (tlbA.length !== 2 || JSON.stringify(tlbA[0].lines) !== JSON.stringify([P0R, EX26, BC_26])
+      || JSON.stringify(tlbA[1].lines) !== JSON.stringify([P0R, EX26])) {
       console.log(`FAIL 参考车道虚拟绑定行 ${JSON.stringify(tlbA)}（期望 tick0 [绑定行, 连接线] / tick2 [绑定行]）`); ok = false;
     } else if (statA.sfxBoundNotes !== 2 || statA.sfxStandaloneNotes !== 0 || statA.sfxConnectLines !== 1 || statA.commandBlocks !== 2) {
       console.log(`FAIL 参考车道统计 bound=${statA.sfxBoundNotes} indep=${statA.sfxStandaloneNotes} conn=${statA.sfxConnectLines} CB=${statA.commandBlocks}（期望 2/0/1/2）`); ok = false;
@@ -1457,8 +1466,8 @@ try {
     const statD = rD.result.stats;
     const tlbD = rD.result.sfxTickList;
     if (statD.sfxBoundNotes !== 2 || statD.sfxStandaloneNotes !== 0 || statD.sfxConnectLines !== 1
-      || tlbD.length !== 2 || JSON.stringify(tlbD[0].lines) !== JSON.stringify([P0R, BC_26])
-      || JSON.stringify(tlbD[1].lines) !== JSON.stringify([P0R])) {
+      || tlbD.length !== 2 || JSON.stringify(tlbD[0].lines) !== JSON.stringify([P0R, EX26, BC_26])
+      || JSON.stringify(tlbD[1].lines) !== JSON.stringify([P0R, EX26])) {
       console.log(`FAIL 车道级单线式：bound=${statD.sfxBoundNotes} indep=${statD.sfxStandaloneNotes} conn=${statD.sfxConnectLines} 行=${JSON.stringify(tlbD)}（期望 2/0/1、tick0 [绑定行, 连接线] / tick2 [绑定行]）`); ok = false;
     } else {
       console.log('PASS 类型选型按车道：车道 type=bound 时声道级MIDI式被覆盖、粒子锚定参考车道虚拟槽位（+沿链 X 连接线）');
@@ -1475,8 +1484,8 @@ try {
     const tlbE2 = rE2.result.sfxTickList;
     if (statE2.noteBlocks !== 0 || statE2.sfxBoundNotes !== 2 || statE2.sfxStandaloneNotes !== 0
       || statE2.sfxConnectLines !== 1 || statE2.commandBlocks !== 2 || tlbE2.length !== 2
-      || JSON.stringify(tlbE2[0].lines) !== JSON.stringify([P0R, BC_26])
-      || JSON.stringify(tlbE2[1].lines) !== JSON.stringify([P0R])) {
+      || JSON.stringify(tlbE2[0].lines) !== JSON.stringify([P0R, EX26, BC_26])
+      || JSON.stringify(tlbE2[1].lines) !== JSON.stringify([P0R, EX26])) {
       console.log(`FAIL 绑定车道 sound=false 成员：盒=${statE2.noteBlocks} bound=${statE2.sfxBoundNotes} conn=${statE2.sfxConnectLines} CB=${statE2.commandBlocks}（期望 0 盒、2 绑定行、1 连接线、2 CB——粒子恒产生）`); ok = false;
     } else {
       console.log('PASS 单线式取消发声：普通轨道零盒（纯参考），粒子行+连接线恒产生（虚拟槽位锚定）');
@@ -1491,8 +1500,8 @@ try {
     const statF = rF.result.stats;
     const tlbF = rF.result.sfxTickList;
     if (statF.noteBlocks !== 2 || tlbF.length !== 2
-      || JSON.stringify(tlbF[0].lines) !== JSON.stringify([sfxParticleCmd(0, 1, 3), BC_13])
-      || JSON.stringify(tlbF[1].lines) !== JSON.stringify([sfxParticleCmd(0, 1, 3)])
+      || JSON.stringify(tlbF[0].lines) !== JSON.stringify([sfxParticleCmd(0, 1, 3), EX13, BC_13])
+      || JSON.stringify(tlbF[1].lines) !== JSON.stringify([sfxParticleCmd(0, 1, 3), EX13])
       || statF.sfxConnectLines !== 1) {
       console.log(`FAIL 参考/普通同起点：盒=${statF.noteBlocks} conn=${statF.sfxConnectLines} 行=${JSON.stringify(tlbF)}（期望 2 盒、1 连接线、绑定行按虚拟槽位 (0,1,3) + 沿链 X 连线）`); ok = false;
     } else console.log('PASS 参考车道与普通车道同起点：生成正常（零结构、不参与碰撞、粒子按虚拟槽位 + 沿链 X 连线）');
@@ -1526,8 +1535,8 @@ try {
     const statH = rH.result.stats;
     const tlbH = rH.result.sfxTickList;
     if (statH.noteBlocks !== 2 || statH.sfxBoundNotes !== 2 || statH.sfxConnectLines !== 1 || tlbH.length !== 2
-      || JSON.stringify(tlbH[0].lines) !== JSON.stringify([lineH, BC_26])
-      || JSON.stringify(tlbH[1].lines) !== JSON.stringify([lineH])) {
+      || JSON.stringify(tlbH[0].lines) !== JSON.stringify([lineH, EX26, BC_26])
+      || JSON.stringify(tlbH[1].lines) !== JSON.stringify([lineH, EX26])) {
       console.log(`FAIL 车道级触发模板：bound=${statH.sfxBoundNotes} conn=${statH.sfxConnectLines} 行=${JSON.stringify(tlbH)}（期望 tick0 [自定义模板行, 连接线] / tick2 [自定义模板行]，坐标段仍按虚拟槽位替换）`); ok = false;
     } else console.log('PASS 车道级触发模板：绑定行按本车道 5 字段模板生成（连接线不受触发模板影响，仍默认命令）');
     // H2) 模板残缺（5 字段不全）→ normSfxParams 判无效 → 回退默认命令（产物与缺省逐位一致）
@@ -1536,8 +1545,8 @@ try {
       groups: [{ layers: [0] }], groupStarts: [{ dz: 3, dy: 0 }],
       refLanes: [{ tracks: [0], type: 'bound', start: { dz: 6, dy: 1 }, sfxParams: { head: 'x', tail: 'y' } }],
     });
-    if (JSON.stringify(rH2.result.sfxTickList[0].lines) !== JSON.stringify([sfxParticleCmd(0, 2, 6), BC_26])
-      || JSON.stringify(rH2.result.sfxTickList[1].lines) !== JSON.stringify([sfxParticleCmd(0, 2, 6)])) {
+    if (JSON.stringify(rH2.result.sfxTickList[0].lines) !== JSON.stringify([sfxParticleCmd(0, 2, 6), EX26, BC_26])
+      || JSON.stringify(rH2.result.sfxTickList[1].lines) !== JSON.stringify([sfxParticleCmd(0, 2, 6), EX26])) {
       console.log(`FAIL 模板残缺回退默认：${JSON.stringify(rH2.result.sfxTickList[0].lines)}（期望默认命令 (0,2,6) + 连接线）`); ok = false;
     } else console.log('PASS 模板残缺（字段不全）：回退默认命令，产物与缺省逐位一致（连接线在位）');
     // H3) 命令头含 ~ 占位（用户把坐标段误留在头里）→ 本车道绑定行不生成 + 告警一次（避免空 function 方块）；
@@ -1592,8 +1601,8 @@ try {
     const statI = rI.result.stats;
     const tlbI = rI.result.sfxTickList;
     if (statI.sfxBoundNotes !== 2 || statI.sfxConnectLines !== 1 || tlbI.length !== 2
-      || JSON.stringify(tlbI[0].lines) !== JSON.stringify([P0R, BC_26])
-      || JSON.stringify(tlbI[1].lines) !== JSON.stringify([P0R])) {
+      || JSON.stringify(tlbI[0].lines) !== JSON.stringify([P0R, EX26, BC_26])
+      || JSON.stringify(tlbI[1].lines) !== JSON.stringify([P0R, EX26])) {
       console.log(`FAIL 多成员只主位：bound=${statI.sfxBoundNotes} conn=${statI.sfxConnectLines} 行=${JSON.stringify(tlbI)}（期望 bound=2：t0 双成员齐响仅主位 1 行 / t2 1 行；tick0 [P0R, 连接线]、tick2 [P0R]）`); ok = false;
     } else {
       console.log('PASS 触发粒子只取主位：多成员同 tick 齐响不展开第2/3位（每 tick 每车道至多 1 行），连接线照产');
@@ -1880,8 +1889,8 @@ try {
       const statJ1 = rJ1.result.stats;
       const tlbJ1 = rJ1.result.sfxTickList;
       if (statJ1.sfxVanishNotes !== 0 || tlbJ1.length !== 2
-        || JSON.stringify(tlbJ1[0].lines) !== JSON.stringify([P0R, BC_26])
-        || JSON.stringify(tlbJ1[1].lines) !== JSON.stringify([P0R])) {
+        || JSON.stringify(tlbJ1[0].lines) !== JSON.stringify([P0R, EX26, BC_26])
+        || JSON.stringify(tlbJ1[1].lines) !== JSON.stringify([P0R, EX26])) {
         console.log(`FAIL 消失型默认不勾选：vanish=${statJ1.sfxVanishNotes} 行=${JSON.stringify(tlbJ1)}（期望 0 行、行与缺省全选一致 [P0R,BC_26]/[P0R]）`); ok = false;
       } else {
         console.log('PASS 消失型默认不勾选（opt-in）：不产行、产物与缺省全选逐位一致（旧存档向后兼容）');
@@ -1899,8 +1908,8 @@ try {
       const statJ2 = rJ2.result.stats;
       const tlbJ2 = rJ2.result.sfxTickList;
       if (statJ2.sfxVanishNotes !== 1 || statJ2.commandBlocks !== 2 || tlbJ2.length !== 2
-        || JSON.stringify(tlbJ2[0].lines) !== JSON.stringify([VANISH(2, 6, 2), P0R])
-        || JSON.stringify(tlbJ2[1].lines) !== JSON.stringify([P0R])) {
+        || JSON.stringify(tlbJ2[0].lines) !== JSON.stringify([VANISH(2, 6, 2), P0R, EX26])
+        || JSON.stringify(tlbJ2[1].lines) !== JSON.stringify([P0R, EX26])) {
         console.log(`FAIL 消失型 bound 钳位：vanish=${statJ2.sfxVanishNotes} CB=${statJ2.commandBlocks} 行=${JSON.stringify(tlbJ2)}（期望 t0 跳过、t2 钳位 gT=0 life=2 → tick0 [VANISH(2), P0R, BC_26] / tick2 [P0R]，锚 (0,2,6)）`); ok = false;
       } else {
         console.log('PASS 消失型 bound 钳位：t=0 无提前量跳过、t=2 提前量不足钳位 tick 0（寿命=实际提前量 2）');
@@ -1992,8 +2001,8 @@ try {
         const statL2 = rL2.result.stats;
         const tlbL2 = rL2.result.sfxTickList;
         if (statL2.sfxBackgroundNotes !== 0 || tlbL2.length !== 2
-          || JSON.stringify(tlbL2[0].lines) !== JSON.stringify([P0R, BC_26])
-          || JSON.stringify(tlbL2[1].lines) !== JSON.stringify([P0R])) {
+          || JSON.stringify(tlbL2[0].lines) !== JSON.stringify([P0R, EX26, BC_26])
+          || JSON.stringify(tlbL2[1].lines) !== JSON.stringify([P0R, EX26])) {
           console.log(`FAIL 背景型默认不产：bg=${statL2.sfxBackgroundNotes} 行=${JSON.stringify(tlbL2)}（期望 0 行、行与缺省一致 [P0R,BC_26]/[P0R]）`); ok = false;
         } else {
           console.log('PASS 背景型默认不产（模板留空）：不产行、产物与未实现时逐位一致（旧存档向后兼容）');
@@ -2020,11 +2029,11 @@ try {
           || statL3.sfxEmptyTicks !== 0 || tlbL3.length !== 5
           || tlbL3[0].tick !== 0 || tlbL3[1].tick !== 73 || tlbL3[2].tick !== 100
           || tlbL3[3].tick !== 146 || tlbL3[4].tick !== 200
-          || JSON.stringify(tlbL3[0].lines) !== JSON.stringify([BG_CMD, P0R, BC_100])
+          || JSON.stringify(tlbL3[0].lines) !== JSON.stringify([BG_CMD, P0R, EX26, BC_100])
           || JSON.stringify(tlbL3[1].lines) !== JSON.stringify([BG_CMD])
           || JSON.stringify(tlbL3[3].lines) !== JSON.stringify([BG_CMD])
-          || JSON.stringify(tlbL3[2].lines) !== JSON.stringify([P0R, BC_100])
-          || JSON.stringify(tlbL3[4].lines) !== JSON.stringify([P0R])) {
+          || JSON.stringify(tlbL3[2].lines) !== JSON.stringify([P0R, EX26, BC_100])
+          || JSON.stringify(tlbL3[4].lines) !== JSON.stringify([P0R, EX26])) {
           console.log(`FAIL 背景型 4/4 e2e：bg=${statL3.sfxBackgroundNotes} CB=${statL3.commandBlocks} empty=${statL3.sfxEmptyTicks} 行=${JSON.stringify(tlbL3)}（期望 bg=3 落 t0/73/146、CB=5、tick0 [BG,P0R]、小节空 tick [BG] 自持 CB）`); ok = false;
         } else {
           console.log('PASS 背景型 4/4 e2e：行落 tick 0/73/146（小节长 73）、sfxBackgroundTicks 支撑孤立 CB、tick0 行序 [背景,绑定]');
@@ -2060,9 +2069,9 @@ try {
         if (statL5.sfxBackgroundNotes !== 3 || statL5.commandBlocks !== 4
           || tlbL5.length !== 4
           || tlbL5[0].tick !== 0 || tlbL5[1].tick !== 54 || tlbL5[2].tick !== 100 || tlbL5[3].tick !== 108
-          || JSON.stringify(tlbL5[0].lines) !== JSON.stringify([BG_CMD, P0R, BC_100])
+          || JSON.stringify(tlbL5[0].lines) !== JSON.stringify([BG_CMD, P0R, EX26, BC_100])
           || JSON.stringify(tlbL5[1].lines) !== JSON.stringify([BG_CMD])
-          || JSON.stringify(tlbL5[2].lines) !== JSON.stringify([P0R])
+          || JSON.stringify(tlbL5[2].lines) !== JSON.stringify([P0R, EX26])
           || JSON.stringify(tlbL5[3].lines) !== JSON.stringify([BG_CMD])) {
           console.log(`FAIL 背景型 3/4 e2e：bg=${statL5.sfxBackgroundNotes} CB=${statL5.commandBlocks} 行=${JSON.stringify(tlbL5)}（期望 barLen=54 → 行落 0/54/108、CB=4）`); ok = false;
         } else {
@@ -2110,8 +2119,8 @@ try {
           const tlbN2 = rN2.result.sfxTickList;
           const expN2 = sfxParticleCmdWithGroup(0, 2, 6, { ...SFX_PARTICLE_FIELDS, group: TG }, TG);
           if (!expN2.endsWith(' ' + TG) || tlbN2.length !== 2
-            || JSON.stringify(tlbN2[0].lines) !== JSON.stringify([expN2, BC_26])
-            || JSON.stringify(tlbN2[1].lines) !== JSON.stringify([expN2])) {
+            || JSON.stringify(tlbN2[0].lines) !== JSON.stringify([expN2, EX26, BC_26])
+            || JSON.stringify(tlbN2[1].lines) !== JSON.stringify([expN2, EX26])) {
             console.log(`FAIL 组名 e2e 触发型：行=${JSON.stringify(tlbN2)}（期望绑定行组位 ${TG}、连接线不受触发模板组名影响仍默认命令）`); ok = false;
           } else {
             console.log('PASS 组名 e2e 触发型：绑定行按本车道模板 + 组名生成（组位末 token 替换），连接线不受影响');

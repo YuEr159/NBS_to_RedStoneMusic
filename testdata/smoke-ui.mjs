@@ -703,7 +703,7 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
   // 8c) 车道展开面板：▼ 展开 → 三类模板表单（触发型结构化 5 字段 + 连接/背景文本框）→
   //     改触发型头/尾参 → 绑定行按本车道模板生成、独立行不受影响；恢复默认后逐位还原；sfxParams 持久化往返
   {
-    const { sfxParticleCmdFromParts, SFX_PARTICLE_FIELDS } = context.window.__NBS2SCHEMATIC;
+    const { sfxParticleCmdFromParts, SFX_PARTICLE_FIELDS, SFX_EXTRA_DEFAULT_CMD, sfxParseCmdCoord } = context.window.__NBS2SCHEMATIC;
     const boundLi = st.refLanes.findIndex(l => l.tracks.includes(0));
     check(boundLi >= 0, '展开面板前置：绑定车道含 #0');
     // 展开：点 ▼ → 面板行出现（x 按钮按行序取 boundLi 对应的；rec 逐个赋值会取到最后一个车道的）
@@ -740,6 +740,10 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
     check(inputs.length >= 8, `面板输入框 ≥8（命令头/坐标×3/尾参/组名/连接×5/背景，实际 ${inputs.length}）`);
     check(inputs[0].value === SFX_PARTICLE_FIELDS.head && inputs[4].value === SFX_PARTICLE_FIELDS.tail,
       '触发型表单回填默认命令（命令头/尾参，输入序 head/x/y/z/tail）');
+    // 2026-09-25 追加命令内置默认：textarea 回填 = 内置 conditional 默认命令（未填过）
+    const extraTa8c = findIn('sfx-extra-field');
+    check(extraTa8c.length >= 1 && extraTa8c[0].value === SFX_EXTRA_DEFAULT_CMD,
+      `追加命令表单回填：默认 = 内置 conditional 默认命令（实际 ${JSON.stringify(String(extraTa8c[0] && extraTa8c[0].value).slice(0, 30))}…）`);
     // 连接型结构化 5 字段表单：回填默认（在触发型全清操作之前断言——同面板，全清会一并清空本表单）
     const connIns = findIn('sfx-connect-field');
     check(connIns.length === 5, `连接型表单 5 字段（粒子/颜色/m/α/组，实际 ${connIns.length}）`);
@@ -764,7 +768,8 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
       `模板生效：绑定行 = 本车道自定义模板 + 虚拟槽位 (0,${offC.dy},${offC.dz})`);
     const stepC = st.settings.sfxPitchStep; // R 块 8) 已置 3
     check(resC.sfxTickList.every(e => e.lines.filter(l => !l.includes('totem_of_undying')
-        && !l.startsWith('particleex tickpolarparameter '))
+        && !l.startsWith('particleex tickpolarparameter ')
+        && !l.startsWith('particleex conditional '))
       .every(l => /^particleex polarparameter minecraft:end_rod ~0 ~0 ~(-?\d+) /.test(l)
         && (Math.abs(Number(l.match(/^particleex polarparameter minecraft:end_rod ~0 ~0 ~(-?\d+) /)[1]) % 1) === 0
           && Number(l.match(/^particleex polarparameter minecraft:end_rod ~0 ~0 ~(-?\d+) /)[1]) % stepC === 0))),
@@ -783,11 +788,13 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
     await context.generate();
     const resD = st.result.result;
     const defD = sfxParticleCmd(offC.dx, offC.dy, offC.dz);
-    // 单线式连线行（tickpolarparameter）独立于触发模板 → 允许在列；触发型须回默认命令
-    check(resD.sfxTickList.every(e => e.lines.every(l => l === defD
+    // 2026-09-25 追加命令缺省 = 内置 conditional 默认命令 → 绑定行恒伴生默认追加行（同偏移）
+    const defE = sfxParticleCmdFromParts(offC.dx, offC.dy, offC.dz, sfxParseCmdCoord(SFX_EXTRA_DEFAULT_CMD));
+    // 单线式连线行（tickpolarparameter）独立于触发模板 → 允许在列；触发型须回默认命令 + 默认追加行
+    check(resD.sfxTickList.every(e => e.lines.every(l => l === defD || l === defE
       || /^particleex polarparameter minecraft:end_rod ~0 ~0 ~(-?\d+) /.test(l)
       || l.startsWith('particleex tickpolarparameter '))),
-      '恢复默认后产物逐位还原（绑定行回默认命令，连接线独立在列）');
+      '恢复默认后产物逐位还原（绑定行回默认命令 + 默认追加行，连接线独立在列）');
     // 连接型表单编辑（表单计数/回填断言已在触发型编辑前完成）→ 非法值回默认 → 持久化往返
     check(JSON.stringify([connIns[0].value, connIns[1].value, connIns[2].value, connIns[3].value])
       === JSON.stringify(['', '', '', '']),
@@ -864,6 +871,11 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
     const xbtns3 = [];
     { const recX3 = (n) => { if (n.className === 'sfx-lane-x') xbtns3.push(n); (n.children || []).forEach(recX3); }; recX3(elements.get('sfxEffectLanes')); }
     xbtns3[boundLi].dispatch('click', {});
+    // 2026-09-25 追加命令有内置默认（conditional 默认命令，寿命 50、同锚点）→ 显式清空（空串 = 不追加），
+    //   隔离下方消失型行（#Cube、寿命 ≤10）断言——同锚点同前缀，靠坐标无法区分
+    const extraTa8e = findIn('sfx-extra-field');
+    check(extraTa8e.length >= 1, '8e 前置：触发面板含追加命令 textarea');
+    if (extraTa8e.length >= 1) { extraTa8e[0].value = ''; extraTa8e[0].dispatch('change', { target: extraTa8e[0] }); }
     const vanIns = findIn('sfx-vanish-field');
     check(vanIns.length === 4, `④ 消失型表单 4 字段（粒子/颜色/提前量/组，实际 ${vanIns.length}）`);
     check(JSON.stringify([vanIns[0].value, vanIns[1].value, vanIns[2].value, vanIns[3].value])
@@ -1128,7 +1140,8 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
     check(!selH4[0].children.map(o => o.value).includes('p1'), '删除后 select 选项刷新（不含 p1）');
   }
   // 8i) 触发型追加命令（2026-09-25）：多行文本框每行一条完整命令（含单引号条件表达式）→
-  //     change → sfxParams.extra 更新 → 主行后逐行追加（坐标段 = 与主命令相同偏移）→ 持久化往返 → 清空删键+行消失
+  //     change → sfxParams.extra 更新 → 主行后逐行追加（坐标段 = 与主命令相同偏移）→ 持久化往返；
+  //     2026-09-25 起：缺省（undefined）= 内置 conditional 默认命令、清空 = 存空串（显式不追加）
   {
     const boundLi = st.refLanes.findIndex(l => l.tracks.includes(0));
     const recI = (cls) => {
@@ -1142,7 +1155,10 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
     if (xbtns7[boundLi] && xbtns7[boundLi].textContent === '▼') xbtns7[boundLi].dispatch('click', {});
     const extraTa = recI('sfx-extra-field');
     check(extraTa.length >= 1 && extraTa[0].tagName === 'textarea', `8i 前置：触发面板含追加命令 textarea（实际 ${extraTa.length}）`);
-    check(extraTa[0].value === '', '追加命令表单回填：默认留空');
+    // 2026-09-25 缺省 = 内置默认命令：8h 预设回填已把 sfxParams 整体替换为预设 params（无 extra 键，
+    //   = 旧存档「未填过」语义）→ 重渲染后 textarea 回填内置 conditional 默认命令
+    check(extraTa[0].value === context.window.__NBS2SCHEMATIC.SFX_EXTRA_DEFAULT_CMD,
+      '追加命令表单回填：extra 缺省（预设回填删键，旧存档语义）→ 回填内置 conditional 默认命令');
     const CMD_I = "particleex conditional minecraft:end_rod ~ ~1 ~ 1 0.95 0.89 1 0 0 0 0.5 0.5 0.5 '(abs(y)==0.5&!(abs(z)<0.5))|(abs(x)==0.5&(!(abs(z)<0.5)|!(abs(y)<0.5)))' 0.1 50 'vy=0.05' 1.0 null";
     extraTa[0].value = CMD_I;
     extraTa[0].dispatch('change', { target: extraTa[0] });
@@ -1160,21 +1176,26 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
       check(idxMain >= 0 && entryI.lines[idxMain + 1] === expExtraI,
         '行序：追加行紧跟主触发行之后');
     }
-    // 持久化往返
+    // 持久化往返（saveStateNow 存当前状态：extra = 用户多行原文逐字）
     context.saveStateNow();
     const rawI = context.localStorage.getItem(context.stateKey(st.song));
     const parsedI = rawI && JSON.parse(rawI);
     const laneIP = parsedI && parsedI.refLanes && parsedI.refLanes[boundLi];
     check(!!laneIP && laneIP.sfxParams && laneIP.sfxParams.extra === CMD_I,
       'sfxParams.extra 持久化往返（多行原文逐字）');
-    // 清空 → 删键 → 追加行消失
+    // 清空 → 存空串（显式「不追加」，区别于缺省 undefined = 内置默认命令）→ 追加行消失
     const extraTa2 = recI('sfx-extra-field');
     extraTa2[0].value = ''; extraTa2[0].dispatch('change', { target: extraTa2[0] });
-    check(!st.refLanes[boundLi].sfxParams || !('extra' in st.refLanes[boundLi].sfxParams),
-      '追加命令清空 → sfxParams.extra 删键（不冲主命令表单）');
+    check(st.refLanes[boundLi].sfxParams && st.refLanes[boundLi].sfxParams.extra === '',
+      '追加命令清空 → sfxParams.extra 存空串（显式不追加，不冲主命令表单）');
     await context.generate();
     check(!st.result.result.sfxTickList.some(e => e.lines.some(l => l.includes('abs(y)==0.5'))),
       '收尾：追加行消失（无用户条件表达式的 conditional 行）');
+    // 2026-09-25 缺省语义：删键（= 旧存档未填过，undefined）→ 构建走内置默认命令 → conditional 默认行生成
+    delete st.refLanes[boundLi].sfxParams.extra;
+    await context.generate();
+    check(st.result.result.sfxTickList.some(e => e.lines.some(l => l.includes('abs(y)==0.5') && l.includes(' 0.1 50 '))),
+      '旧存档（extra 缺省 undefined）→ 内置 conditional 默认追加命令生成（寿命 50 默认行）');
   }
   // 9) 旧格式迁移：手工写入旧 bool 载荷 → 重载按MIDI式迁移
   if (parsed) {
