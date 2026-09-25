@@ -1075,7 +1075,7 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
       refLaneVanish: isRef ? normVanishParams(refLanes[i - (defaultStart ? 1 : 0) - nOrd].sfxParams ? refLanes[i - (defaultStart ? 1 : 0) - nOrd].sfxParams.vanish : null) : null,
       // 车道级触发型追加命令（lane.sfxParams.extra，多行文本每行一条完整命令）：
       //   缺省（undefined）→ 内置默认命令 SFX_EXTRA_DEFAULT_CMD；显式空串（用户清空）→ null = 不追加。
-      //   绑定行 = 主命令行 + 逐行追加行（坐标段替换为与主命令相同偏移）
+      //   单线式绑定行/MIDI式独立行 = 主命令行 + 逐行追加行（坐标段替换为与主命令相同偏移，2026-09-26 扩展至 MIDI式）
       refLaneExtra: isRef ? (refLanes[i - (defaultStart ? 1 : 0) - nOrd].sfxParams
         ? (typeof refLanes[i - (defaultStart ? 1 : 0) - nOrd].sfxParams.extra === 'string'
             ? refLanes[i - (defaultStart ? 1 : 0) - nOrd].sfxParams.extra.trim()
@@ -1252,6 +1252,11 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
   }
   // MIDI式参考行：粒子中心 = 轨道 0 CB + 所属MIDI式参考车道 start（可拖基准，缺省 (0,0) = 旧行为
   //   「与 CB 同高、垂直偏移恒 0」），Z 再按音高 (note−12)×step 展开
+  const sfxLaneOf = (li) => chains.find(c => c.isRefLane && c.layers.includes(li)) || null;
+  const sfxLaneTriggerOn = (li) => {
+    const ln = sfxLaneOf(li);
+    return !ln || !ln.refLaneEffects || ln.refLaneEffects.includes('trigger');
+  };
   function sfxStandaloneLine(t, key, li) {
     const note = noteFromKey(key);
     const zOff = (Math.max(0, Math.min(24, note)) - 12) * sfxPitchStep;
@@ -1260,7 +1265,17 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
     const dy = st ? st.dy : 0;
     const dz = (st ? st.dz : 0) + zOff;
     if (!sfxTickLines.has(t)) sfxTickLines.set(t, []);
-    sfxTickLines.get(t).push(sfxParticleCmd(0, dy, dz));
+    const lines = sfxTickLines.get(t);
+    lines.push(sfxParticleCmd(0, dy, dz));
+    // 追加命令（2026-09-26 扩展）：与单线式绑定行同语义——主行后逐行追加（坐标段替换为与独立行相同偏移）。
+    //   仅 refMode（有参考车道）生效：旧模式无参考车道 → lane=null → 不追加（旧产物逐位不变）
+    const lane = sfxLaneOf(li);
+    if (lane) {
+      for (const x of sfxParseExtraCommands(lane.refLaneExtra)) {
+        if (!x) continue;   // 无坐标段行：单线式段已有告警口径，此处静默跳过
+        lines.push(sfxParticleCmdFromParts(0, dy, dz, x));
+      }
+    }
     stats.sfxStandaloneNotes++;
   }
   // --- ④ 消失型（2026-09-07e 用户定规格：演奏 tick 前 N tick 提前出现、恰在演奏 tick 消亡） ---
@@ -1506,11 +1521,7 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
   // --- MIDI式参考：粒子行汇总（粒子中心 = 轨道 0 CB + 所属MIDI式参考车道 start 基准，Z 再按音高展开） ---
   // MIDI式不依赖音符盒放置，仅要求轨道 0 存在（有 CB 可触发）；行序 = 声部升序，与绑定行互不交叉。
   // 触发型勾选（lane.effects，缺省 = 全选）：取消勾选 → 本车道 MIDI式独立行不生成（与单线式绑定行同门控）。
-  const sfxLaneOf = (li) => chains.find(c => c.isRefLane && c.layers.includes(li)) || null;
-  const sfxLaneTriggerOn = (li) => {
-    const ln = sfxLaneOf(li);
-    return !ln || !ln.refLaneEffects || ln.refLaneEffects.includes('trigger');
-  };
+  // sfxLaneOf/sfxLaneTriggerOn 已上移至 sfxStandaloneLine 之前（独立行追加命令需查本车道 refLaneExtra）。
   if (railChain) {
     for (const [t, entries] of [...sfxEntries.entries()].sort((a, b) => a[0] - b[0])) {
       for (const e of entries) if (e.kind === 'indep' && sfxLaneTriggerOn(e.li)) sfxStandaloneLine(t, e.key, e.li);
@@ -3275,7 +3286,7 @@ function renderSfxLaneParams(lane, li) {
   box.appendChild(h1);
   const tip1 = document.createElement('div');
   tip1.className = 'hint';
-  tip1.textContent = '仅影响本车道**绑定行**（MIDI式行属声道级，仍用默认命令）。构建时坐标段按车道起点/槽位替换为 ~dx ~dy ~dz；命令头/尾参逐字进入 .mcfunction（模组端自行解释其占位符）。留空任一项 → 按默认命令生成。组名（可选，单 token）写入命令组位——仅当尾参以 null 结尾时替换该 token，否则忽略（留空 = 不分组）。追加命令（可选）= 每行一条完整命令（如 conditional 条件粒子），坐标段替换为与主命令相同偏移、逐行跟在主行后。';
+  tip1.textContent = '仅影响本车道**绑定行**（MIDI式独立行主命令属声道级，仍用默认命令）。构建时坐标段按车道起点/槽位替换为 ~dx ~dy ~dz；命令头/尾参逐字进入 .mcfunction（模组端自行解释其占位符）。留空任一项 → 按默认命令生成。组名（可选，单 token）写入命令组位——仅当尾参以 null 结尾时替换该 token，否则忽略（留空 = 不分组）。追加命令（可选）= 每行一条完整命令（如 conditional 条件粒子），单线式绑定行/MIDI式独立行均生效，坐标段替换为与本行主命令相同偏移、逐行跟在主行后。';
   box.appendChild(tip1);
   const rowHead = document.createElement('div');
   rowHead.className = 'sfx-pf';
@@ -3337,7 +3348,7 @@ function renderSfxLaneParams(lane, li) {
   inE.rows = 3;
   inE.value = (typeof (lane.sfxParams && lane.sfxParams.extra) === 'string') ? lane.sfxParams.extra : SFX_EXTRA_DEFAULT_CMD;
   inE.placeholder = '每行一条完整 particleex 命令（如 conditional 条件粒子）；坐标段 ~x ~y ~z 按本车道偏移替换';
-  inE.title = '每行一条完整命令（含单引号表达式，整行原文保留）；构建时坐标段（前 3 词后首个 ~ 起 3 个）替换为与主命令相同的 ~dx ~dy ~dz；无坐标段的行跳过并告警。缺省 = 内置 conditional 默认命令（下方预填），清空 = 不追加';
+  inE.title = '每行一条完整命令（含单引号表达式，整行原文保留）；单线式绑定行/MIDI式独立行均生效，构建时坐标段（前 3 词后首个 ~ 起 3 个）替换为与本行主命令相同的 ~dx ~dy ~dz；无坐标段的行跳过并告警。缺省 = 内置 conditional 默认命令（下方预填），清空 = 不追加';
   inE.addEventListener('change', (e) => onSfxExtraEdit(li, e.target.value));
   rowExtra.appendChild(lbE); rowExtra.appendChild(inE);
   box.appendChild(rowExtra);

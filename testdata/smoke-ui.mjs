@@ -634,7 +634,9 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
   check(indepRes.stats.sfxBoundNotes === 0 && indepRes.stats.sfxStandaloneNotes > 0
     && indepRes.stats.commandBlocks > 0,
     `纯MIDI式：绑定行=0、独立行=${indepRes.stats.sfxStandaloneNotes}、CB=${indepRes.stats.commandBlocks}`);
-  check(indepRes.sfxTickList.every(e => e.lines.every(l => /^particleex (?:polarparameter|tickpolarparameter) minecraft:end_rod ~0 ~0 /.test(l))),
+  // 追加命令默认行（particleex conditional，2026-09-25 内置缺省）不参与 dy 断言——只校验触发/连接线
+  check(indepRes.sfxTickList.every(e => e.lines.filter(l => !l.startsWith('particleex conditional '))
+    .every(l => /^particleex (?:polarparameter|tickpolarparameter) minecraft:end_rod ~0 ~0 /.test(l))),
     'MIDI式行垂直偏移恒 0（触发独立行 ~0 ~0 ~<z> 与连接线起点 ~0 ~0 ~<z>，dy=0）');
   check(indepRes.stats.sfxConnectLines > 0
     && indepRes.sfxTickList.flatMap(e => e.lines).filter(l => l.startsWith('particleex tickpolarparameter '))

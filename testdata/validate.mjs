@@ -1329,6 +1329,8 @@ try {
   })();
   const EX26 = sfxParticleCmdFromParts(0, 2, 6, exParts);
   const EX13 = sfxParticleCmdFromParts(0, 1, 3, exParts);
+  // MIDI式独立行默认追加行（2026-09-26 扩展）：锚点 = 独立行偏移 (0, dy, dz)，默认命令坐标段替换
+  const EXI = (dy, dz) => sfxParticleCmdFromParts(0, dy, dz, exParts);
   // layer 0：tick0 key45（音高 12）、tick2 key50（音高 17）
   const nbs = makeNbs({ tempoTps: 20, songLength: 8, layers: 1, noteSpecs: [
     { tick: 0, layer: 0, instrument: 0, key: 45 },
@@ -1410,11 +1412,11 @@ try {
     const tlbC = rC.result.sfxTickList;
     const I12 = sfxParticleCmd(0, 0, 0), I17 = sfxParticleCmd(0, 0, 5);
     if (statC.noteBlocks !== 2 || statC.sfxStandaloneNotes !== 2 || statC.sfxBoundNotes !== 0
-      || tlbC.length !== 2 || JSON.stringify(tlbC[0].lines) !== JSON.stringify([I12])
-      || JSON.stringify(tlbC[1].lines) !== JSON.stringify([I17])) {
+      || tlbC.length !== 2 || JSON.stringify(tlbC[0].lines) !== JSON.stringify([I12, EXI(0, 0)])
+      || JSON.stringify(tlbC[1].lines) !== JSON.stringify([I17, EXI(0, 5)])) {
       console.log(`FAIL MIDI式参考车道：盒=${statC.noteBlocks} indep=${statC.sfxStandaloneNotes} 行=${JSON.stringify(tlbC)}（期望 2 盒、tick0 dz=0/tick2 dz=5）`); ok = false;
     } else {
-      console.log('PASS MIDI式：参考车道零方块，音轨车道 2 盒，粒子行按音高偏移（start=(0,0) 缺省基准）');
+      console.log('PASS MIDI式：参考车道零方块，音轨车道 2 盒，粒子行按音高偏移（start=(0,0) 缺省基准），独立行后跟默认追加行');
     }
     // C2) MIDI式中心基准平移（2026-09-07 独立中心可拖）：start (dz=4,dy=2) → 行 = (0, 2, 4+音高偏移)
     const rC2 = runE2E(tmpFile, {
@@ -1427,8 +1429,8 @@ try {
     const statC2 = rC2.result.stats;
     const tlbC2 = rC2.result.sfxTickList;
     if (statC2.noteBlocks !== 2 || statC2.sfxStandaloneNotes !== 2 || statC2.sfxBoundNotes !== 0
-      || tlbC2.length !== 2 || JSON.stringify(tlbC2[0].lines) !== JSON.stringify([sfxParticleCmd(0, 2, 4)])
-      || JSON.stringify(tlbC2[1].lines) !== JSON.stringify([sfxParticleCmd(0, 2, 9)])) {
+      || tlbC2.length !== 2 || JSON.stringify(tlbC2[0].lines) !== JSON.stringify([sfxParticleCmd(0, 2, 4), EXI(2, 4)])
+      || JSON.stringify(tlbC2[1].lines) !== JSON.stringify([sfxParticleCmd(0, 2, 9), EXI(2, 9)])) {
       console.log(`FAIL MIDI式中心平移：盒=${statC2.noteBlocks} indep=${statC2.sfxStandaloneNotes} 行=${JSON.stringify(tlbC2)}（期望 2 盒、(0,2,4)/(0,2,9)）`); ok = false;
     } else {
       console.log('PASS MIDI式中心平移：start (4,2) → 粒子行 (0,2,4+音高偏移)，中心基准整体平移+音高 Z 展开');
@@ -1447,8 +1449,8 @@ try {
     const tlbC3 = rC3.result.sfxTickList;
     if (statC3.noteBlocks !== 2 || statC3.sfxStandaloneNotes !== 2 || statC3.sfxBoundNotes !== 0
       || !tlbC3 || tlbC3.length !== 2
-      || JSON.stringify(tlbC3[0].lines) !== JSON.stringify([sfxParticleCmd(0, 2, 4)])
-      || JSON.stringify(tlbC3[1].lines) !== JSON.stringify([sfxParticleCmd(0, 2, 16.5)])
+      || JSON.stringify(tlbC3[0].lines) !== JSON.stringify([sfxParticleCmd(0, 2, 4), EXI(2, 4)])
+      || JSON.stringify(tlbC3[1].lines) !== JSON.stringify([sfxParticleCmd(0, 2, 16.5), EXI(2, 16.5)])
       || !tlbC3[1].lines[0].includes('~16.5') || tlbC3[1].lines[0].includes('16.50000')) {
       console.log(`FAIL MIDI式小数步长：indep=${statC3.sfxStandaloneNotes} 行=${JSON.stringify(tlbC3)}（期望 (0,2,4)/(0,2,16.5)，命令文本 ~16.5 无浮点噪声）`); ok = false;
     } else {
@@ -1630,8 +1632,8 @@ try {
       const tlbK1 = rK1.result.sfxTickList;
       if (statK1.sfxStandaloneNotes !== 2 || statK1.sfxConnectLines !== 1 || statK1.commandBlocks !== 2
         || tlbK1.length !== 2
-        || JSON.stringify(tlbK1[0].lines) !== JSON.stringify([sfxParticleCmd(0, 0, 0), expK1])
-        || JSON.stringify(tlbK1[1].lines) !== JSON.stringify([sfxParticleCmd(0, 0, 5)])
+        || JSON.stringify(tlbK1[0].lines) !== JSON.stringify([sfxParticleCmd(0, 0, 0), EXI(0, 0), expK1])
+        || JSON.stringify(tlbK1[1].lines) !== JSON.stringify([sfxParticleCmd(0, 0, 5), EXI(0, 5)])
         || !expK1.startsWith('particleex tickpolarparameter minecraft:end_rod ~0 ~0 ~0 1 0.95 0.89 1 0 0 0 0 1.007246377')
         || !expK1.includes('"s1,s2,dis=0.896055385,0,6.403124237*t" 0.014492754 14 10 null 1.0 null')) {
         console.log(`FAIL 连接线缺省：indep=${statK1.sfxStandaloneNotes} conn=${statK1.sfxConnectLines} CB=${statK1.commandBlocks} 行=${JSON.stringify(tlbK1)}（期望 tick0 [独立行, 连接线] / tick1 [独立行]；命令 A=(0,0,0)→B=(4,0,5) 真空间斜线：φ=atan2(5,4)、L=√41、step=1/69、P=70、age=10）`); ok = false;
@@ -1684,7 +1686,7 @@ try {
       const rK4 = runE2E(tmpFile, { ...k1Opts, refLanes: [{ tracks: [0], start: { dz: 0, dy: 0 }, sfxParams: { connect: connK4 } }] });
       const tlbK4 = rK4.result.sfxTickList;
       const expK4 = sfxConnectCmd([0, 0, 0], [4, 0, 5], Math.sqrt(41), 70, 14, 20, 0.1, { particle: 'minecraft:dragon_breath', color: '0.5 0.5 0.5 1' });
-      if (JSON.stringify(tlbK4[0].lines) !== JSON.stringify([sfxParticleCmd(0, 0, 0), expK4])
+      if (JSON.stringify(tlbK4[0].lines) !== JSON.stringify([sfxParticleCmd(0, 0, 0), EXI(0, 0), expK4])
         || !expK4.startsWith('particleex tickpolarparameter minecraft:dragon_breath ~0 ~0 ~0 0.5 0.5 0.5 1 0.062469505 0 0.078086881 0 1.007246377')
         || !expK4.includes('"s1,s2,dis=0.896055385,0,6.403124237*t" 0.014492754 14 20 null 1.0 null')) {
         console.log(`FAIL 车道级连接模板：行=${JSON.stringify(tlbK4[0].lines)}（期望 dragon_breath、色 0.5 0.5 0.5 1、漂移 α·d/L=(0.062469505,0,0.078086881)、age=20）`); ok = false;
@@ -1711,9 +1713,9 @@ try {
         SFX_CONNECT_DEFAULTS.m, SFX_CONNECT_DEFAULTS.alpha, SFX_CONNECT_DEFAULTS);
       if (statK5.sfxStandaloneNotes !== 3 || statK5.sfxConnectLines !== 2
         || tlbK5.length !== 3
-        || JSON.stringify(tlbK5[0].lines) !== JSON.stringify([sfxParticleCmd(0, 0, 0), expK5a])
-        || JSON.stringify(tlbK5[1].lines) !== JSON.stringify([sfxParticleCmd(0, 0, 0), expK5b])
-        || JSON.stringify(tlbK5[2].lines) !== JSON.stringify([sfxParticleCmd(0, 0, -5)])
+        || JSON.stringify(tlbK5[0].lines) !== JSON.stringify([sfxParticleCmd(0, 0, 0), EXI(0, 0), expK5a])
+        || JSON.stringify(tlbK5[1].lines) !== JSON.stringify([sfxParticleCmd(0, 0, 0), EXI(0, 0), expK5b])
+        || JSON.stringify(tlbK5[2].lines) !== JSON.stringify([sfxParticleCmd(0, 0, -5), EXI(0, -5)])
         || !expK5a.includes('"s1,s2,dis=0,0,4*t" 0.022727273 9 10 null 1.0 null')
         || !expK5b.includes('"s1,s2,dis=-0.558599315,0,9.433981132*t" 0.010204082 11 10 null 1.0 null')) {
         console.log(`FAIL 连接线短Δt：indep=${statK5.sfxStandaloneNotes} conn=${statK5.sfxConnectLines} 行=${JSON.stringify(tlbK5)}（期望 (0,2) 同音高沿链水平线 L=4/P=45、(2,6) 斜线 L=√89/P=99；行落各 t_A）`); ok = false;
@@ -1763,8 +1765,8 @@ try {
         const expK6a3 = sfxConnectCmd([0, 0, 5], [8, 0, 5], Math.sqrt(89), 99, 11,
           SFX_CONNECT_DEFAULTS.m, SFX_CONNECT_DEFAULTS.alpha, SFX_CONNECT_DEFAULTS); // (50→55 挂靠) L=√89 → N0=95 cpt=⌈96/9⌉=11 P=99
         if (statK6a.sfxStandaloneNotes !== 5 || statK6a.sfxConnectLines !== 3
-          || JSON.stringify(tlbK6a[0].lines) !== JSON.stringify([I24(-1), I24(5), expK6a1, expK6a2, expK6a3])
-          || JSON.stringify(tlbK6a[1].lines) !== JSON.stringify([I24(0), I24(5), I24(10)])) {
+          || JSON.stringify(tlbK6a[0].lines) !== JSON.stringify([I24(-1), EXI(0, -1), I24(5), EXI(0, 5), expK6a1, expK6a2, expK6a3])
+          || JSON.stringify(tlbK6a[1].lines) !== JSON.stringify([I24(0), EXI(0, 0), I24(5), EXI(0, 5), I24(10), EXI(0, 10)])) {
           console.log(`FAIL 和弦连线近距：indep=${statK6a.sfxStandaloneNotes} conn=${statK6a.sfxConnectLines} 行=${JSON.stringify(tlbK6a)}（期望 t0 [I(44),I(50),斜线(44→45),水平线(50→50),斜线(50→55 挂靠)] / t4 [I(45),I(50),I(55)]；真空间斜线：B 端沿链前移 8 格，同音高对退化为水平线）`); ok = false;
         } else {
           console.log('PASS 和弦连线近距（Δt≤32）：1:1 最近邻 + 落单音就近挂靠（1:3）；真空间斜线（同音高对 → 沿链水平线，旧 L=0 跳过消失）；和弦每音独立粒子行');
@@ -1787,8 +1789,8 @@ try {
         const expK6b1 = sfxConnectCmd([0, 0, 0], [80, 0, 0], 80, 810, 10,
           SFX_CONNECT_DEFAULTS.m, SFX_CONNECT_DEFAULTS.alpha, SFX_CONNECT_DEFAULTS); // (45→45 同音高) Δt=40 → L=80 N0=800 cpt=⌈801/81⌉=10 P=810
         if (statK6b.sfxStandaloneNotes !== 4 || statK6b.sfxConnectLines !== 1
-          || JSON.stringify(tlbK6b[0].lines) !== JSON.stringify([I24(0), expK6b1])
-          || JSON.stringify(tlbK6b[1].lines) !== JSON.stringify([I24(0), I24(3), I24(7)])) {
+          || JSON.stringify(tlbK6b[0].lines) !== JSON.stringify([I24(0), EXI(0, 0), expK6b1])
+          || JSON.stringify(tlbK6b[1].lines) !== JSON.stringify([I24(0), EXI(0, 0), I24(3), EXI(0, 3), I24(7), EXI(0, 7)])) {
           console.log(`FAIL 和弦连线远距：indep=${statK6b.sfxStandaloneNotes} conn=${statK6b.sfxConnectLines} 行=${JSON.stringify(tlbK6b)}（期望 conn=1：Δt=40>32 严格 1:1、(45→45) 同音高退化为沿链水平线 L=80/P=810、落单 48/52 不连）`); ok = false;
         } else {
           console.log('PASS 和弦连线远距（Δt>32）：严格 1:1、落单音不连；(45→45) 同音高对 → 沿链 +X 水平线（真空间斜线退化）');
@@ -1846,11 +1848,11 @@ try {
           || statK6c.commandBlocks !== 5 || tlbK6c.length !== 5
           || tlbK6c[0].tick !== 0 || tlbK6c[1].tick !== 4 || tlbK6c[2].tick !== 35
           || tlbK6c[3].tick !== 37 || tlbK6c[4].tick !== 70
-          || JSON.stringify(tlbK6c[0].lines) !== JSON.stringify([I24c(-1), I24c(0), I24c(3), eC1, eC2, eC3])
-          || JSON.stringify(tlbK6c[1].lines) !== JSON.stringify([I24c(0), eC4, eC5, eC6])
-          || JSON.stringify(tlbK6c[2].lines) !== JSON.stringify([I24c(3), I24c(5), I24c(-1), eC7, eC8, eC9])
-          || JSON.stringify(tlbK6c[3].lines) !== JSON.stringify([I24c(3), eC10])
-          || JSON.stringify(tlbK6c[4].lines) !== JSON.stringify([I24c(3), I24c(5)])) {
+          || JSON.stringify(tlbK6c[0].lines) !== JSON.stringify([I24c(-1), EXI(0, -1), I24c(0), EXI(0, 0), I24c(3), EXI(0, 3), eC1, eC2, eC3])
+          || JSON.stringify(tlbK6c[1].lines) !== JSON.stringify([I24c(0), EXI(0, 0), eC4, eC5, eC6])
+          || JSON.stringify(tlbK6c[2].lines) !== JSON.stringify([I24c(3), EXI(0, 3), I24c(5), EXI(0, 5), I24c(-1), EXI(0, -1), eC7, eC8, eC9])
+          || JSON.stringify(tlbK6c[3].lines) !== JSON.stringify([I24c(3), EXI(0, 3), eC10])
+          || JSON.stringify(tlbK6c[4].lines) !== JSON.stringify([I24c(3), EXI(0, 3), I24c(5), EXI(0, 5)])) {
           console.log(`FAIL 和弦连线边界：indep=${statK6c.sfxStandaloneNotes} conn=${statK6c.sfxConnectLines} CB=${statK6c.commandBlocks} 行=${JSON.stringify(tlbK6c)}（期望 10 线：Δt=4 三条 / Δt=31 三条（3:1 挂靠）/ Δt=2 三条 / Δt=33 一条（48→48 同音高水平线，50 远距落单不连）；真空间斜线下同音高对不再 L=0 跳过）`); ok = false;
         } else {
           console.log('PASS 和弦连线边界（Δt 31/33 跨 32）：近距 3:1/1:3 挂靠、远距严格 1:1（落单不连）；真空间斜线（同音高对 → 沿链 +X 水平线）；行序独立行按声部升序 + 连接线在后');
