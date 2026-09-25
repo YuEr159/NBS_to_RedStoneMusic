@@ -1127,6 +1127,55 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
     const selH4 = recH('sfx-preset-sel');
     check(!selH4[0].children.map(o => o.value).includes('p1'), '删除后 select 选项刷新（不含 p1）');
   }
+  // 8i) 触发型追加命令（2026-09-25）：多行文本框每行一条完整命令（含单引号条件表达式）→
+  //     change → sfxParams.extra 更新 → 主行后逐行追加（坐标段 = 与主命令相同偏移）→ 持久化往返 → 清空删键+行消失
+  {
+    const boundLi = st.refLanes.findIndex(l => l.tracks.includes(0));
+    const recI = (cls) => {
+      const out = [];
+      (function rec(n) { if (n.className === cls) out.push(n); (n.children || []).forEach(rec); })(elements.get('sfxEffectLanes'));
+      return out;
+    };
+    // 面板可能因 8h 重渲染仍在展开（sfxLanesOpen 持久）→ 按钮态判断再点
+    const xbtns7 = [];
+    { const recX7 = (n) => { if (n.className === 'sfx-lane-x') xbtns7.push(n); (n.children || []).forEach(recX7); }; recX7(elements.get('sfxEffectLanes')); }
+    if (xbtns7[boundLi] && xbtns7[boundLi].textContent === '▼') xbtns7[boundLi].dispatch('click', {});
+    const extraTa = recI('sfx-extra-field');
+    check(extraTa.length >= 1 && extraTa[0].tagName === 'textarea', `8i 前置：触发面板含追加命令 textarea（实际 ${extraTa.length}）`);
+    check(extraTa[0].value === '', '追加命令表单回填：默认留空');
+    const CMD_I = "particleex conditional minecraft:end_rod ~ ~1 ~ 1 0.95 0.89 1 0 0 0 0.5 0.5 0.5 '(abs(y)==0.5&!(abs(z)<0.5))|(abs(x)==0.5&(!(abs(z)<0.5)|!(abs(y)<0.5)))' 0.1 50 'vy=0.05' 1.0 null";
+    extraTa[0].value = CMD_I;
+    extraTa[0].dispatch('change', { target: extraTa[0] });
+    check(st.refLanes[boundLi].sfxParams && st.refLanes[boundLi].sfxParams.extra === CMD_I,
+      '追加命令表单编辑：lane.sfxParams.extra 更新（多行原文）');
+    await context.generate();
+    const resI2 = st.result.result;
+    const laneI = st.refLanes[boundLi];
+    const offI = { dy: laneI.start.dy + 1, dz: laneI.start.dz };
+    const expExtraI = "particleex conditional minecraft:end_rod ~0 ~" + offI.dy + " ~" + offI.dz + " 1 0.95 0.89 1 0 0 0 0.5 0.5 0.5 '(abs(y)==0.5&!(abs(z)<0.5))|(abs(x)==0.5&(!(abs(z)<0.5)|!(abs(y)<0.5)))' 0.1 50 'vy=0.05' 1.0 null";
+    const entryI = resI2.sfxTickList.find(e => e.lines.includes(expExtraI));
+    check(!!entryI, `追加命令行生成：整条命令原文 + 坐标段替换为与主命令相同偏移 (0,${offI.dy},${offI.dz})`);
+    if (entryI) {
+      const idxMain = entryI.lines.findIndex(l => l.startsWith('particleex polarparameter '));
+      check(idxMain >= 0 && entryI.lines[idxMain + 1] === expExtraI,
+        '行序：追加行紧跟主触发行之后');
+    }
+    // 持久化往返
+    context.saveStateNow();
+    const rawI = context.localStorage.getItem(context.stateKey(st.song));
+    const parsedI = rawI && JSON.parse(rawI);
+    const laneIP = parsedI && parsedI.refLanes && parsedI.refLanes[boundLi];
+    check(!!laneIP && laneIP.sfxParams && laneIP.sfxParams.extra === CMD_I,
+      'sfxParams.extra 持久化往返（多行原文逐字）');
+    // 清空 → 删键 → 追加行消失
+    const extraTa2 = recI('sfx-extra-field');
+    extraTa2[0].value = ''; extraTa2[0].dispatch('change', { target: extraTa2[0] });
+    check(!st.refLanes[boundLi].sfxParams || !('extra' in st.refLanes[boundLi].sfxParams),
+      '追加命令清空 → sfxParams.extra 删键（不冲主命令表单）');
+    await context.generate();
+    check(!st.result.result.sfxTickList.some(e => e.lines.some(l => l.includes('abs(y)==0.5'))),
+      '收尾：追加行消失（无用户条件表达式的 conditional 行）');
+  }
   // 9) 旧格式迁移：手工写入旧 bool 载荷 → 重载按MIDI式迁移
   if (parsed) {
     parsed.refLayers = [[1, true]];

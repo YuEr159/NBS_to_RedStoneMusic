@@ -1555,6 +1555,24 @@ try {
       || !rH3.result.stats.discardedDetails.some(s => s.includes('命令头含 ~ 占位'))) {
       console.log(`FAIL 模板头含~：bound=${statH3.sfxBoundNotes} conn=${statH3.sfxConnectLines} empty=${statH3.sfxEmptyTicks} 行=${JSON.stringify(tlbH3)} 告警=${JSON.stringify(rH3.result.stats.discardedDetails)}（期望 bound=0、conn=1、tick0 [连接线]、tick2 空 tick 回退）`); ok = false;
     } else console.log('PASS 模板命令头含 ~ 占位：绑定行跳过 + 告警，连接线独立照产（自持 tA 的 function/CB）');
+    // H4) 触发型追加命令（2026-09-25）：主行后逐行追加（整行原文、坐标段替换为与主命令相同偏移 (0,2,6)）；
+    //    无坐标段行跳过 + 一次性告警；litematic 与 H 场景逐位一致（纯函数行增量，零改动）
+    const EXTRA_CMD = "particleex conditional minecraft:end_rod ~ ~1 ~ 1 0.95 0.89 1 0 0 0 0.5 0.5 0.5 '(abs(y)==0.5&!(abs(z)<0.5))|(abs(x)==0.5&(!(abs(z)<0.5)|!(abs(y)<0.5)))' 0.1 50 'vy=0.05' 1.0 null";
+    const rH4 = runE2E(tmpFile, {
+      lane0: { dz: 0, dy: 0 }, refLayers: REF,
+      groups: [{ layers: [0] }], groupStarts: [{ dz: 3, dy: 0 }],
+      refLanes: [{ tracks: [0], type: 'bound', start: { dz: 6, dy: 1 }, sfxParams: { extra: EXTRA_CMD + '\nnot-a-cmd' } }],
+    });
+    const statH4 = rH4.result.stats;
+    const tlbH4 = rH4.result.sfxTickList;
+    const expH4line = "particleex conditional minecraft:end_rod ~0 ~2 ~6 1 0.95 0.89 1 0 0 0 0.5 0.5 0.5 '(abs(y)==0.5&!(abs(z)<0.5))|(abs(x)==0.5&(!(abs(z)<0.5)|!(abs(y)<0.5)))' 0.1 50 'vy=0.05' 1.0 null";
+    if (statH4.sfxBoundNotes !== 2 || tlbH4.length !== 2
+      || JSON.stringify(tlbH4[0].lines) !== JSON.stringify([sfxParticleCmd(0, 2, 6), expH4line, BC_26])
+      || JSON.stringify(tlbH4[1].lines) !== JSON.stringify([sfxParticleCmd(0, 2, 6), expH4line])
+      || !rH4.result.stats.discardedDetails.some(d => d.includes('无坐标段'))
+      || rH4.packed.longs.length !== rH.packed.longs.length || !rH.packed.longs.every((v, i) => v === rH4.packed.longs[i])) {
+      console.log(`FAIL 触发型追加命令：bound=${statH4.sfxBoundNotes} 行=${JSON.stringify(tlbH4)} 告警=${JSON.stringify(rH4.result.stats.discardedDetails)}（期望 tick0 [主行, 追加行(0,2,6), 连接线] / tick2 [主行, 追加行]；无坐标段行跳过+告警；litematic 与 H 逐位一致）`); ok = false;
+    } else console.log('PASS 触发型追加命令：主行后逐行追加（整行原文、坐标段同偏移替换）；无坐标段行跳过+告警；litematic 零改动');
     // I) 触发粒子只取主位（2026-09-07d 用户定）：bound 车道 2 成员同 tick 齐响 → 仅主位 1 行（不展开第2/3位）；
     //    车道级演奏 tick 序列不变 → 连接线照常（tick0→tick2，BC_26）
     const nbsI = makeNbs({ tempoTps: 20, songLength: 8, layers: 2, noteSpecs: [
