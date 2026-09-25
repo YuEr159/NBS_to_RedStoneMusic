@@ -1318,7 +1318,7 @@ try {
     return sfxConnectCmd([0, my, mz], [L, 0, 0], L, P, cpt,
       SFX_CONNECT_DEFAULTS.m, SFX_CONNECT_DEFAULTS.alpha, SFX_CONNECT_DEFAULTS);
   };
-  const BC_26 = boundConn(2, 6, 2);   // (0,2,6) 沿 X 4 格、Δt=2 → N0=40 cpt=11 P=55
+  const BC_26 = boundConn(2, 6, 2);   // (0,2,6) 沿 X 4 格、Δt=2 → N0=40 cpt=9 P=45
   const BC_13 = boundConn(1, 3, 2);
   // layer 0：tick0 key45（音高 12）、tick2 key50（音高 17）
   const nbs = makeNbs({ tempoTps: 20, songLength: 8, layers: 1, noteSpecs: [
@@ -1806,15 +1806,15 @@ try {
         };
         // Z(key) = key − 45：44→−1、45→0、48→3、50→5；端点 A=(0,0,Z(ka)) → B=(2Δt,0,Z(kb))
         const eC1 = connZ(-1, 0, 4);  // 44→45 Δt=4 L=√65 P=90
-        const eC2 = connZ(0, 0, 4);   // 45→45 落单 Δt=4 同音高 → 水平线 L=8 P=90
+        const eC2 = connZ(0, 0, 4);   // 45→45 落单 Δt=4 同音高 → 水平线 L=8 P=81
         const eC3 = connZ(3, 0, 4);   // 48→45 落单 Δt=4 L=√73 P=90
-        const eC4 = connZ(0, -1, 31); // 45→44 Δt=31 L=√62.008… P=702
-        const eC5 = connZ(0, 3, 31);  // 45→48 落单 Δt=31 L=√62.072… P=702
-        const eC6 = connZ(0, 5, 31);  // 45→50 落单 Δt=31 L=√62.201… P=702
-        const eC7 = connZ(-1, 3, 2);  // 44→48 Δt=2 L=4√2 P=56
+        const eC4 = connZ(0, -1, 31); // 45→44 Δt=31 L=√62.008… P=630
+        const eC5 = connZ(0, 3, 31);  // 45→48 落单 Δt=31 L=√62.072… P=630
+        const eC6 = connZ(0, 5, 31);  // 45→50 落单 Δt=31 L=√62.201… P=630
+        const eC7 = connZ(-1, 3, 2);  // 44→48 Δt=2 L=4√2 P=60
         const eC8 = connZ(3, 3, 2);   // 48→48 落单 Δt=2 同音高 → 水平线 L=4 P=45
-        const eC9 = connZ(5, 3, 2);   // 50→48 落单 Δt=2 L=√20 P=45
-        const eC10 = connZ(3, 3, 33); // 48→48 Δt=33 同音高 → 水平线 L=66 P=672
+        const eC9 = connZ(5, 3, 2);   // 50→48 落单 Δt=2 L=√20 P=50
+        const eC10 = connZ(3, 3, 33); // 48→48 Δt=33 同音高 → 水平线 L=66 P=670
         if (statK6c.sfxStandaloneNotes !== 10 || statK6c.sfxConnectLines !== 10
           || statK6c.commandBlocks !== 5 || tlbK6c.length !== 5
           || tlbK6c[0].tick !== 0 || tlbK6c[1].tick !== 4 || tlbK6c[2].tick !== 35
