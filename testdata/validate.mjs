@@ -1306,17 +1306,19 @@ try {
     SFX_CONNECT_DEFAULTS, SFX_CONNECT_POINT_GAP, SFX_CONNECT_NEAR_DT, sfxConnectCmd, sfxChordPairs,
     SFX_VANISH_DEFAULTS, sfxVanishCmd, normVanishParams,
     sfxBarLen, sfxNormBackground } = context.window.__NBS2SCHEMATIC;
-  // 单线式连接线（2026-09-07c「连接前后节奏」）：端点 = 车道虚拟主位（中间槽位），沿链 +X（每 tick 2 格）。
+  // 单线式连接线（2026-09-07c「连接前后节奏」）：端点 = 车道虚拟主位（中间槽位），沿链 +X（每 NBS tick 2 格）。
   //   A/D/E2/H/H2 用 refLanes start {dz:6,dy:1} → mid=(0,2,6)；F 用 {dz:3,dy:0} → mid=(0,1,3)
+  //   分 tick 生成按**游戏 tick**（模组任务每游戏 tick 跑一批、1 NBS tick = 2 游戏 tick）：
+  //   cpt=⌈(N0+1)/(2Δt+1)⌉、P=(2Δt+1)·cpt → 笔尖 1 格/游戏 tick、与链同速（2026-09-25 用户实测 2× 修正）
   const boundConn = (my, mz, dt) => {
     const L = dt * 2;
     const n0 = Math.ceil(L / SFX_CONNECT_POINT_GAP);
-    const cpt = Math.max(1, Math.ceil((n0 + 1) / (dt + 1)));
-    const P = (dt + 1) * cpt;
+    const cpt = Math.max(1, Math.ceil((n0 + 1) / (2 * dt + 1)));
+    const P = (2 * dt + 1) * cpt;
     return sfxConnectCmd([0, my, mz], [L, 0, 0], L, P, cpt,
       SFX_CONNECT_DEFAULTS.m, SFX_CONNECT_DEFAULTS.alpha, SFX_CONNECT_DEFAULTS);
   };
-  const BC_26 = boundConn(2, 6, 2);   // (0,2,6) 沿 X 4 格、P=42（与失败样本交叉核对：dis=4*t 0.024390244 42）
+  const BC_26 = boundConn(2, 6, 2);   // (0,2,6) 沿 X 4 格、Δt=2 → N0=40 cpt=11 P=55
   const BC_13 = boundConn(1, 3, 2);
   // layer 0：tick0 key45（音高 12）、tick2 key50（音高 17）
   const nbs = makeNbs({ tempoTps: 20, songLength: 8, layers: 1, noteSpecs: [
@@ -1585,8 +1587,9 @@ try {
     //    （tick0/2 同音高 A≡B 不连线、tick2/6 连）
     {
       // K1 期望（默认模板）：A=(0,0,0) → B=(4,0,5)（音高 12→17，B 端沿链前移 2Δt=4 格，真空间斜线）
-      //   d=(4,0,5)、L=√41、Δt=2、N0=⌈√41/0.1⌉=65、cpt=⌈66/3⌉=22、P=66、step=1/65、end=1.007692308、age=m=10
-      const expK1 = sfxConnectCmd([0, 0, 0], [4, 0, 5], Math.sqrt(41), 66, 22,
+      //   d=(4,0,5)、L=√41、Δt=2、N0=⌈√41/0.1⌉=65、cpt=⌈66/5⌉=14、P=70、step=1/69、end=1.007246377、age=m=10
+      //   （分 tick 按游戏 tick：1 NBS tick = 2 游戏 tick → 跨 2Δt+1=5 游戏 tick 铺完，笔尖 1 格/游戏 tick）
+      const expK1 = sfxConnectCmd([0, 0, 0], [4, 0, 5], Math.sqrt(41), 70, 14,
         SFX_CONNECT_DEFAULTS.m, SFX_CONNECT_DEFAULTS.alpha, SFX_CONNECT_DEFAULTS);
       const k1Opts = {
         lane0: { dz: 0, dy: 0 },
@@ -1602,26 +1605,29 @@ try {
         || tlbK1.length !== 2
         || JSON.stringify(tlbK1[0].lines) !== JSON.stringify([sfxParticleCmd(0, 0, 0), expK1])
         || JSON.stringify(tlbK1[1].lines) !== JSON.stringify([sfxParticleCmd(0, 0, 5)])
-        || !expK1.startsWith('particleex tickpolarparameter minecraft:end_rod ~0 ~0 ~0 1 0.95 0.89 1 0 0 0 0 1.007692308')
-        || !expK1.includes('"s1,s2,dis=0.896055385,0,6.403124237*t" 0.015384615 22 10 null 1.0 null')) {
-        console.log(`FAIL 连接线缺省：indep=${statK1.sfxStandaloneNotes} conn=${statK1.sfxConnectLines} CB=${statK1.commandBlocks} 行=${JSON.stringify(tlbK1)}（期望 tick0 [独立行, 连接线] / tick1 [独立行]；命令 A=(0,0,0)→B=(4,0,5) 真空间斜线：φ=atan2(5,4)、L=√41、step=1/65、P=66、age=10）`); ok = false;
+        || !expK1.startsWith('particleex tickpolarparameter minecraft:end_rod ~0 ~0 ~0 1 0.95 0.89 1 0 0 0 0 1.007246377')
+        || !expK1.includes('"s1,s2,dis=0.896055385,0,6.403124237*t" 0.014492754 14 10 null 1.0 null')) {
+        console.log(`FAIL 连接线缺省：indep=${statK1.sfxStandaloneNotes} conn=${statK1.sfxConnectLines} CB=${statK1.commandBlocks} 行=${JSON.stringify(tlbK1)}（期望 tick0 [独立行, 连接线] / tick1 [独立行]；命令 A=(0,0,0)→B=(4,0,5) 真空间斜线：φ=atan2(5,4)、L=√41、step=1/69、P=70、age=10）`); ok = false;
       } else {
         console.log('PASS 连接线缺省（全选）：tA 行 = 独立行+连接线（B 端沿链前移 2Δt，真空间斜线，t_B=t_A+2 笔尖抵达 B 粒子中心，无缝衔接），litematic 结构不变');
       }
-      // K1b 分 tick 语义不变式（2026-09-12 修正的回归护栏）：连接线命令第 10 字段必须是 **cpt（每 tick 生成点数）**，
-      //   模组源码 ParticleUtil.TickParticleTask.run = `for (i=0; i<cpt && t<=end; t+=step)` + t<=end 时自调度下一 tick
-      //   → 总点数 P 跨 ⌈P/cpt⌉ tick 铺完；曾误传 P（总点数）→ 整条线在 t_A 一个 tick 内全部生成，不「依次显现」。
-      //   由命令自身反推：P = 1/step + 1；铺完 tick 数 = ⌈P/cpt⌉（须 = Δt+1）。
+      // K1b 分 tick 语义不变式（2026-09-12 cpt 修正 + 2026-09-25 游戏 tick 修正的回归护栏）：
+      //   连接线命令第 10 字段必须是 **cpt（每游戏 tick 生成点数）**——模组任务每游戏 tick 跑一批
+      //   （ParticleUtil.TickParticleTask.run 由客户端 tick 事件驱动、t<=end 时自调度下一游戏 tick；
+      //   1 NBS tick = 2 游戏 tick），总点数 P 跨 ⌈P/cpt⌉ 游戏 tick 铺完；
+      //   曾误传 P（总点数）→ 整条线在 t_A 一个 tick 内全部生成；曾误按 NBS tick 计 P=(Δt+1)·cpt
+      //   → 实际速度 2×（用户 2026-09-25 游戏实测：笔尖领先链头）。
+      //   由命令自身反推：P = 1/step + 1；铺完游戏 tick 数 = ⌈P/cpt⌉（须 = 2Δt+1）。
       {
         const fC = expK1.split(' ');                 // 末 6 段 = step cpt age speedExpression speedStep group
         const fStep = Number(fC[fC.length - 6]);
         const fCpt = Number(fC[fC.length - 5]);
         const pTotal = Math.round(1 / fStep) + 1;    // step = 1/(P−1)
         const ticksUsed = Math.ceil(pTotal / fCpt);
-        if (!(Number.isInteger(fCpt) && fCpt === 22 && pTotal === 66 && ticksUsed === 3 && Math.abs(fStep * 65 - 1) < 1e-6)) {
-          console.log(`FAIL 连接线分 tick 语义：第 10 字段=${fCpt}（期望 cpt=22=⌈(N0+1)/(Δt+1)⌉）、由 step 反推 P=${pTotal}（期望 66）、铺完 tick 数=${ticksUsed}（期望 Δt+1=3）——传总点数会让整条线在 t_A 一次生成`); ok = false;
+        if (!(Number.isInteger(fCpt) && fCpt === 14 && pTotal === 70 && ticksUsed === 5 && Math.abs(fStep * 69 - 1) < 1e-6)) {
+          console.log(`FAIL 连接线分 tick 语义：第 10 字段=${fCpt}（期望 cpt=14=⌈(N0+1)/(2Δt+1)⌉）、由 step 反推 P=${pTotal}（期望 70）、铺完游戏 tick 数=${ticksUsed}（期望 2Δt+1=5）——传总点数会让整条线在 t_A 一次生成、按 NBS tick 计会让速度 2×`); ok = false;
         } else {
-          console.log('PASS 连接线分 tick 语义：第 10 字段 = cpt=22（每 tick 点数），总点数 P=66 恰跨 Δt+1=3 tick 铺完（t_A→t_B 沿方向依次显现，末点落 t_B）');
+          console.log('PASS 连接线分 tick 语义：第 10 字段 = cpt=14（每游戏 tick 点数），总点数 P=70 恰跨 2Δt+1=5 游戏 tick 铺完（= Δt 个 NBS tick，笔尖 1 格/游戏 tick 与链同速，末点落 t_B）');
         }
       }
       // K2 取消连接（effects 仅 trigger）：无连接线；网格/盒/中继器与 K1 逐位一致（零 litematic 改动）
@@ -1650,17 +1656,17 @@ try {
       const connK4 = { particle: 'minecraft:dragon_breath', color: '0.5 0.5 0.5 1', m: 20, alpha: 0.1 };
       const rK4 = runE2E(tmpFile, { ...k1Opts, refLanes: [{ tracks: [0], start: { dz: 0, dy: 0 }, sfxParams: { connect: connK4 } }] });
       const tlbK4 = rK4.result.sfxTickList;
-      const expK4 = sfxConnectCmd([0, 0, 0], [4, 0, 5], Math.sqrt(41), 66, 22, 20, 0.1, { particle: 'minecraft:dragon_breath', color: '0.5 0.5 0.5 1' });
+      const expK4 = sfxConnectCmd([0, 0, 0], [4, 0, 5], Math.sqrt(41), 70, 14, 20, 0.1, { particle: 'minecraft:dragon_breath', color: '0.5 0.5 0.5 1' });
       if (JSON.stringify(tlbK4[0].lines) !== JSON.stringify([sfxParticleCmd(0, 0, 0), expK4])
-        || !expK4.startsWith('particleex tickpolarparameter minecraft:dragon_breath ~0 ~0 ~0 0.5 0.5 0.5 1 0.062469505 0 0.078086881 0 1.007692308')
-        || !expK4.includes('"s1,s2,dis=0.896055385,0,6.403124237*t" 0.015384615 22 20 null 1.0 null')) {
+        || !expK4.startsWith('particleex tickpolarparameter minecraft:dragon_breath ~0 ~0 ~0 0.5 0.5 0.5 1 0.062469505 0 0.078086881 0 1.007246377')
+        || !expK4.includes('"s1,s2,dis=0.896055385,0,6.403124237*t" 0.014492754 14 20 null 1.0 null')) {
         console.log(`FAIL 车道级连接模板：行=${JSON.stringify(tlbK4[0].lines)}（期望 dragon_breath、色 0.5 0.5 0.5 1、漂移 α·d/L=(0.062469505,0,0.078086881)、age=20）`); ok = false;
       } else {
         console.log('PASS 车道级连接模板（sfxParams.connect）：粒子/颜色/m/α 定制进命令，独立行不受影响');
       }
       // K5 短 Δt + 真空间斜线回归：tick0 k45(12)、tick2 k45(12)、tick6 k40(7)
-      //   对 (0,2)：A=(0,0,0)→B=(4,0,0)（同音高 → 沿链 +X 水平线）、L=4、Δt=2、N0=40、cpt=14、P=42、step=1/41
-      //   对 (2,6)：A=(0,0,0)→B=(8,0,−5)（斜线）、L=√89、Δt=4、N0=95、cpt=20、P=100、step=1/99
+      //   对 (0,2)：A=(0,0,0)→B=(4,0,0)（同音高 → 沿链 +X 水平线）、L=4、Δt=2、N0=40、cpt=⌈41/5⌉=9、P=45、step=1/44
+      //   对 (2,6)：A=(0,0,0)→B=(8,0,−5)（斜线）、L=√89、Δt=4、N0=95、cpt=⌈96/9⌉=11、P=99、step=1/98
       const nbsK5 = makeNbs({ tempoTps: 20, songLength: 8, layers: 1, noteSpecs: [
         { tick: 0, layer: 0, instrument: 0, key: 45 },
         { tick: 2, layer: 0, instrument: 0, key: 45 },
@@ -1672,20 +1678,20 @@ try {
       ok = verifyE2E('参考车道池·连接线短Δt', rK5) && ok;
       const statK5 = rK5.result.stats;
       const tlbK5 = rK5.result.sfxTickList;
-      const expK5a = sfxConnectCmd([0, 0, 0], [4, 0, 0], 4, 42, 14,
+      const expK5a = sfxConnectCmd([0, 0, 0], [4, 0, 0], 4, 45, 9,
         SFX_CONNECT_DEFAULTS.m, SFX_CONNECT_DEFAULTS.alpha, SFX_CONNECT_DEFAULTS);
-      const expK5b = sfxConnectCmd([0, 0, 0], [8, 0, -5], Math.sqrt(89), 100, 20,
+      const expK5b = sfxConnectCmd([0, 0, 0], [8, 0, -5], Math.sqrt(89), 99, 11,
         SFX_CONNECT_DEFAULTS.m, SFX_CONNECT_DEFAULTS.alpha, SFX_CONNECT_DEFAULTS);
       if (statK5.sfxStandaloneNotes !== 3 || statK5.sfxConnectLines !== 2
         || tlbK5.length !== 3
         || JSON.stringify(tlbK5[0].lines) !== JSON.stringify([sfxParticleCmd(0, 0, 0), expK5a])
         || JSON.stringify(tlbK5[1].lines) !== JSON.stringify([sfxParticleCmd(0, 0, 0), expK5b])
         || JSON.stringify(tlbK5[2].lines) !== JSON.stringify([sfxParticleCmd(0, 0, -5)])
-        || !expK5a.includes('"s1,s2,dis=0,0,4*t" 0.024390244 14 10 null 1.0 null')
-        || !expK5b.includes('"s1,s2,dis=-0.558599315,0,9.433981132*t" 0.01010101 20 10 null 1.0 null')) {
-        console.log(`FAIL 连接线短Δt：indep=${statK5.sfxStandaloneNotes} conn=${statK5.sfxConnectLines} 行=${JSON.stringify(tlbK5)}（期望 (0,2) 同音高沿链水平线 L=4/P=42、(2,6) 斜线 L=√89/P=100；行落各 t_A）`); ok = false;
+        || !expK5a.includes('"s1,s2,dis=0,0,4*t" 0.022727273 9 10 null 1.0 null')
+        || !expK5b.includes('"s1,s2,dis=-0.558599315,0,9.433981132*t" 0.010204082 11 10 null 1.0 null')) {
+        console.log(`FAIL 连接线短Δt：indep=${statK5.sfxStandaloneNotes} conn=${statK5.sfxConnectLines} 行=${JSON.stringify(tlbK5)}（期望 (0,2) 同音高沿链水平线 L=4/P=45、(2,6) 斜线 L=√89/P=99；行落各 t_A）`); ok = false;
       } else {
-        console.log('PASS 连接线短Δt：真空间斜线（同音高退化为沿链 +X 水平线）；cpt=⌈(N0+1)/(Δt+1)⌉ 量化点距 ≤0.1；L<0.05 跳过仍生效');
+        console.log('PASS 连接线短Δt：真空间斜线（同音高退化为沿链 +X 水平线）；cpt=⌈(N0+1)/(2Δt+1)⌉ 量化点距 ≤0.1（按游戏 tick 分批次，笔尖 1 格/游戏 tick）；L<0.05 跳过仍生效');
       }
       // K6 和弦连线（2026-09-07c）：sfxChordPairs 单元断言 + 近/远距端到端
       {
@@ -1723,12 +1729,12 @@ try {
         const tlbK6a = rK6a.result.sfxTickList;
         // 独立行：t0 I(44)=(0,0,-1)、I(50)=(0,0,5)；t4 I(45)=(0,0,0)、I(50)=(0,0,5)、I(55)=(0,0,10)
         const I24 = (n) => sfxParticleCmd(0, 0, n);
-        const expK6a1 = sfxConnectCmd([0, 0, -1], [8, 0, 1], Math.sqrt(65), 85, 17,
-          SFX_CONNECT_DEFAULTS.m, SFX_CONNECT_DEFAULTS.alpha, SFX_CONNECT_DEFAULTS); // (44→45) Δt=4 → N0=81 cpt=17 P=85
-        const expK6a2 = sfxConnectCmd([0, 0, 5], [8, 0, 0], 8, 85, 17,
-          SFX_CONNECT_DEFAULTS.m, SFX_CONNECT_DEFAULTS.alpha, SFX_CONNECT_DEFAULTS); // (50→50 同音高) 沿链水平线 L=8 P=85
-        const expK6a3 = sfxConnectCmd([0, 0, 5], [8, 0, 5], Math.sqrt(89), 100, 20,
-          SFX_CONNECT_DEFAULTS.m, SFX_CONNECT_DEFAULTS.alpha, SFX_CONNECT_DEFAULTS); // (50→55 挂靠) L=√89 → N0=95 cpt=20 P=100
+        const expK6a1 = sfxConnectCmd([0, 0, -1], [8, 0, 1], Math.sqrt(65), 90, 10,
+          SFX_CONNECT_DEFAULTS.m, SFX_CONNECT_DEFAULTS.alpha, SFX_CONNECT_DEFAULTS); // (44→45) Δt=4 → N0=81 cpt=⌈82/9⌉=10 P=90
+        const expK6a2 = sfxConnectCmd([0, 0, 5], [8, 0, 0], 8, 81, 9,
+          SFX_CONNECT_DEFAULTS.m, SFX_CONNECT_DEFAULTS.alpha, SFX_CONNECT_DEFAULTS); // (50→50 同音高) 沿链水平线 L=8 N0=80 cpt=⌈81/9⌉=9 P=81
+        const expK6a3 = sfxConnectCmd([0, 0, 5], [8, 0, 5], Math.sqrt(89), 99, 11,
+          SFX_CONNECT_DEFAULTS.m, SFX_CONNECT_DEFAULTS.alpha, SFX_CONNECT_DEFAULTS); // (50→55 挂靠) L=√89 → N0=95 cpt=⌈96/9⌉=11 P=99
         if (statK6a.sfxStandaloneNotes !== 5 || statK6a.sfxConnectLines !== 3
           || JSON.stringify(tlbK6a[0].lines) !== JSON.stringify([I24(-1), I24(5), expK6a1, expK6a2, expK6a3])
           || JSON.stringify(tlbK6a[1].lines) !== JSON.stringify([I24(0), I24(5), I24(10)])) {
@@ -1738,7 +1744,7 @@ try {
         }
         // K6b 远距 Δt=40：MIDI式车道 [layer0, layer1, layer2]；
         //   A t0 = [45(L0)] → B t40 = [45(L0), 48(L1), 52(L2)]：严格 1:1 仅 (45→45)
-        //   → 真空间斜线下同音高对退化为沿链 +X 水平线（d=(80,0,0)、L=80、P=820）→ 1 条线
+        //   → 真空间斜线下同音高对退化为沿链 +X 水平线（d=(80,0,0)、L=80、N0=800、cpt=⌈801/81⌉=10、P=810）→ 1 条线
         const nbsK6b = makeNbs({ tempoTps: 20, songLength: 48, layers: 3, noteSpecs: [
           { tick: 0, layer: 0, instrument: 0, key: 45 },
           { tick: 40, layer: 0, instrument: 0, key: 45 },
@@ -1751,12 +1757,12 @@ try {
         ok = verifyE2E('参考车道池·和弦连线远距', rK6b) && ok;
         const statK6b = rK6b.result.stats;
         const tlbK6b = rK6b.result.sfxTickList;
-        const expK6b1 = sfxConnectCmd([0, 0, 0], [80, 0, 0], 80, 820, 20,
-          SFX_CONNECT_DEFAULTS.m, SFX_CONNECT_DEFAULTS.alpha, SFX_CONNECT_DEFAULTS); // (45→45 同音高) Δt=40 → L=80 N0=800 cpt=20 P=820
+        const expK6b1 = sfxConnectCmd([0, 0, 0], [80, 0, 0], 80, 810, 10,
+          SFX_CONNECT_DEFAULTS.m, SFX_CONNECT_DEFAULTS.alpha, SFX_CONNECT_DEFAULTS); // (45→45 同音高) Δt=40 → L=80 N0=800 cpt=⌈801/81⌉=10 P=810
         if (statK6b.sfxStandaloneNotes !== 4 || statK6b.sfxConnectLines !== 1
           || JSON.stringify(tlbK6b[0].lines) !== JSON.stringify([I24(0), expK6b1])
           || JSON.stringify(tlbK6b[1].lines) !== JSON.stringify([I24(0), I24(3), I24(7)])) {
-          console.log(`FAIL 和弦连线远距：indep=${statK6b.sfxStandaloneNotes} conn=${statK6b.sfxConnectLines} 行=${JSON.stringify(tlbK6b)}（期望 conn=1：Δt=40>32 严格 1:1、(45→45) 同音高退化为沿链水平线 L=80/P=820、落单 48/52 不连）`); ok = false;
+          console.log(`FAIL 和弦连线远距：indep=${statK6b.sfxStandaloneNotes} conn=${statK6b.sfxConnectLines} 行=${JSON.stringify(tlbK6b)}（期望 conn=1：Δt=40>32 严格 1:1、(45→45) 同音高退化为沿链水平线 L=80/P=810、落单 48/52 不连）`); ok = false;
         } else {
           console.log('PASS 和弦连线远距（Δt>32）：严格 1:1、落单音不连；(45→45) 同音高对 → 沿链 +X 水平线（真空间斜线退化）');
         }
@@ -1790,24 +1796,25 @@ try {
         const I24c = (n) => sfxParticleCmd(0, 0, n);
         const connZ = (za, zb, dt) => {
           // 真空间斜线（2026-09-10）：A=(0,0,za) → B=(2Δt,0,zb)，d=[2Δt,0,zb−za]
+          // 分 tick 按游戏 tick（2026-09-25 修正）：cpt=⌈(N0+1)/(2Δt+1)⌉、P=(2Δt+1)·cpt
           const d = [2 * dt, 0, zb - za], L = Math.hypot(d[0], d[1], d[2]);
           const n0 = Math.ceil(L / SFX_CONNECT_POINT_GAP);
-          const cpt = Math.max(1, Math.ceil((n0 + 1) / (dt + 1)));
-          const P = (dt + 1) * cpt;
+          const cpt = Math.max(1, Math.ceil((n0 + 1) / (2 * dt + 1)));
+          const P = (2 * dt + 1) * cpt;
           return sfxConnectCmd([0, 0, za], d, L, P, cpt,
             SFX_CONNECT_DEFAULTS.m, SFX_CONNECT_DEFAULTS.alpha, SFX_CONNECT_DEFAULTS);
         };
         // Z(key) = key − 45：44→−1、45→0、48→3、50→5；端点 A=(0,0,Z(ka)) → B=(2Δt,0,Z(kb))
-        const eC1 = connZ(-1, 0, 4);  // 44→45 Δt=4 L=√65 P=85
-        const eC2 = connZ(0, 0, 4);   // 45→45 落单 Δt=4 同音高 → 水平线 L=8 P=85
+        const eC1 = connZ(-1, 0, 4);  // 44→45 Δt=4 L=√65 P=90
+        const eC2 = connZ(0, 0, 4);   // 45→45 落单 Δt=4 同音高 → 水平线 L=8 P=90
         const eC3 = connZ(3, 0, 4);   // 48→45 落单 Δt=4 L=√73 P=90
-        const eC4 = connZ(0, -1, 31); // 45→44 Δt=31 L=√62.008… P=640
-        const eC5 = connZ(0, 3, 31);  // 45→48 落单 Δt=31 L=√62.072… P=640
-        const eC6 = connZ(0, 5, 31);  // 45→50 落单 Δt=31 L=√62.201… P=640
-        const eC7 = connZ(-1, 3, 2);  // 44→48 Δt=2 L=4√2 P=60
-        const eC8 = connZ(3, 3, 2);   // 48→48 落单 Δt=2 同音高 → 水平线 L=4 P=42
-        const eC9 = connZ(5, 3, 2);   // 50→48 落单 Δt=2 L=√20 P=48
-        const eC10 = connZ(3, 3, 33); // 48→48 Δt=33 同音高 → 水平线 L=66 P=680
+        const eC4 = connZ(0, -1, 31); // 45→44 Δt=31 L=√62.008… P=702
+        const eC5 = connZ(0, 3, 31);  // 45→48 落单 Δt=31 L=√62.072… P=702
+        const eC6 = connZ(0, 5, 31);  // 45→50 落单 Δt=31 L=√62.201… P=702
+        const eC7 = connZ(-1, 3, 2);  // 44→48 Δt=2 L=4√2 P=56
+        const eC8 = connZ(3, 3, 2);   // 48→48 落单 Δt=2 同音高 → 水平线 L=4 P=45
+        const eC9 = connZ(5, 3, 2);   // 50→48 落单 Δt=2 L=√20 P=45
+        const eC10 = connZ(3, 3, 33); // 48→48 Δt=33 同音高 → 水平线 L=66 P=672
         if (statK6c.sfxStandaloneNotes !== 10 || statK6c.sfxConnectLines !== 10
           || statK6c.commandBlocks !== 5 || tlbK6c.length !== 5
           || tlbK6c[0].tick !== 0 || tlbK6c[1].tick !== 4 || tlbK6c[2].tick !== 35

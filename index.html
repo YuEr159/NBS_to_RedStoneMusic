@@ -541,19 +541,21 @@ const sfxParticleCmdWithGroup = (dx, dy, dz, p, g) => {
 //   particle 粒子 / color "r g b a" 四值 0~1 / m 寿命 tick（自出生起，用户手输，默认 10）/ alpha 漂移系数（0=静止）。
 // 工具构建时计算（不可用户输入，依赖音符数据）：A、方向角 φ/θ、L、cpt、P、step、age——
 //   相邻演奏 tick A(t_A)→B(t_B)，Δt=t_B−t_A；L=|B−A|；N0=⌈L/0.1⌉（固定 0.1 格点距为密度上限）；
-//   cpt=max(1,⌈(N0+1)/(Δt+1)⌉)、P=(Δt+1)·cpt、step=1/(P−1)。模组 tickpolarparameter 每 tick 生成 cpt 个采样点
-//   （模组源码 ParticleUtil.TickParticleTask.run 实锤：每 tick 至多生成 cpt 点、t<=end 时自调度下一 tick；
-//   命令第 10 字段 = cpt（每 tick 点数），非总点数 P）→ 末点 k=P−1 生于 t_A+⌊k/cpt⌋=t_A+Δt=t_B，
-//   与 B 的触发型/音符盒激活同 tick 无缝衔接；实际点距 = L/(P−1) ≤ 0.1（量化只会更密）。
+//   cpt=max(1,⌈(N0+1)/(2Δt+1)⌉)、P=(2Δt+1)·cpt、step=1/(P−1)。模组 tickpolarparameter 任务**每游戏 tick
+//   生成一次**（客户端 tick 事件：run 时 TickEndTask 自调度下一游戏 tick；1 NBS tick = 2 游戏 tick）：
+//   源码 ParticleUtil.TickParticleTask.run = `for (i=0; i<cpt && t<=end; t+=step)`（每游戏 tick 至多
+//   生成 cpt 点、t>end 才停；命令第 10 字段 = cpt（每 tick 点数），非总点数 P）→ 末点 k=P−1 生于
+//   t_A+⌊(P−1)/cpt⌋=t_A+2Δt（游戏 tick）= t_B（NBS tick 时刻），与 B 的触发型/音符盒激活同 tick
+//   无缝衔接；笔尖速度 = L/(2Δt 游戏 tick) = (2Δt)/2Δt = 1 格/游戏 tick，与链传播同速。
 // 球坐标（模组约定 ParticleUtil：dx=dis·cos(s2)·cos(s1), dy=dis·sin(s2), dz=dis·cos(s2)·sin(s1)）：
 //   φ=atan2(dz,dx)、θ=atan2(dy,√(dx²+dz²))；纯 +Z 方向 → φ=π/2、θ=0；纯 +X 方向 → φ=0、θ=0。
 // 两种参考车道类型的端点几何（2026-09-07c）：
 //   · MIDI式：端点 = 真空间粒子中心：A = t_A 音的粒子中心 (0, 车道start, z_A)、B = t_B 音的粒子中心
-//     沿链前移 (2Δt, 车道start, z_B)（主链每 tick 恒 2 格，与单线式同约定）→ 斜线「时间×音高」轨迹，
+//     沿链前移 (2Δt, 车道start, z_B)（主链每 NBS tick 恒 2 格，与单线式同约定）→ 斜线「时间×音高」轨迹，
 //     笔尖末点恰在 t_B 抵达 B 的粒子中心；同音高退化为沿链 +X 水平线。和弦配对见 sfxChordPairs：
 //     Δt ≤ SFX_CONNECT_NEAR_DT(32) → 1:1 最近邻 + 落单音就近挂靠（允许 1对3/3对1）；Δt > 32 → 严格 1:1。
 //     （2026-09-10 用户实测修正：原 B 端与 A 同 X=0 → 线段平行于 Z、垂直于链传播方向，视觉错误）
-//   · 单线式：与音高无关 → 端点简并为车道中间槽位（主位），沿链 +X 方向连线（主链每 tick 恒 2 格），
+//   · 单线式：与音高无关 → 端点简并为车道中间槽位（主位），沿链 +X 方向连线（主链每 NBS tick 恒 2 格），
 //     「连接前后节奏」：每个演奏 tick 与下一个演奏 tick 之间都有连线（每 tick 对只一条线）。
 const SFX_CONNECT_DEFAULTS = {
   particle: 'minecraft:end_rod', color: '1 0.95 0.89 1', m: 10, alpha: 0,
@@ -668,10 +670,12 @@ function normVanishParams(p) {
 const sfxNum = (n) => String(Math.round(n * 1e9) / 1e9);
 // 连接线命令（tickpolarparameter，14 段）：A 处生成，沿 AB 方向以 dis=L·t 展开，t∈[0,1+ε]
 //   （ε=半采样点余量：t += step 浮点累加漂移兜底，最坏偏差半个点距，B 端由触发环接住）
-//   **第 10 字段 = cpt（每 tick 生成点数），不是总点数 P**（2026-09-12 修正，模组源码实锤）：
-//   ParticleUtil.TickParticleTask.run 为 `for (i=0; i<cpt && t<=end; t+=step)`——每 tick 至多生成 cpt 点、
-//   t>end 才停（t<=end 时 addTask(TickEndTask) 自调度下一 tick）→ 总点数 P 恰跨 ⌈P/cpt⌉ = Δt+1 tick 铺完、
-//   末点落 t_B「沿 AB 依次显现」；曾误传 P → 整条线在 t_A 一个 tick 内全部生成（视觉上不依次显现）。
+//   **第 10 字段 = cpt（每游戏 tick 生成点数），不是总点数 P**（2026-09-12 修正，模组源码实锤）：
+//   ParticleUtil.TickParticleTask.run 为 `for (i=0; i<cpt && t<=end; t+=step)`——**每游戏 tick** 至多
+//   生成 cpt 点、t>end 才停（t<=end 时 addTask(TickEndTask) 自调度下一游戏 tick）→ 总点数 P 恰跨
+//   ⌈P/cpt⌉ = 2Δt+1 游戏 tick 铺完（= Δt 个 NBS tick），笔尖以 1 格/游戏 tick 沿 AB「依次显现」、
+//   与链传播同速，末点落 t_B。曾误传 P → 整条线在 t_A 一个 tick 内全部生成（视觉上不依次显现）；
+//   2026-09-25 用户游戏实测：旧 P=(Δt+1)·cpt 把 NBS tick 当游戏 tick → 实际速度 2×（笔尖领先链头）。
 function sfxConnectCmd(a, d, L, P, cpt, m, alpha, cp) {
   const dx = d[0], dy = d[1], dz = d[2];
   const phi = Math.atan2(dz, dx);
@@ -1279,7 +1283,7 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
   }
   for (let t = 0; t < nTicks; t++) {
     const d = delays[t];
-    const cells = 2; // 主链恒 1 档：每 tick 恒 2 格（中继器格 + 主位传导格）
+    const cells = 2; // 主链恒 1 档：每 NBS tick 恒 2 格（中继器格 + 主位传导格）
 
     for (const c of chains) {
       // 2026-09-07 参考车道虚拟化：参考车道不生成任何物理结构（无中继器/雪块/音符盒/CB），
@@ -1463,7 +1467,7 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
   //   （lane.effects 含 'connect'，缺省 = 全选）时生效；模板 = 车道 sfxParams.connect。
   //   · MIDI式：端点 = 真空间粒子中心 A=(0,dy,z_A) → B=(2Δt,dy,z_B)（B 端沿链前移，斜线轨迹）；
   //     和弦配对：Δt ≤ 32 → 1:1 最近邻 + 落单就近挂靠（1对3/3对1），Δt > 32 → 严格 1:1。
-  //   · 单线式：与音高无关 → 端点简并为车道中间槽位（主位），沿链 +X 方向连线（主链每 tick 恒 2 格）。
+  //   · 单线式：与音高无关 → 端点简并为车道中间槽位（主位），沿链 +X 方向连线（主链每 NBS tick 恒 2 格）。
   // 行落在 t_A：t_A 必有参考音符（事件来源）→ CB 已在，空 tick 回退天然不触；litematic 零改动（纯函数行增量）。
   if (railChain) {
     for (const [ci, tickMap] of sfxLaneEvents) {
@@ -1488,20 +1492,21 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
           const L = Math.hypot(d[0], d[1], d[2]);
           if (L < SFX_CONNECT_MIN_LEN) return;   // A≈B：跳过（B 的触发环已标记该点）
           const n0 = Math.ceil(L / SFX_CONNECT_POINT_GAP);
-          const cpt = Math.max(1, Math.ceil((n0 + 1) / (dt + 1)));
-          const P = (dt + 1) * cpt;                // 末点生于 t_A+⌊(P−1)/cpt⌋ = t_A+dt = t_B（无缝衔接）
+          const cpt = Math.max(1, Math.ceil((n0 + 1) / (2 * dt + 1)));
+          const P = (2 * dt + 1) * cpt;    // 每 NBS tick = 2 游戏 tick；任务每游戏 tick 跑一批 → 跨 2Δt+1 游戏 tick 铺完（末点恰落 t_B）
           if (!sfxTickLines.has(A.t)) sfxTickLines.set(A.t, []);
           sfxTickLines.get(A.t).push(sfxConnectCmd(ca, d, L, P, cpt, cp.m, cp.alpha, cp));
           stats.sfxConnectLines++;
         };
         if (isBound) {
-          // 单线式：A 端点 = 中间槽位 (0, yMid, zMid)，B 端点沿 +X 平移 dt×2 格（每 tick 恒 2 格）
+          // 单线式：A 端点 = 中间槽位 (0, yMid, zMid)，B 端点沿 +X 平移 dt×2 格（每 NBS tick 恒 2 格）
           pushLine([0, mid[1], mid[2]], [dt * 2, mid[1], mid[2]]);
         } else {
           // MIDI式：和弦配对（sfxChordPairs，Δt ≤ 32 允许落单就近挂靠 1:3/3:1，否则严格 1:1）
           // 端点 = 真空间粒子中心：A = t_A 音的粒子中心 (0, dy, z_A)，B = t_B 音的粒子中心沿链前移
-          //   (2Δt, dy, z_B)（主链每 tick 恒 2 格，与单线式同约定）→ 斜线「时间×音高」轨迹，
-          //   笔尖末点恰在 t_B 抵达 B 的粒子中心；同音高退化为沿链 +X 水平线（2026-09-10 用户实测修正：
+          //   (2Δt, dy, z_B)（主链每 NBS tick 恒 2 格、1 NBS tick = 2 游戏 tick）→ 斜线「时间×音高」轨迹，
+          //   笔尖末点恰在 t_B 抵达 B 的粒子中心（分 tick 生成按游戏 tick 计：跨 2Δt+1 游戏 tick 铺完）；
+          //   同音高退化为沿链 +X 水平线（2026-09-10 用户实测修正：
           //   原 B 端不随时间前移 → 线段平行于 Z（垂直于链传播方向），视觉错误）
           for (const [ka, kb] of sfxChordPairs(A.keys, B.keys, dt <= SFX_CONNECT_NEAR_DT)) {
             const cA = centerOf(ka), cB = centerOf(kb);
@@ -3098,8 +3103,8 @@ function renderSfxEffectList() {
   card('② 连接型', 'on',
     '由音符触发，参数由 2 个音符决定：连接参考车道**相邻演奏 tick**（t_A < t_B，按车道连；和弦 = 多成员同 tick 齐响，按 ≤32 tick 规则配对连线）——' +
     'MIDI式按各音粒子中心画**真空间斜线**（A = t_A 粒子中心、B = t_B 粒子中心沿链前移 2Δt 格，同音高退化为沿链 +X 水平线），同 tick 和弦配对（间隔 ≤32 tick 时 1:1 最近邻 + 落单音就近挂靠，否则严格 1:1）；' +
-    '单线式与音高无关 → 端点简并为车道中间槽位、沿链 X 方向连线（每 tick 2 格）。' +
-    'tickpolarparameter 分 tick 逐点生成（每 tick 至多 cpt 点、总点数跨 Δt+1 tick 铺完，点距 ≤0.1 格）→ 粒子在 A→B 之间沿方向**依次显现**，笔尖恰好在 B 的触发型/音符盒激活那一 tick 抵达 B，无缝衔接。' +
+    '单线式与音高无关 → 端点简并为车道中间槽位、沿链 X 方向连线（每 NBS tick 2 格）。' +
+    'tickpolarparameter 分 tick 逐点生成（每游戏 tick 至多 cpt 点、总点数跨 2Δt+1 游戏 tick = Δt 个 NBS tick 铺完，点距 ≤0.1 格）→ 粒子在 A→B 之间沿方向**依次显现**（与链传播同速 1 格/游戏 tick），笔尖恰好在 B 的触发型/音符盒激活那一 tick 抵达 B，无缝衔接。' +
     '粒子/颜色/寿命 m/漂移在下方车道展开面板调。');
   card('③ 背景型', 'on',
     '与具体音符无关，按乐曲小节间隔周期性激活（铺底氛围）。小节长 = 拍号 × 18.125 tick 四舍五入（4/4 → 73，3/4 → 54），' +
@@ -3312,7 +3317,7 @@ function renderSfxLaneParams(lane, li) {
   box.appendChild(h2);
   const tip2 = document.createElement('div');
   tip2.className = 'hint';
-  tip2.textContent = '仅影响本车道的成员：相邻演奏 tick A→B 画一条线段（点距 ≤0.1 格），笔尖恰好在 B 的触发型/音符盒激活那一 tick 抵达 B（无缝衔接）。MIDI式按各音粒子中心（音高 Z）连线，同 tick 和弦（多成员齐响）配对：间隔 ≤32 tick 时 1:1 最近邻 + 落单音就近挂靠（1对3/3对1），否则严格 1:1；单线式端点简并为中间槽位、沿链 X 方向连线（每 tick 2 格）。方向/长度/生成节奏均由音符数据构建时计算；此处调视觉：粒子、颜色（R G B A 四值 0~1）、m 寿命（每粒子自出生起存活的 tick，≥ Δt = 到达后整线停留再消融，< Δt = 彗星尾）、漂移 α（整线朝 B 漂移速度系数，0 = 静止）、组名（可选，写入命令组位，留空 = null）。任一项留空 → 该字段回默认。';
+  tip2.textContent = '仅影响本车道的成员：相邻演奏 tick A→B 画一条线段（点距 ≤0.1 格），笔尖恰好在 B 的触发型/音符盒激活那一 tick 抵达 B（无缝衔接，笔尖与链同速 1 格/游戏 tick）。MIDI式按各音粒子中心（音高 Z）连线，同 tick 和弦（多成员齐响）配对：间隔 ≤32 tick 时 1:1 最近邻 + 落单音就近挂靠（1对3/3对1），否则严格 1:1；单线式端点简并为中间槽位、沿链 X 方向连线（每 NBS tick 2 格）。方向/长度/生成节奏均由音符数据构建时计算；此处调视觉：粒子、颜色（R G B A 四值 0~1）、m 寿命（每粒子自出生起存活的游戏 tick 数，≥ 2Δt = 到达后整线停留再消融，< 2Δt = 彗星尾）、漂移 α（整线朝 B 漂移速度系数，0 = 静止）、组名（可选，写入命令组位，留空 = null）。任一项留空 → 该字段回默认。';
   box.appendChild(tip2);
   const conn = normConnectParams(lane.sfxParams ? lane.sfxParams.connect : null) || SFX_CONNECT_DEFAULTS;
   const rowConn = document.createElement('div');
@@ -4452,7 +4457,7 @@ async function generate() {
     $('sfxZipBtn').hidden = true;
     $('debugBtn').hidden = true;
     const delays = computeDelays(song.tempo, effectiveTickCount(song)); // 覆盖 songLength 及可能的超出音符；固定挡位全歌恒定
-    // 体积上限预估（Uint16Array 内存 ×2 字节 + 位打包开销）；主链恒 1 档：每 tick 恒 2 格
+    // 体积上限预估（Uint16Array 内存 ×2 字节 + 位打包开销）；主链恒 1 档：每 NBS tick 恒 2 格
     // 余量来源：+10 = X 向安全余量（buildLayout 的 xMax = ticks×2 恰为链尾）；
     //   +3 = 与 buildLayout 的 sy = maxYb + 3 一致（顶层赭黄蛙灯导轨在 yb+2）；
     //   +5 = Z 向估计上限（buildLayout 的 sz = zMax + zOffset + 2，zOffset ≥ 1；起点为负时实际更大，
