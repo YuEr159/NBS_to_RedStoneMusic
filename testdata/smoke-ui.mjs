@@ -1161,7 +1161,7 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
     //   = 旧存档「未填过」语义）→ 重渲染后 textarea 回填内置 conditional 默认命令
     check(extraTa[0].value === context.window.__NBS2SCHEMATIC.SFX_EXTRA_DEFAULT_CMD,
       '追加命令表单回填：extra 缺省（预设回填删键，旧存档语义）→ 回填内置 conditional 默认命令');
-    const CMD_I = "particleex conditional minecraft:end_rod ~ ~1 ~ 1 0.95 0.89 1 0 0 0 0.5 0.5 0.5 '(abs(y)==0.5&!(abs(z)<0.5))|(abs(x)==0.5&(!(abs(z)<0.5)|!(abs(y)<0.5)))' 0.1 50 'vy=0.05' 1.0 null";
+    const CMD_I = "particleex conditional minecraft:end_rod ~ ~ ~ 1 0.95 0.89 1 0 0 0 0.5 0.5 0.5 '(abs(y)==0.5&!(abs(z)<0.5))|(abs(x)==0.5&(!(abs(z)<0.5)|!(abs(y)<0.5)))' 0.1 0 'vy=0.2' 1 null";
     extraTa[0].value = CMD_I;
     extraTa[0].dispatch('change', { target: extraTa[0] });
     check(st.refLanes[boundLi].sfxParams && st.refLanes[boundLi].sfxParams.extra === CMD_I,
@@ -1170,7 +1170,7 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
     const resI2 = st.result.result;
     const laneI = st.refLanes[boundLi];
     const offI = { dy: laneI.start.dy + 1, dz: laneI.start.dz };
-    const expExtraI = "particleex conditional minecraft:end_rod ~0 ~" + offI.dy + " ~" + offI.dz + " 1 0.95 0.89 1 0 0 0 0.5 0.5 0.5 '(abs(y)==0.5&!(abs(z)<0.5))|(abs(x)==0.5&(!(abs(z)<0.5)|!(abs(y)<0.5)))' 0.1 50 'vy=0.05' 1.0 null";
+    const expExtraI = "particleex conditional minecraft:end_rod ~0 ~" + offI.dy + " ~" + offI.dz + " 1 0.95 0.89 1 0 0 0 0.5 0.5 0.5 '(abs(y)==0.5&!(abs(z)<0.5))|(abs(x)==0.5&(!(abs(z)<0.5)|!(abs(y)<0.5)))' 0.1 0 'vy=0.2' 1 null";
     const entryI = resI2.sfxTickList.find(e => e.lines.includes(expExtraI));
     check(!!entryI, `追加命令行生成：整条命令原文 + 坐标段替换为与主命令相同偏移 (0,${offI.dy},${offI.dz})`);
     if (entryI) {
@@ -1196,8 +1196,8 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
     // 2026-09-25 缺省语义：删键（= 旧存档未填过，undefined）→ 构建走内置默认命令 → conditional 默认行生成
     delete st.refLanes[boundLi].sfxParams.extra;
     await context.generate();
-    check(st.result.result.sfxTickList.some(e => e.lines.some(l => l.includes('abs(y)==0.5') && l.includes(' 0.1 50 '))),
-      '旧存档（extra 缺省 undefined）→ 内置 conditional 默认追加命令生成（寿命 50 默认行）');
+    check(st.result.result.sfxTickList.some(e => e.lines.some(l => l.includes('abs(y)==0.5') && l.includes(' 0.1 0 '))),
+      '旧存档（extra 缺省 undefined）→ 内置 conditional 默认追加命令生成（寿命 0 默认行）');
   }
   // 9) 旧格式迁移：手工写入旧 bool 载荷 → 重载按MIDI式迁移
   if (parsed) {

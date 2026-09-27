@@ -1321,7 +1321,7 @@ try {
   const BC_26 = boundConn(2, 6, 2);   // (0,2,6) 沿 X 4 格、Δt=2 → N0=40 cpt=9 P=45
   const BC_13 = boundConn(1, 3, 2);
   // 触发型追加命令缺省 = 内置 conditional 默认命令（2026-09-25 用户提供）：绑定行恒在主行后追加，
-  //   坐标段（~ ~1 ~）替换为本车道偏移 → (0,2,6)/(0,1,3) 两条期望行
+  //   坐标段（~ ~ ~）替换为本车道偏移 → (0,2,6)/(0,1,3) 两条期望行
   const exParts = (() => {
     const parts = SFX_EXTRA_DEFAULT_CMD.split(' ');
     const ci = parts.findIndex((p, i) => i >= 3 && p.startsWith('~'));
@@ -1568,7 +1568,7 @@ try {
     } else console.log('PASS 模板命令头含 ~ 占位：绑定行跳过 + 告警，连接线独立照产（自持 tA 的 function/CB）');
     // H4) 触发型追加命令（2026-09-25）：主行后逐行追加（整行原文、坐标段替换为与主命令相同偏移 (0,2,6)）；
     //    无坐标段行跳过 + 一次性告警；litematic 与 H 场景逐位一致（纯函数行增量，零改动）
-    const EXTRA_CMD = "particleex conditional minecraft:end_rod ~ ~1 ~ 1 0.95 0.89 1 0 0 0 0.5 0.5 0.5 '(abs(y)==0.5&!(abs(z)<0.5))|(abs(x)==0.5&(!(abs(z)<0.5)|!(abs(y)<0.5)))' 0.1 50 'vy=0.05' 1.0 null";
+    const EXTRA_CMD = "particleex conditional minecraft:end_rod ~ ~ ~ 1 0.95 0.89 1 0 0 0 0.5 0.5 0.5 '(abs(y)==0.5&!(abs(z)<0.5))|(abs(x)==0.5&(!(abs(z)<0.5)|!(abs(y)<0.5)))' 0.1 0 'vy=0.2' 1 null";
     const rH4 = runE2E(tmpFile, {
       lane0: { dz: 0, dy: 0 }, refLayers: REF,
       groups: [{ layers: [0] }], groupStarts: [{ dz: 3, dy: 0 }],
@@ -1576,7 +1576,7 @@ try {
     });
     const statH4 = rH4.result.stats;
     const tlbH4 = rH4.result.sfxTickList;
-    const expH4line = "particleex conditional minecraft:end_rod ~0 ~2 ~6 1 0.95 0.89 1 0 0 0 0.5 0.5 0.5 '(abs(y)==0.5&!(abs(z)<0.5))|(abs(x)==0.5&(!(abs(z)<0.5)|!(abs(y)<0.5)))' 0.1 50 'vy=0.05' 1.0 null";
+    const expH4line = "particleex conditional minecraft:end_rod ~0 ~2 ~6 1 0.95 0.89 1 0 0 0 0.5 0.5 0.5 '(abs(y)==0.5&!(abs(z)<0.5))|(abs(x)==0.5&(!(abs(z)<0.5)|!(abs(y)<0.5)))' 0.1 0 'vy=0.2' 1 null";
     if (statH4.sfxBoundNotes !== 2 || tlbH4.length !== 2
       || JSON.stringify(tlbH4[0].lines) !== JSON.stringify([sfxParticleCmd(0, 2, 6), expH4line, BC_26])
       || JSON.stringify(tlbH4[1].lines) !== JSON.stringify([sfxParticleCmd(0, 2, 6), expH4line])

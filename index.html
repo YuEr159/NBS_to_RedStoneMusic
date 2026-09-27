@@ -541,9 +541,9 @@ const sfxParticleCmdWithGroup = (dx, dy, dz, p, g) => {
 // 逐行整条原文处理（含单引号条件表达式，不拆字段）：每行 = 一条完整 particleex 命令，
 //   构建时把坐标段（前 3 词后首个 ~ 开头 token 起 3 个，同 SFX_PARTICLE_FIELDS 解析规则）整体替换为
 //   与本车道主命令相同的 ~dx ~dy ~dz；无坐标段的行无效 → 跳过 + 一次性告警。
-// 缺省（未填）= 内置 conditional 条件粒子默认命令（2026-09-25 用户提供，原样内置）；
+// 缺省（未填）= 内置 conditional 条件粒子默认命令（2026-09-27 用户提供新版，原样内置）；
 //   用户清空输入框（显式空串）= 不追加。
-const SFX_EXTRA_DEFAULT_CMD = "particleex conditional minecraft:end_rod ~ ~1 ~ 1 0.95 0.89 1 0 0 0 0.5 0.5 0.5 '(abs(y)==0.5&!(abs(z)<0.5))|(abs(x)==0.5&(!(abs(z)<0.5)|!(abs(y)<0.5)))' 0.1 50 'vy=0.05' 1.0 null";
+const SFX_EXTRA_DEFAULT_CMD = "particleex conditional minecraft:end_rod ~ ~ ~ 1 0.95 0.89 1 0 0 0 0.5 0.5 0.5 '(abs(y)==0.5&!(abs(z)<0.5))|(abs(x)==0.5&(!(abs(z)<0.5)|!(abs(y)<0.5)))' 0.1 0 'vy=0.2' 1 null";
 const sfxParseCmdCoord = (line) => {
   const parts = String(line || '').split(' ');
   const ci = parts.findIndex((p, i) => i >= 3 && p.startsWith('~'));
