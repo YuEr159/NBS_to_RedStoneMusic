@@ -1304,6 +1304,7 @@ try {
   const { SFX_NAMESPACE, SFX_CB_STATE, sfxParticleCmd, sfxParticleCmdFromParts,
     SFX_PARTICLE_FIELDS, sfxParticleCmdWithGroup, normSfxParams, normConnectParams,
     SFX_CONNECT_DEFAULTS, SFX_CONNECT_POINT_GAP, SFX_CONNECT_NEAR_DT, sfxConnectCmd, sfxChordPairs,
+    sfxArcCmd, sfxArcLen, sfxConnectPacing,
     SFX_VANISH_DEFAULTS, sfxVanishCmd, normVanishParams, SFX_EXTRA_DEFAULT_CMD,
     sfxBarLen, sfxNormBackground } = context.window.__NBS2SCHEMATIC;
   // 单线式连接线（2026-09-07c「连接前后节奏」）：端点 = 车道虚拟主位（中间槽位），沿链 +X（每 NBS tick 2 格）。
@@ -1613,7 +1614,8 @@ try {
     //    K1 缺省全选（触发+连接）：独立行 + 连接线；K2 取消连接（effects 仅 trigger）→ 无连接线、
     //    网格与 K1 逐位一致（连接线零 litematic 改动）；K3 仅连接（effects 仅 connect）→ 无独立行、
     //    行全为连接线；K4 车道级连接模板（sfxParams.connect）；K5 短 Δt（cpt>1）+ L<0.05 跳过
-    //    （tick0/2 同音高 A≡B 不连线、tick2/6 连）
+    //    （tick0/2 同音高 A≡B 不连线、tick2/6 连）；K7/K8/K9 弧线风格（2026-09-28：抛物线拱 +Y + 轻阻力，
+    //    tickparameter 直角坐标，端点恰抵 B 不变式；K8 显式 line 护栏；K9 lift/p 覆盖 + norm 回缺省）
     {
       // K1 期望（默认模板）：A=(0,0,0) → B=(4,0,5)（音高 12→17，B 端沿链前移 2Δt=4 格，真空间斜线）
       //   d=(4,0,5)、L=√41、Δt=2、N0=⌈√41/0.1⌉=65、cpt=⌈66/5⌉=14、P=70、step=1/69、end=1.007246377、age=m=10
@@ -1721,6 +1723,84 @@ try {
         console.log(`FAIL 连接线短Δt：indep=${statK5.sfxStandaloneNotes} conn=${statK5.sfxConnectLines} 行=${JSON.stringify(tlbK5)}（期望 (0,2) 同音高沿链水平线 L=4/P=45、(2,6) 斜线 L=√89/P=99；行落各 t_A）`); ok = false;
       } else {
         console.log('PASS 连接线短Δt：真空间斜线（同音高退化为沿链 +X 水平线）；cpt=⌈(N0+1)/(2Δt+1)⌉ 量化点距 ≤0.1（按游戏 tick 分批次，笔尖 1 格/游戏 tick）；L<0.05 跳过仍生效');
+      }
+      // K7 弧线风格 e2e（2026-09-28：style='arc'，缺省 lift=0.15/p=1.4）：
+      //   同 K1 几何 A=(0,0,0)→B=(4,0,5)（L=√41、Δt=2），但命令改 tickparameter（直角坐标）+
+      //   二次 Bézier（C = 弦中点 + 2·lift·L·ŷ，顶点偏离弦高 = lift·L，垂直向上拱起）+ 重参数化
+      //   s(t)=1−(1−t)^p（端点仍恰在 t_B 抵达 B）。点数预算 N0=⌈p·arcLen/0.1⌉（64 采样弧长）、
+      //   cpt/P 与直线共享公式（每游戏 tick 一批、跨 2Δt+1 游戏 tick 铺完）。
+      //   期望行测试内实算（sfxArcCmd 同式），不硬编码字面量（同 K1/K6c 口径）
+      {
+        const cpK7 = { ...SFX_CONNECT_DEFAULTS, style: 'arc' };
+        const arcK7 = sfxArcLen([4, 0, 5], Math.sqrt(41), cpK7.lift);   // 64 采样折线弧长
+        const { n0: n0K7, cpt: cptK7, P: Pk7 } = sfxConnectPacing(arcK7, cpK7.p, 2);
+        const expK7 = sfxArcCmd([0, 0, 0], [4, 0, 5], Math.sqrt(41), Pk7, cptK7,
+          cpK7.m, cpK7.alpha, cpK7);
+        const rK7 = runE2E(tmpFile, { ...k1Opts, refLanes: [{ tracks: [0], start: { dz: 0, dy: 0 }, sfxParams: { connect: cpK7 } }] });
+        ok = verifyE2E('参考车道池·连接线弧线', rK7) && ok;
+        const statK7 = rK7.result.stats;
+        const tlbK7 = rK7.result.sfxTickList;
+        const fK7 = expK7.split(' ');
+        const stepK7 = Number(fK7[fK7.length - 6]), cptF = Number(fK7[fK7.length - 5]);
+        const pK7 = Math.round(1 / stepK7) + 1;   // step = 1/(P−1) 反推总点数
+        if (statK7.sfxStandaloneNotes !== 2 || statK7.sfxConnectLines !== 1 || statK7.commandBlocks !== 2
+          || tlbK7.length !== 2
+          || JSON.stringify(tlbK7[0].lines) !== JSON.stringify([sfxParticleCmd(0, 0, 0), EXI(0, 0), expK7])
+          || JSON.stringify(tlbK7[1].lines) !== JSON.stringify([sfxParticleCmd(0, 0, 5), EXI(0, 5)])
+          || !expK7.startsWith('particleex tickparameter minecraft:end_rod ~0 ~0 ~0 1 0.95 0.89 1 0 0 0 0')
+          || !expK7.includes('(x,y,z)=((1-pow(abs(1-t),1.4))*(2*2+(1-pow(abs(1-t),1.4))*0),'
+              + '(1-pow(abs(1-t),1.4))*(2*1.920937271+(1-pow(abs(1-t),1.4))*-3.841874542),'
+              + '(1-pow(abs(1-t),1.4))*(2*2.5+(1-pow(abs(1-t),1.4))*0))')
+          || fK7[13] !== '0' || Math.abs(Number(fK7[14]) - (1 + 0.5 / (Pk7 - 1))) > 1e-9
+          || !(cptF === cptK7 && pK7 === Pk7 && Math.ceil(pK7 / cptF) === 5 && Math.abs(stepK7 * (Pk7 - 1) - 1) < 1e-6)
+          || fK7[fK7.length - 1] !== 'null'
+          || rK7.packed.longs.length !== rK1.packed.longs.length || !rK1.packed.longs.every((v, i) => v === rK7.packed.longs[i])) {
+          console.log(`FAIL 连接线弧线：indep=${statK7.sfxStandaloneNotes} conn=${statK7.sfxConnectLines} 行=${JSON.stringify(tlbK7)}（期望 tick0 [独立行, 弧线线] / tick1 [独立行]；tickparameter 直角坐标 + Bézier 表达式 + pow(abs(1-t),1.4)；N0=⌈1.4·arcLen/0.1⌉=${n0K7}、cpt=${cptK7}、P=${Pk7}、跨 2Δt+1=5 游戏 tick；litematic 与 K1 逐位一致）`); ok = false;
+        } else {
+          console.log('PASS 连接线弧线（style=arc，缺省 lift=0.15/p=1.4）：抛物线拱 +Y（顶点高 lift·L）+ 近 B 端减速（轻阻力感，端点仍恰抵 B）；tickparameter 直角坐标、表达式单条矩阵赋值无引号无局部变量；litematic 与直线逐位一致（零改动）');
+        }
+        // K8 显式 style='line' 护栏：产物与 K1 缺省（无 style 键）逐位一致 → 缺省语义未被风格键扰动
+        const rK8 = runE2E(tmpFile, { ...k1Opts, refLanes: [{ tracks: [0], start: { dz: 0, dy: 0 }, sfxParams: { connect: { ...SFX_CONNECT_DEFAULTS, style: 'line' } } }] });
+        ok = verifyE2E('参考车道池·连接线显式直线', rK8) && ok;
+        const statK8 = rK8.result.stats;
+        const tlbK8 = rK8.result.sfxTickList;
+        if (statK8.sfxConnectLines !== 1 || tlbK8.length !== 2
+          || JSON.stringify(tlbK8[0].lines) !== JSON.stringify([sfxParticleCmd(0, 0, 0), EXI(0, 0), expK1])
+          || JSON.stringify(tlbK8[1].lines) !== JSON.stringify([sfxParticleCmd(0, 0, 5), EXI(0, 5)])) {
+          console.log(`FAIL 显式直线护栏：conn=${statK8.sfxConnectLines} 行=${JSON.stringify(tlbK8)}（期望与 K1 缺省逐位一致）`); ok = false;
+        } else {
+          console.log('PASS 显式 style=line 护栏：产物与缺省（无 style 键）逐位一致（tickpolarparameter 直线命令零漂移）');
+        }
+        // K9 lift/p 覆盖 + normConnectParams 风格三键行为：
+        //   a) 车道模板 lift=0.3/p=1.2（表达式字面量 0.3/1.2、顶点高 0.3·L）；
+        //   b) 非法 style → 回 line（整模板其余字段保留，产物回直线）；
+        //   c) 非法 lift/p → 回各自缺省（不冲其余字段）；缺省（无三键）= line/0.15/1.4
+        {
+          const cpK9 = { ...SFX_CONNECT_DEFAULTS, style: 'arc', lift: 0.3, p: 1.2 };
+          const arcK9 = sfxArcLen([4, 0, 5], Math.sqrt(41), cpK9.lift);
+          const { cpt: cptK9, P: Pk9 } = sfxConnectPacing(arcK9, cpK9.p, 2);
+          const expK9 = sfxArcCmd([0, 0, 0], [4, 0, 5], Math.sqrt(41), Pk9, cptK9,
+            cpK9.m, cpK9.alpha, cpK9);
+          const rK9 = runE2E(tmpFile, { ...k1Opts, refLanes: [{ tracks: [0], start: { dz: 0, dy: 0 }, sfxParams: { connect: cpK9 } }] });
+          ok = verifyE2E('参考车道池·连接线弧线参数', rK9) && ok;
+          const tlbK9 = rK9.result.sfxTickList;
+          const nA = normConnectParams({ particle: 'minecraft:end_rod', color: '1 0.95 0.89 1', m: 10, alpha: 0 });
+          const nB = normConnectParams({ ...SFX_CONNECT_DEFAULTS, style: 'zzz' });
+          const nC = normConnectParams({ ...SFX_CONNECT_DEFAULTS, lift: 5 });
+          const nD = normConnectParams({ ...SFX_CONNECT_DEFAULTS, p: 3 });
+          const nE = normConnectParams({ ...SFX_CONNECT_DEFAULTS, style: 'arc', group: 'g9' });
+          if (JSON.stringify(tlbK9[0].lines) !== JSON.stringify([sfxParticleCmd(0, 0, 0), EXI(0, 0), expK9])
+            || JSON.stringify(nA) !== JSON.stringify({ particle: 'minecraft:end_rod', color: '1 0.95 0.89 1', m: 10, alpha: 0,
+              style: 'line', lift: 0.15, p: 1.4 })
+            || nB.style !== 'line' || nB.m !== 10
+            || nC.lift !== 0.15 || nC.style !== 'line' || nC.p !== 1.4
+            || nD.p !== 1.4 || nD.lift !== 0.15
+            || nE.style !== 'arc' || nE.group !== 'g9' || nE.lift !== 0.15 || nE.p !== 1.4) {
+            console.log(`FAIL 弧线参数/校验：行=${JSON.stringify(tlbK9[0].lines)}（期望 lift=0.3/p=1.2 字面量进表达式）norm 缺省=${JSON.stringify(nA)} 非法style→${nB.style} 非法lift→${nC.lift} p=3→${nD.p}`); ok = false;
+          } else {
+            console.log('PASS 弧线参数 + norm 三键：lift/p 逐字进表达式与点数预算；缺省 = line/0.15/1.4；非法 style→line（其余字段保留）、非法 lift/p→回各自缺省（不冲其余字段）、group 与三键可并存');
+          }
+        }
       }
       // K6 和弦连线（2026-09-07c）：sfxChordPairs 单元断言 + 近/远距端到端
       {
@@ -1856,6 +1936,74 @@ try {
           console.log(`FAIL 和弦连线边界：indep=${statK6c.sfxStandaloneNotes} conn=${statK6c.sfxConnectLines} CB=${statK6c.commandBlocks} 行=${JSON.stringify(tlbK6c)}（期望 10 线：Δt=4 三条 / Δt=31 三条（3:1 挂靠）/ Δt=2 三条 / Δt=33 一条（48→48 同音高水平线，50 远距落单不连）；真空间斜线下同音高对不再 L=0 跳过）`); ok = false;
         } else {
           console.log('PASS 和弦连线边界（Δt 31/33 跨 32）：近距 3:1/1:3 挂靠、远距严格 1:1（落单不连）；真空间斜线（同音高对 → 沿链 +X 水平线）；行序独立行按声部升序 + 连接线在后');
+        }
+      }
+      // K10 和弦-弧线（2×2 组合 = MIDI式×弧线）：K6a 同几何（3 声部和弦、Δt=4），
+      //    车道级 style='arc' → 3 条配对线全改弧线（端点/和弦配对逻辑与风格无关，自动成立）
+      {
+        const refK6K = new Map([[0, { type: 'independent', sound: true }],
+          [1, { type: 'independent', sound: true }], [2, { type: 'independent', sound: true }]]);
+        const nbsK10 = makeNbs({ tempoTps: 20, songLength: 8, layers: 3, noteSpecs: [
+          { tick: 0, layer: 0, instrument: 0, key: 44 },
+          { tick: 0, layer: 1, instrument: 0, key: 50 },
+          { tick: 4, layer: 0, instrument: 0, key: 45 },
+          { tick: 4, layer: 1, instrument: 0, key: 50 },
+          { tick: 4, layer: 2, instrument: 0, key: 55 },
+        ]});
+        const tmpK10 = 'synth_chord_arc.nbs';
+        writeFileSync(path.join(__dirname, tmpK10), nbsK10);
+        const I24K = (n) => sfxParticleCmd(0, 0, n);
+        const arcK10 = (za, zb, dt) => {   // 真空间斜线弧线：A=(0,0,za)→B=(2Δt,0,zb)
+          const d = [2 * dt, 0, zb - za], L = Math.hypot(d[0], d[1], d[2]);
+          const cpA = { ...SFX_CONNECT_DEFAULTS, style: 'arc' };
+          const { cpt, P } = sfxConnectPacing(sfxArcLen(d, L, cpA.lift), cpA.p, dt);
+          return sfxArcCmd([0, 0, za], d, L, P, cpt, cpA.m, cpA.alpha, cpA);
+        };
+        const rK10 = runE2E(tmpK10, { ...k1Opts, refLayers: refK6K,
+          refLanes: [{ tracks: [0, 1, 2], start: { dz: 0, dy: 0 }, sfxParams: { connect: { ...SFX_CONNECT_DEFAULTS, style: 'arc' } } }] });
+        ok = verifyE2E('参考车道池·和弦连线弧线', rK10) && ok;
+        const statK10 = rK10.result.stats;
+        const tlbK10 = rK10.result.sfxTickList;
+        const aC1 = arcK10(-1, 0, 4);   // (44→45) L=√65
+        const aC2 = arcK10(5, 5, 4);    // (50→50 同音高) 水平线 L=8
+        const aC3 = arcK10(5, 10, 4);   // (50→55 挂靠) L=√89
+        if (statK10.sfxStandaloneNotes !== 5 || statK10.sfxConnectLines !== 3
+          || JSON.stringify(tlbK10[0].lines) !== JSON.stringify([I24K(-1), EXI(0, -1), I24K(5), EXI(0, 5), aC1, aC2, aC3])
+          || JSON.stringify(tlbK10[1].lines) !== JSON.stringify([I24K(0), EXI(0, 0), I24K(5), EXI(0, 5), I24K(10), EXI(0, 10)])
+          || !aC1.startsWith('particleex tickparameter') || !aC1.includes('pow(abs(1-t),1.4)')
+          || !aC2.startsWith('particleex tickparameter') || !aC3.startsWith('particleex tickparameter')) {
+          console.log(`FAIL 和弦连线弧线：indep=${statK10.sfxStandaloneNotes} conn=${statK10.sfxConnectLines} 行=${JSON.stringify(tlbK10)}（期望 t0 [I(44),I(50),弧线(44→45),弧线(50→50),弧线(50→55 挂靠)] 三条 tickparameter；t4 独立行不变）`); ok = false;
+        } else {
+          console.log('PASS 和弦连线弧线（MIDI式×弧线）：3 条配对线全改弧线（端点/和弦配对与风格无关），独立行不受影响；2×2 组合之 MIDI式×弧线成立');
+        }
+      }
+      // K11 单线式-弧线（2×2 组合 = 单线式×弧线）：bound 车道 + style='arc' → 沿链 +X 弧线
+      //    （端点 = 虚拟主位 (0,2,6)，B 沿 +X 前移 2Δt=4 格；对照直线场景 BC_26）
+      {
+        const rK11 = runE2E(tmpFile, {
+          lane0: { dz: 0, dy: 0 }, refLayers: REF,
+          groups: [{ layers: [0] }], groupStarts: [{ dz: 3, dy: 0 }],
+          refLanes: [{ tracks: [0], type: 'bound', start: { dz: 6, dy: 1 },
+            sfxParams: { connect: { ...SFX_CONNECT_DEFAULTS, style: 'arc' } } }],
+        });
+        ok = verifyE2E('参考车道池·单线式弧线', rK11) && ok;
+        const statK11 = rK11.result.stats;
+        const tlbK11 = rK11.result.sfxTickList;
+        const arcB = (() => {   // 单线式弧线：A=(0,2,6)→B=(4,2,6)、L=4、Δt=2
+          const d = [4, 0, 0], L = 4;
+          const cpA = { ...SFX_CONNECT_DEFAULTS, style: 'arc' };
+          const { cpt, P } = sfxConnectPacing(sfxArcLen(d, L, cpA.lift), cpA.p, 2);
+          return sfxArcCmd([0, 2, 6], d, L, P, cpt, cpA.m, cpA.alpha, cpA);
+        })();
+        if (statK11.sfxBoundNotes !== 2 || statK11.sfxStandaloneNotes !== 0 || statK11.sfxConnectLines !== 1
+          || tlbK11.length !== 2
+          || JSON.stringify(tlbK11[0].lines) !== JSON.stringify([P0R, EX26, arcB])
+          || JSON.stringify(tlbK11[1].lines) !== JSON.stringify([P0R, EX26])
+          || !arcB.startsWith('particleex tickparameter minecraft:end_rod ~0 ~2 ~6')
+          || !arcB.includes('pow(abs(1-t),1.4)') || arcB.includes('tickpolarparameter')) {
+          console.log(`FAIL 单线式弧线：bound=${statK11.sfxBoundNotes} conn=${statK11.sfxConnectLines} 行=${JSON.stringify(tlbK11)}（期望 tick0 [绑定行, 弧线线] / tick1 [绑定行]；弧线沿链 +X、起点 (0,2,6)）`); ok = false;
+        } else {
+          console.log('PASS 单线式弧线（单线式×弧线）：沿链 +X 弧线（起点 = 虚拟主位 (0,2,6)）；2×2 组合之 单线式×弧线成立');
         }
       }
     }
@@ -2087,6 +2235,7 @@ try {
           // N1 单元：三处组位写入 + 校验规则（多 token/非字符串组名 → 丢弃该字段）
           const connG = sfxConnectCmd([0, 0, 0], [2, 0, 0], 2, 5, 3, 10, 0, { ...SFX_CONNECT_DEFAULTS, group: CG });   // cpt=3（本用例只断言组位，几何不参与）
           const connG0 = sfxConnectCmd([0, 0, 0], [2, 0, 0], 2, 5, 3, 10, 0, SFX_CONNECT_DEFAULTS);
+          const connAG = sfxArcCmd([0, 0, 0], [2, 0, 0], 2, 5, 3, 10, 0, { ...SFX_CONNECT_DEFAULTS, style: 'arc', group: CG });   // 组名-弧线（2026-09-28）
           const vanG = sfxVanishCmd(0, 2, 6, 9, { ...SFX_VANISH_DEFAULTS, ahead: 9, group: VG });
           const tgBase = { ...SFX_PARTICLE_FIELDS };
           const tgCmd = sfxParticleCmdWithGroup(0, 2, 6, { ...tgBase, group: TG }, TG);
@@ -2095,6 +2244,7 @@ try {
           const tgIgnored = sfxParticleCmdWithGroup(0, 2, 6, { ...tailNoNull, group: TG }, TG);
           // 校验规则：非字符串/空组名 → 忽略（不存该字段，返回 5 字段对象）；含空白（多 token）→ 整模板无效（undefined）
           if (connG.slice(-3) !== CG
+            || connAG.slice(-3) !== CG
             || connG0.slice(-4) !== 'null'
             || vanG.slice(-3) !== VG || tgCmd.slice(-3) !== TG
             || tgPlain !== sfxParticleCmdFromParts(0, 2, 6, tgBase)
@@ -2105,11 +2255,12 @@ try {
             || normSfxParams({ ...tgBase, group: TG }).group !== TG
             || normConnectParams({ ...SFX_CONNECT_DEFAULTS, group: 'x y' }) !== undefined
             || normConnectParams({ ...SFX_CONNECT_DEFAULTS, group: CG }).group !== CG
+            || normConnectParams({ ...SFX_CONNECT_DEFAULTS, style: 'arc', group: CG }).group !== CG
             || normVanishParams({ particle: 'minecraft:end_rod', color: '1 0.95 0.89 1', ahead: 1, group: VG }).group !== VG
             || normVanishParams({ particle: 'minecraft:end_rod', color: '1 0.95 0.89 1', ahead: 1, group: '' }) === undefined) {
-            console.log(`FAIL 组名单元：conn=${connG} van=${vanG} tg=${tgCmd}（期望 conn/van/tg 末位分别 ${CG}/${VG}/${TG}、缺省 null；tail 末 token 非 null 时不替换；非字符串/空组名忽略、多 token → 整模板无效）`); ok = false;
+            console.log(`FAIL 组名单元：conn=${connG} connArc=${connAG} van=${vanG} tg=${tgCmd}（期望 conn/弧线/van/tg 末位分别 ${CG}/${CG}/${VG}/${TG}、缺省 null；tail 末 token 非 null 时不替换；非字符串/空组名忽略、多 token → 整模板无效）`); ok = false;
           } else {
-            console.log('PASS 组名单元：触发/连接/消失三命令组位写入（缺省 null）、tail 末 token 非 null 时忽略、校验规则（单 token）');
+            console.log('PASS 组名单元：触发/连接/消失三命令组位写入（缺省 null，弧线同直线的组位语义）、tail 末 token 非 null 时忽略、校验规则（单 token）');
           }
           // N2 e2e 触发型：bound 车道 + 完整 5 字段模板（= 默认命令拆分）+ group → 绑定行组位 = tg1
           const rN2 = runE2E(tmpFile, {

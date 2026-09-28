@@ -746,9 +746,10 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
     const extraTa8c = findIn('sfx-extra-field');
     check(extraTa8c.length >= 1 && extraTa8c[0].value === SFX_EXTRA_DEFAULT_CMD,
       `追加命令表单回填：默认 = 内置 conditional 默认命令（实际 ${JSON.stringify(String(extraTa8c[0] && extraTa8c[0].value).slice(0, 30))}…）`);
-    // 连接型结构化 5 字段表单：回填默认（在触发型全清操作之前断言——同面板，全清会一并清空本表单）
-    const connIns = findIn('sfx-connect-field');
-    check(connIns.length === 5, `连接型表单 5 字段（粒子/颜色/m/α/组，实际 ${connIns.length}）`);
+    // 连接型结构化表单：line 态（缺省）lift/p 两输入 hidden → 收集后过滤，可见 5 字段；
+    //   回填默认断言在触发型全清操作之前（同面板，全清会一并清空本表单）
+    const connIns = findIn('sfx-connect-field').filter(el => !el.hidden);
+    check(connIns.length === 5, `连接型表单 5 可见字段（line 态：粒子/颜色/m/α/组，lift/p 隐藏；实际可见 ${connIns.length}）`);
     check(JSON.stringify([connIns[0].value, connIns[1].value, connIns[2].value, connIns[3].value, connIns[4].value])
       === JSON.stringify(['minecraft:end_rod', '1 0.95 0.89 1', '10', '0', '']),
       '连接型表单回填默认（粒子/颜色/m=10/α=0/组留空）');
@@ -806,8 +807,9 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
     connIns[2].value = '20'; connIns[2].dispatch('change', { target: connIns[2] });
     connIns[3].value = '0.1'; connIns[3].dispatch('change', { target: connIns[3] });
     check(JSON.stringify(st.refLanes[boundLi].sfxParams && st.refLanes[boundLi].sfxParams.connect)
-      === JSON.stringify({ particle: 'minecraft:dragon_breath', color: '0.5 0.5 0.5 1', m: 20, alpha: 0.1 }),
-      '连接型表单编辑：lane.sfxParams.connect 更新（4 字段结构化对象）');
+      === JSON.stringify({ particle: 'minecraft:dragon_breath', color: '0.5 0.5 0.5 1', m: 20, alpha: 0.1,
+        style: 'line', lift: 0.15, p: 1.4 }),
+      '连接型表单编辑：lane.sfxParams.connect 更新（4 字段 + 风格三键 style/lift/p 恒随存）');
     // 非法颜色（5 个值）→ 该次回退默认 → connect 键删除（全部=默认）
     connIns[1].value = '0.5 0.5 0.5 1 9'; connIns[1].dispatch('change', { target: connIns[1] });
     check(!(st.refLanes[boundLi].sfxParams && 'connect' in (st.refLanes[boundLi].sfxParams || {})),
@@ -1022,7 +1024,7 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
     { const recX6 = (n) => { if (n.className === 'sfx-lane-x') xbtns6.push(n); (n.children || []).forEach(recX6); }; recX6(elements.get('sfxEffectLanes')); }
     if (xbtns6[boundLi] && xbtns6[boundLi].textContent === '▼') xbtns6[boundLi].dispatch('click', {});
     const vanIns3 = findIn('sfx-vanish-field');
-    const connIns2 = findIn('sfx-connect-field');
+    const connIns2 = findIn('sfx-connect-field').filter(el => !el.hidden);   // line 态：lift/p 隐藏
     check(vanIns3.length === 4 && connIns2.length === 5,
       `8g 前置：④ 表单 4 字段 / ② 表单 5 字段（实际 van=${vanIns3.length} conn=${connIns2.length}）`);
     // ① 触发型组名（第 6 输入）：填写 → 绑定行组位替换；清空 → 组位回 null
@@ -1198,6 +1200,83 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
     await context.generate();
     check(st.result.result.sfxTickList.some(e => e.lines.some(l => l.includes('abs(y)==0.5') && l.includes(' 0.1 0 '))),
       '旧存档（extra 缺省 undefined）→ 内置 conditional 默认追加命令生成（寿命 0 默认行）');
+  }
+  // 8j) 连接型弧线风格（2026-09-28）：结构 → 状态 → 产物 → 回归 四层断言（结构优先、字面为辅，
+  //     整行字面期望留在 validate K7/K9）；末尾恢复缺省状态，不污染 9) 段
+  {
+    const AP = context.window.__NBS2SCHEMATIC;
+    const boundLi = st.refLanes.findIndex(l => l.tracks.includes(0));
+    const recJ = (cls) => {
+      const out = [];
+      (function rec(n) { if (n.className === cls) out.push(n); (n.children || []).forEach(rec); })(elements.get('sfxEffectLanes'));
+      return out;
+    };
+    // 面板态与 8i 同模式：sfxLanesOpen 持久，仅收起态才点
+    const xbtnsJ = [];
+    { const recXJ = (n) => { if (n.className === 'sfx-lane-x') xbtnsJ.push(n); (n.children || []).forEach(recXJ); }; recXJ(elements.get('sfxEffectLanes')); }
+    if (xbtnsJ[boundLi] && xbtnsJ[boundLi].textContent === '▼') xbtnsJ[boundLi].dispatch('click', {});
+    // 结构层：风格 select 存在、缺省 line、两选项；line 态 lift/p 隐藏（DOM 中 5 旧字段在前、
+    //   lift/p 在后 → 隐藏 2 项按 placeholder 指认 lift/p）
+    const styleSel = recJ('sfx-connect-style');
+    check(styleSel.length >= 1 && styleSel[0].value === 'line',
+      `8j 结构：风格 select 在列且缺省 = line（实际 ${JSON.stringify(styleSel.map(s => s.value))}）`);
+    check(JSON.stringify(styleSel[0].children.map(o => o.value)) === JSON.stringify(['line', 'arc']),
+      '8j 结构：选项 = [line, arc]');
+    const hideJ = recJ('sfx-connect-field').filter(el => el.hidden);
+    const visJ = recJ('sfx-connect-field').filter(el => !el.hidden);
+    check(hideJ.length === 2 && visJ.length === 5
+      && hideJ.some(el => el.placeholder === '0~1，如 0.15')
+      && hideJ.some(el => el.placeholder === '1~2，如 1.4'),
+      `8j 结构：line 态 lift/p 两输入隐藏（隐藏 ${hideJ.length}、可见 ${visJ.length}，按 placeholder 指认）`);
+    // 状态层：切 arc → connect 键必存（style ≠ 默认）；风格切换触发重渲染，lift/p 可见且回填缺省
+    //   （DOM 顺序：风格 → lift → p → 5 旧字段，lift = vis[0]、p = vis[1]）
+    styleSel[0].value = 'arc';
+    styleSel[0].dispatch('change', { target: styleSel[0] });
+    const laneJ = st.refLanes[boundLi];
+    check(laneJ.sfxParams && laneJ.sfxParams.connect && laneJ.sfxParams.connect.style === 'arc',
+      '8j 状态：切弧线 → sfxParams.connect.style = arc（style ≠ 默认必存键）');
+    const visJ2 = recJ('sfx-connect-field').filter(el => !el.hidden);
+    check(visJ2.length === 7 && visJ2[0].value === '0.15' && visJ2[1].value === '1.4',
+      `8j 状态：弧线态 lift/p 可见且回填缺省（可见 ${visJ2.length}、lift=${visJ2[0].value}、p=${visJ2[1].value}）`);
+    visJ2[0].value = '0.3';
+    visJ2[0].dispatch('change', { target: visJ2[0] });
+    const connJ = st.refLanes[boundLi].sfxParams.connect;
+    check(connJ.lift === 0.3 && connJ.style === 'arc' && connJ.p === 1.4
+      && connJ.particle === 'minecraft:end_rod' && connJ.color === '1 0.95 0.89 1'
+      && connJ.m === 10 && connJ.alpha === 0,
+      '8j 状态：改 lift=0.3 → 数值化，不冲其余 6 字段（逐键断言）');
+    // 产物层（只断言前缀/片段/尾参，整行字面留 validate K7）：tickparameter 行 + 重参数化
+    //   片段 + 坐标段与主命令同偏移（A = mid，与触发主行同基准）+ 组位 null
+    await context.generate();
+    const resJ = st.result.result;
+    const laneJ2 = st.refLanes[boundLi];
+    const offJ = { dy: laneJ2.start.dy + 1, dz: laneJ2.start.dz };
+    const tickP = resJ.sfxTickList.flatMap(e => e.lines)
+      .filter(l => l.startsWith('particleex tickparameter '));
+    check(tickP.length >= 1 && tickP.every(l => l.includes('pow(abs(1-t),1.4)') && /\s+null$/.test(l)),
+      `8j 产物：弧线行 = tickparameter + 重参数化 pow(abs(1-t),1.4) + 组位 null（共 ${tickP.length} 行）`);
+    check(tickP.some(l => l.includes(`~0 ~${offJ.dy} ~${offJ.dz}`)),
+      `8j 产物：坐标段与主命令同偏移 (0,${offJ.dy},${offJ.dz})`);
+    // 回归层：切回 line（lift 仍 0.3）→ tickparameter 消失、tickpolarparameter 恢复
+    const styleSel2 = recJ('sfx-connect-style');
+    styleSel2[0].value = 'line';
+    styleSel2[0].dispatch('change', { target: styleSel2[0] });
+    await context.generate();
+    const resJ2 = st.result.result;
+    const tickP2 = resJ2.sfxTickList.flatMap(e => e.lines)
+      .filter(l => l.startsWith('particleex tickparameter '));
+    const tickPol2 = resJ2.sfxTickList.flatMap(e => e.lines)
+      .filter(l => l.startsWith('particleex tickpolarparameter '));
+    check(tickP2.length === 0 && tickPol2.length > 0,
+      `8j 回归：切回直线 → tickparameter 消失（${tickP2.length}）、tickpolarparameter 恢复（${tickPol2.length}）`);
+    // 载荷回归：connect 全默认 → delete 键（isDefault 语义；lift/p 回默认后与 SFX_CONNECT_DEFAULTS 逐键相等）
+    delete st.refLanes[boundLi].sfxParams.connect;
+    context.saveStateNow();
+    const rawJ = context.localStorage.getItem(context.stateKey(st.song));
+    const parsedJ = rawJ && JSON.parse(rawJ);
+    const laneJ3 = parsedJ && parsedJ.refLanes[boundLi];
+    check(!!laneJ3 && !(laneJ3.sfxParams || {}).connect,
+      '8j 回归：connect 全默认 → connect 键被删，载荷回旧形状（持久化往返）');
   }
   // 9) 旧格式迁移：手工写入旧 bool 载荷 → 重载按MIDI式迁移
   if (parsed) {

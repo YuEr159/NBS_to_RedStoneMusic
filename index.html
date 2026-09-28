@@ -151,6 +151,7 @@ input[type="number"] { width: 70px; }
 .sfx-pf-coord { display: flex; gap: 8px; margin: 4px 0; }
 .sfx-pf-coord label { font-size: 12px; }
 .sfx-pf-coord input[type="text"] { width: 90px; }
+.sfx-pf-coord select { min-width: 90px; }
 .lane-conflict-ok { font-size: 11px; color: #6fbf73; margin-left: 6px; }
 .lane-conflict-warn { font-size: 11px; color: #e0a33c; margin-left: 6px; font-weight: 700; }
 .merge-advice { background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; margin-bottom: 8px; font-size: 12px; }
@@ -588,8 +589,16 @@ const sfxParseExtraCommands = (raw) => {
 //     （2026-09-10 用户实测修正：原 B 端与 A 同 X=0 → 线段平行于 Z、垂直于链传播方向，视觉错误）
 //   · 单线式：与音高无关 → 端点简并为车道中间槽位（主位），沿链 +X 方向连线（主链每 NBS tick 恒 2 格），
 //     「连接前后节奏」：每个演奏 tick 与下一个演奏 tick 之间都有连线（每 tick 对只一条线）。
+// 连接线风格三键（2026-09-28 用户定：直线 + 弧线「抛物线+轻阻力」并列，车道级 style 选择）：
+//   · style 'line'（缺省）= tickpolarparameter + dis=L·t 线性参数化（笔尖恒 1 格/游戏 tick，与链同速）
+//   · style 'arc' = tickparameter（直角坐标）+ 二次 Bézier Q(s)=s·(2c+s·k)（c=C−A、k=B−2C、
+//     C = 弦中点 + 2·lift·L·ŷ → 顶点偏离弦高 = lift·L，垂直向上拱起），重参数化
+//     s(t) = 1 − (1−t)^p：s(0)=0、s(1)=1 → 端点仍恰在 t_B 抵达 B（无缝衔接不变式保留）；
+//     ds/dt(0)=p 快、ds/dt(1)=0 慢 = 阻力感来源（p=1 对称情形退化为标准抛物线 y=h·4·s(1−s)）
+//   · lift ∈[0,1]（缺省 0.15）= 弧高比（顶点偏离弦高 = lift×弦长）；p ∈[1,2]（缺省 1.4）= 阻力指数
 const SFX_CONNECT_DEFAULTS = {
   particle: 'minecraft:end_rod', color: '1 0.95 0.89 1', m: 10, alpha: 0,
+  style: 'line', lift: 0.15, p: 1.4,
 };
 const SFX_CONNECT_POINT_GAP = 0.1; // 点距上限（格）
 const SFX_CONNECT_MIN_LEN = 0.05;  // L < 0.05 跳过（A≈B：B 的触发环已标记该点）
@@ -632,6 +641,9 @@ function sfxChordPairs(ka, kb, near) {
 // 归一化车道级连接模板：4 字段全合法才返回完整对象，否则 undefined（= 缺省默认）。
 //   color 须 4 个 0~1 数值；m 整数 ≥0（0 = 粒子立即消亡 = 用户显式关闭寿命）；alpha ≥0。
 //   可选 group（粒子组名，单 token）：合法 4 字段基础上附加；空/多 token/非字符串 → 忽略（不存）。
+//   可选风格三键（2026-09-28）：style 'line'|'arc'（缺省 line）/ lift 弧高比 ∈[0,1]（缺省 0.15）/
+//   p 阻力指数 ∈[1,2]（缺省 1.4，1 = 匀速无阻力）。非法 style 值 → 回缺省 line（整模板 4 字段保留）；
+//   lift/p 非法 → 回各自缺省（不冲其余字段，与 group 忽略语义一致）。仅 style='arc' 时 lift/p 生效。
 function normConnectParams(p) {
   if (!p || typeof p !== 'object') return undefined;
   const parts = String(p.color || '').split(/\s+/).filter(Boolean);
@@ -646,6 +658,9 @@ function normConnectParams(p) {
     if (!/^\S+$/.test(g)) return undefined;
     out.group = g;
   }
+  out.style = (p.style === 'arc' || p.style === 'line') ? p.style : SFX_CONNECT_DEFAULTS.style;
+  out.lift = (Number.isFinite(p.lift) && p.lift >= 0 && p.lift <= 1) ? p.lift : SFX_CONNECT_DEFAULTS.lift;
+  out.p = (Number.isFinite(p.p) && p.p >= 1 && p.p <= 2) ? p.p : SFX_CONNECT_DEFAULTS.p;
   return out;
 }
 // ===== ④ 消失型（2026-09-07e 用户定规格：演奏 tick 前 N tick 提前出现，恰在演奏 tick 消亡）=====
@@ -723,6 +738,59 @@ function sfxConnectCmd(a, d, L, P, cpt, m, alpha, cp) {
     sfxNum(step), String(cpt), String(m), 'null', '1.0', cp.group || 'null',
   ].join(' ');
 }
+// 连接线点数/节拍（2026-09-28 从生成段抽共享）：N0 = ⌈len·p/点距⌉（时间域速度峰值 = p，直线 p=1）；
+//   cpt = max(1, ⌈(N0+1)/(2Δt+1)⌉)、P = (2Δt+1)·cpt（每游戏 tick 至多 cpt 点、跨 2Δt+1 游戏 tick 铺完）。
+//   与旧内联公式逐位相同（直线 len=L、p=1 → ⌈L/0.1⌉）。
+const sfxConnectPacing = (len, p, dt) => {
+  const n0 = Math.ceil(len * p / SFX_CONNECT_POINT_GAP);
+  const cpt = Math.max(1, Math.ceil((n0 + 1) / (2 * dt + 1)));
+  const P = (2 * dt + 1) * cpt;
+  return { n0, cpt, P };
+};
+// 弧线弧长（64 采样折线）：c = (d/2, 2·lift·L, d/2)、k = (0, −4·lift·L, 0)（相对 A 原点，B = c·2+k）
+const sfxArcLen = (d, L, lift) => {
+  const H = 2 * lift * L;
+  const c = [d[0] / 2, H, d[2] / 2];
+  const k = [0, -2 * H, 0];
+  const q = (s) => [s * (2 * c[0] + s * k[0]), s * (2 * c[1] + s * k[1]), s * (2 * c[2] + s * k[2])];
+  let len = 0, prev = q(0);
+  for (let j = 1; j <= 64; j++) {
+    const qj = q(j / 64);
+    len += Math.hypot(qj[0] - prev[0], qj[1] - prev[1], qj[2] - prev[2]);
+    prev = qj;
+  }
+  return len;
+};
+// 弧线连接线命令（tickparameter 直角坐标，14 段，形状与 tickpolarparameter 相同）：
+//   二次 Bézier Q(s)=s·(2c+s·k)（C = 弦中点 + 2·lift·L·ŷ，顶点偏离弦高 = lift·L，垂直向上拱起），
+//   重参数化 s = 1 − (1−t)^p（s(0)=0/s(1)=1 端点恰抵 B；ds/dt(0)=p 快、ds/dt(1)=0 慢 = 阻力感）。
+//   表达式 = 单条矩阵赋值 (x,y,z)=(S·(2cx+S·kx), …)，S 字面展开三次；系数全部构建时算好嵌入。
+//   语法只用生产在用/源码实锤元素：矩阵赋值（与速度表达式 (vx,vy,vz)= 同构）、四则、pow/abs——
+//   不用局部变量/多语句/引号（tickparameter 的表达式参数是裸 StringArgumentType，直接透传无引号剥离）；
+//   abs 兜 t>1 溢出点（end=1+0.5·step，(1−t)^p 负底数非整数幂 = NaN，JS/Java 同）。
+function sfxArcCmd(a, d, L, P, cpt, m, alpha, cp) {
+  const H = 2 * cp.lift * L;
+  const c = [d[0] / 2, H, d[2] / 2];
+  const k = [0, -2 * H, 0];
+  const S = `1-pow(abs(1-t),${sfxNum(cp.p)})`;
+  const E = (cc, kc) => `(${S})*(2*${sfxNum(cc)}+(${S})*${sfxNum(kc)})`;
+  const expr = `(x,y,z)=(${E(c[0], k[0])},${E(c[1], k[1])},${E(c[2], k[2])})`;
+  const step = 1 / (P - 1);
+  const end = 1 + 0.5 * step;
+  const vx = alpha * d[0] / L, vy = alpha * d[1] / L, vz = alpha * d[2] / L;
+  return [
+    'particleex tickparameter', cp.particle,
+    `~${a[0]}`, `~${a[1]}`, `~${a[2]}`, cp.color,
+    sfxNum(vx), sfxNum(vy), sfxNum(vz),
+    '0', sfxNum(end), expr,
+    sfxNum(step), String(cpt), String(m), 'null', '1.0', cp.group || 'null',
+  ].join(' ');
+}
+// 连接线风格表（2026-09-28）：style → { len(d, L, cp) 点数预算用长度（d = 方向向量），cmd 命令生成 }
+const SFX_CONNECT_STYLES = {
+  line: { len: (d, L) => L, cmd: sfxConnectCmd },
+  arc: { len: (d, L, cp) => sfxArcLen(d, L, cp.lift), cmd: sfxArcCmd },
+};
 // 命令方块方块状态：facing=up（1.21.11 jar 查证：command_block 的 blockstate 仅 facing 属性；
 //   轨道 0 主位信号层恒为红石粉，粉在机制正上方按红石规则激活下方方块 → 与音符盒同 tick 触发）
 const SFX_CB_STATE = 'minecraft:command_block[facing=up]';
@@ -1556,11 +1624,12 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
           const d = [cb[0] - ca[0], cb[1] - ca[1], cb[2] - ca[2]];
           const L = Math.hypot(d[0], d[1], d[2]);
           if (L < SFX_CONNECT_MIN_LEN) return;   // A≈B：跳过（B 的触发环已标记该点）
-          const n0 = Math.ceil(L / SFX_CONNECT_POINT_GAP);
-          const cpt = Math.max(1, Math.ceil((n0 + 1) / (2 * dt + 1)));
-          const P = (2 * dt + 1) * cpt;    // 每 NBS tick = 2 游戏 tick；任务每游戏 tick 跑一批 → 跨 2Δt+1 游戏 tick 铺完（末点恰落 t_B）
+          // 风格表（2026-09-28）：line = 直线（len = L）；arc = 抛物线拱 + 轻阻力（len = 64 采样弧长，
+          //   p 倍率进 N0 预算）。端点/配对/节拍逻辑与风格无关，两种车道类型 × 两种风格自动成立。
+          const stl = SFX_CONNECT_STYLES[cp.style] || SFX_CONNECT_STYLES.line;
+          const { cpt, P } = sfxConnectPacing(stl.len(d, L, cp), cp.style === 'arc' ? cp.p : 1, dt);
           if (!sfxTickLines.has(A.t)) sfxTickLines.set(A.t, []);
-          sfxTickLines.get(A.t).push(sfxConnectCmd(ca, d, L, P, cpt, cp.m, cp.alpha, cp));
+          sfxTickLines.get(A.t).push(stl.cmd(ca, d, L, P, cpt, cp.m, cp.alpha, cp));
           stats.sfxConnectLines++;
         };
         if (isBound) {
@@ -3170,6 +3239,7 @@ function renderSfxEffectList() {
     'MIDI式按各音粒子中心画**真空间斜线**（A = t_A 粒子中心、B = t_B 粒子中心沿链前移 2Δt 格，同音高退化为沿链 +X 水平线），同 tick 和弦配对（间隔 ≤32 tick 时 1:1 最近邻 + 落单音就近挂靠，否则严格 1:1）；' +
     '单线式与音高无关 → 端点简并为车道中间槽位、沿链 X 方向连线（每 NBS tick 2 格）。' +
     'tickpolarparameter 分 tick 逐点生成（每游戏 tick 至多 cpt 点、总点数跨 2Δt+1 游戏 tick = Δt 个 NBS tick 铺完，点距 ≤0.1 格）→ 粒子在 A→B 之间沿方向**依次显现**（与链传播同速 1 格/游戏 tick），笔尖恰好在 B 的触发型/音符盒激活那一 tick 抵达 B，无缝衔接。' +
+    '两种风格（车道级，下方展开面板可选）：**直线**（缺省）= 匀速直线；**弧线** = 抛物线拱（垂直向上）+ 近 B 端减速（轻阻力感，端点仍恰抵 B）。' +
     '粒子/颜色/寿命 m/漂移在下方车道展开面板调。');
   card('③ 背景型', 'on',
     '与具体音符无关，按乐曲小节间隔周期性激活（铺底氛围）。小节长 = 拍号 × 18.125 tick 四舍五入（4/4 → 73，3/4 → 54），' +
@@ -3196,7 +3266,7 @@ function renderSfxEffectLanes() {
   }
   const hint = document.createElement('div');
   hint.className = 'hint';
-  hint.textContent = '按参考车道勾选涉及的特效：「触发型/连接型/背景型」默认全选；**「消失型」默认不勾选（opt-in）**——显式勾选后，每个演奏 tick 前 N tick（车道级提前量，缺省 500）出现 #Cube 粒子、恰在该 tick 消亡（寿命自动计算）。「触发型」控制该车道粒子行是否生成（单线式 → 绑定行、MIDI式 → 独立行，空 tick 时 CB 回退雪块）；「连接型」控制该车道成员相邻演奏 tick 之间的线段是否生成；背景型暂未实现，勾选仅存状态。点行首 ▼ 展开该车道的模板参数编辑（仅影响本车道）';
+  hint.textContent = '按参考车道勾选特效（触发/连接/背景缺省勾选，**消失型默认不勾选**——需显式开启）；点行首 ▼ 展开该车道的模板参数编辑（仅影响本车道）。';
   box.appendChild(hint);
   const table = document.createElement('table');
   table.className = 'sfx-effect-table';
@@ -3286,7 +3356,7 @@ function renderSfxLaneParams(lane, li) {
   box.appendChild(h1);
   const tip1 = document.createElement('div');
   tip1.className = 'hint';
-  tip1.textContent = '仅影响本车道**绑定行**（MIDI式独立行主命令属声道级，仍用默认命令）。构建时坐标段按车道起点/槽位替换为 ~dx ~dy ~dz；命令头/尾参逐字进入 .mcfunction（模组端自行解释其占位符）。留空任一项 → 按默认命令生成。组名（可选，单 token）写入命令组位——仅当尾参以 null 结尾时替换该 token，否则忽略（留空 = 不分组）。追加命令（可选）= 每行一条完整命令（如 conditional 条件粒子），单线式绑定行/MIDI式独立行均生效，坐标段替换为与本行主命令相同偏移、逐行跟在主行后。';
+  tip1.textContent = '仅影响本车道**绑定行**（MIDI式独立行主命令属声道级，仍用默认命令）。组名（可选，单 token）写入命令组位——仅当尾参以 null 结尾时替换该 token，否则忽略（留空 = 不分组）。追加命令（可选）= 每行一条完整命令（如 conditional 条件粒子），单线式绑定行/MIDI式独立行均生效，逐行跟在主行后。留空任一项 → 按默认命令生成。';
   box.appendChild(tip1);
   const rowHead = document.createElement('div');
   rowHead.className = 'sfx-pf';
@@ -3397,18 +3467,54 @@ function renderSfxLaneParams(lane, li) {
   box.appendChild(h2);
   const tip2 = document.createElement('div');
   tip2.className = 'hint';
-  tip2.textContent = '仅影响本车道的成员：相邻演奏 tick A→B 画一条线段（点距 ≤0.1 格），笔尖恰好在 B 的触发型/音符盒激活那一 tick 抵达 B（无缝衔接，笔尖与链同速 1 格/游戏 tick）。MIDI式按各音粒子中心（音高 Z）连线，同 tick 和弦（多成员齐响）配对：间隔 ≤32 tick 时 1:1 最近邻 + 落单音就近挂靠（1对3/3对1），否则严格 1:1；单线式端点简并为中间槽位、沿链 X 方向连线（每 NBS tick 2 格）。方向/长度/生成节奏均由音符数据构建时计算；此处调视觉：粒子、颜色（R G B A 四值 0~1）、m 寿命（每粒子自出生起存活的游戏 tick 数，≥ 2Δt = 到达后整线停留再消融，< 2Δt = 彗星尾）、漂移 α（整线朝 B 漂移速度系数，0 = 静止）、组名（可选，写入命令组位，留空 = null）。任一项留空 → 该字段回默认。';
+  tip2.textContent = '仅影响本车道的成员：相邻演奏 tick A→B 画一条线段，笔尖恰好在 B 的触发 tick 抵达 B（无缝衔接）。风格：直线 = 笔尖与链同速；弧线 = 抛物线拱（垂直向上）+ 近 B 端减速（阻力感），端点仍恰抵 B。此处调视觉：粒子、颜色（R G B A 四值 0~1）、m 寿命（每粒子自出生起存活的游戏 tick 数，≥ 2Δt = 到达后整线停留再消融，< 2Δt = 彗星尾）、漂移 α（整线朝 B 漂移速度系数，0 = 静止）、组名（可选，写入命令组位，留空 = null）。弧线参数：弧高比 lift（顶点 = lift × 弦长，0 = 退化为直线）、阻力指数 p（1 = 匀速无阻力，越大近 B 端越慢）——仅弧线风格生效。任一项留空 → 该字段回默认。';
   box.appendChild(tip2);
   const conn = normConnectParams(lane.sfxParams ? lane.sfxParams.connect : null) || SFX_CONNECT_DEFAULTS;
   const rowConn = document.createElement('div');
   rowConn.className = 'sfx-pf-coord';
-  [
+  // 风格行（2026-09-28）：直线 / 弧线（抛物线拱 + 轻阻力）；弧线态显示 lift/p 两输入
+  const lbStyle = document.createElement('label');
+  lbStyle.textContent = '风格';
+  const inStyle = document.createElement('select');
+  inStyle.className = 'sfx-connect-style';
+  inStyle.value = conn.style;
+  inStyle.title = '直线 = tickpolarparameter 线性参数化；弧线 = 抛物线拱（垂直向上）+ 近 B 端减速（阻力感）';
+  ['line', 'arc'].forEach(v => {
+    const o = document.createElement('option');
+    o.value = v; o.textContent = v === 'line' ? '直线' : '弧线';
+    inStyle.appendChild(o);
+  });
+  inStyle.addEventListener('change', (e) => onSfxConnectEdit(li, 'style', e.target.value));
+  rowConn.appendChild(lbStyle); rowConn.appendChild(inStyle);
+  const lbLift = document.createElement('label');
+  lbLift.textContent = '弧高比 lift';
+  const inLift = document.createElement('input');
+  inLift.type = 'text';
+  inLift.className = 'sfx-connect-field';
+  inLift.value = String(conn.lift);
+  inLift.placeholder = '0~1，如 0.15';
+  inLift.title = '弧线顶点偏离弦高 = lift × 弦长（0 = 退化为直线，缺省 0.15；仅弧线风格生效）';
+  inLift.addEventListener('change', (e) => onSfxConnectEdit(li, 'lift', e.target.value));
+  const lbArcP = document.createElement('label');
+  lbArcP.textContent = '阻力指数 p';
+  const inArcP = document.createElement('input');
+  inArcP.type = 'text';
+  inArcP.className = 'sfx-connect-field';
+  inArcP.value = String(conn.p);
+  inArcP.placeholder = '1~2，如 1.4';
+  inArcP.title = '弧线阻力感强度（1 = 匀速无阻力，越大近 B 端越慢；缺省 1.4；仅弧线风格生效）';
+  inArcP.addEventListener('change', (e) => onSfxConnectEdit(li, 'p', e.target.value));
+  [lbLift, inLift, lbArcP, inArcP].forEach(n => { n.hidden = (conn.style !== 'arc'); });
+  rowConn.appendChild(lbLift); rowConn.appendChild(inLift);
+  rowConn.appendChild(lbArcP); rowConn.appendChild(inArcP);
+  const restConn = [
     ['particle', '粒子', 'minecraft:end_rod', '如 minecraft:end_rod / minecraft:heart'],
     ['color', '颜色 R G B A', conn.color, '4 个 0~1 小数，如 1 0.95 0.89 1'],
     ['m', 'm 寿命 (tick)', String(conn.m), '每粒子自出生起存活的 tick（整数 ≥0；0 = 立即消亡）'],
     ['alpha', '漂移 α', String(conn.alpha), '整线朝 B 漂移速度系数（≥0；0 = 静止）'],
     ['group', '组（可选）', (typeof conn.group === 'string') ? conn.group : '', 'particleex 组名（单 token）；留空 = 不分组（命令组位 null）'],
-  ].forEach(([k, label, val, ph]) => {
+  ];
+  restConn.forEach(([k, label, val, ph]) => {
     const lb = document.createElement('label');
     lb.textContent = label;
     const inC = document.createElement('input');
@@ -3425,10 +3531,6 @@ function renderSfxLaneParams(lane, li) {
   const h3 = document.createElement('h4');
   h3.textContent = '③ 背景型 · 粒子命令模板（按小节周期性执行）';
   box.appendChild(h3);
-  const tip3 = document.createElement('div');
-  tip3.className = 'hint';
-  tip3.textContent = '与具体音符无关：按乐曲小节间隔周期性激活（铺底氛围）。小节长 = 拍号 × 18.125 tick 四舍五入（4/4 → 73，3/4 → 54），每小节 tick 0/73/146… 执行一次此处命令（trim 后全文逐字，坐标 ~ 相对该 tick 轨道 0 CB）。模板留空 = 不产行；勾选缺省 = 勾选（取消勾选同样不产行）。';
-  box.appendChild(tip3);
   const inC3 = document.createElement('input');
   inC3.type = 'text';
   inC3.className = 'sfx-param-plain';
@@ -3442,7 +3544,7 @@ function renderSfxLaneParams(lane, li) {
   box.appendChild(h4);
   const tip4 = document.createElement('div');
   tip4.className = 'hint';
-  tip4.textContent = '仅影响本车道成员：每个演奏 tick t 前 N tick 生成 #Cube 条件立方体粒子（1×1×1 线框，命令除坐标段与寿命字段外逐字固定），寿命 = 实际提前量 → 恰在 t tick 消亡（与音符激活同 tick，无分组无 remove）。歌曲开头提前量不足时生成钳位到 tick 0、寿命 = t。需先在勾选表显式开启「消失型」（默认不勾选）。锚点：单线式 = 车道虚拟主位；MIDI式 = 车道 start 基准（「参考车道起点布局」可拖）。任一项留空/非法 → 该字段回默认。';
+  tip4.textContent = '需先在勾选表显式开启「消失型」（默认不勾选）。提前量 N：每个演奏 tick 前 N tick 生成 #Cube 条件立方体粒子、恰在该 tick 消亡（寿命自动 = N）；歌曲开头提前量不足时生成钳位到 tick 0、寿命 = t（实际提前量）。任一项留空/非法 → 该字段回默认。';
   box.appendChild(tip4);
   const vanish = normVanishParams(lane.sfxParams ? lane.sfxParams.vanish : null) || SFX_VANISH_DEFAULTS;
   const rowVanish = document.createElement('div');
@@ -3538,26 +3640,29 @@ function onSfxPresetDelete(li, name) {
   sfxPresetSave(sfxPresetLoad().filter(p => p.name !== name));
   renderSfxEffectLanes();
 }
-// 连接型结构化字段编辑：合并进 lane.sfxParams.connect（4 字段）；该字段留空 → 回默认值（用户显式清空
-//   不应把其余 3 个字段冲掉，与触发型同语义）。全部字段 = 默认值时不存键（载荷保持旧形状）。
+// 连接型结构化字段编辑：合并进 lane.sfxParams.connect（6 字段：粒子/颜色/m/α/风格/组）；
+//   lift/p 仅弧线态表单可见，经同一入口（k='lift'|'p'）编辑。该字段留空 → 回默认值（用户显式清空
+//   不应把其余字段冲掉，与触发型同语义）。全部字段 = 默认值时不存键（载荷保持旧形状）。
 function onSfxConnectEdit(li, k, v) {
   const lane = AppState.refLanes[li];
   if (!lane) return;
   const src = (lane.sfxParams && normConnectParams(lane.sfxParams.connect))
     || SFX_CONNECT_DEFAULTS;
   const cur = String(v == null ? '' : v).trim();
-  // 输入框给字符串；m/alpha 须为数值过校验（空串保持空串 → 校验失败回默认，语义同清空）
-  const val = (k === 'm' || k === 'alpha') ? (cur === '' ? cur : Number(cur)) : cur;
+  // 输入框给字符串；m/alpha/lift/p 须为数值过校验（空串保持空串 → 校验失败回默认，语义同清空）
+  const val = (k === 'm' || k === 'alpha' || k === 'lift' || k === 'p') ? (cur === '' ? cur : Number(cur)) : cur;
   const p = { ...src, [k]: val };
   if (k === 'group' && cur === '') delete p.group;   // 组名留空 = 不存（不分组，命令组位保持 null）
   const conn = normConnectParams(p) || SFX_CONNECT_DEFAULTS;   // 该字段非法（如颜色 5 个值）→ 回默认
   const base = (lane.sfxParams && typeof lane.sfxParams === 'object') ? { ...lane.sfxParams } : {};
-  // 默认判定：4 基础字段全 = 默认 且 group 未填 → 不存键（载荷保持旧形状）
-  const cmp = { particle: conn.particle, color: conn.color, m: conn.m, alpha: conn.alpha };
+  // 默认判定：6 基础字段全 = 默认 且 group 未填 → 不存键（载荷保持旧形状）
+  const cmp = { particle: conn.particle, color: conn.color, m: conn.m, alpha: conn.alpha,
+    style: conn.style, lift: conn.lift, p: conn.p };
   if (typeof conn.group === 'string') cmp.group = conn.group;
   const isDefault = JSON.stringify(cmp) === JSON.stringify(SFX_CONNECT_DEFAULTS);
   if (isDefault) delete base.connect; else base.connect = conn;
   lane.sfxParams = (Object.keys(base).length > 0) ? base : undefined;
+  if (k === 'style') renderSfxEffectLanes();   // 风格切换改变 lift/p 显隐 → 必须重渲染（其余字段编辑不刷新 DOM）
   scheduleStateSave();
 }
 // 背景模板文本编辑（2026-09-10 实现：按小节周期性执行）：空串 → 不存该键（= 不产背景行）
@@ -4520,6 +4625,7 @@ window.__NBS2SCHEMATIC = {
   SFX_PRESET_KEY, sfxPresetLoad, sfxPresetSave, sfxPresetByName,
   SFX_NBS_TICK_PER_BEAT, sfxBarLen, sfxNormBackground,
   SFX_CONNECT_DEFAULTS, SFX_CONNECT_POINT_GAP, SFX_CONNECT_MIN_LEN, SFX_CONNECT_NEAR_DT, normConnectParams, sfxNum, sfxConnectCmd, sfxChordPairs,
+  SFX_CONNECT_STYLES, sfxArcCmd, sfxArcLen, sfxConnectPacing,
   SFX_VANISH_DEFAULTS, SFX_VANISH_PROTO, sfxVanishCmd, normVanishParams,
   SFX_EFFECT_TYPES, renderSfxEffectList, renderSfxEffectLanes, onSfxEffectToggle,
   buildSfxPackMcmeta, buildSfxFunctions, buildZip, zipCrc32, buildSfxDatapackZip,
