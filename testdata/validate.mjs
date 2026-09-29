@@ -2335,12 +2335,12 @@ try {
     ...(settings ? { settings } : {}),
   });
   try {
-    // --- 命令纯函数字面（pitch 经 sfxNum 去浮点噪声：整值无小数位） ---
-    if (psCmd('music:test', 100, 45) !== 'execute at @s run playsound music:test master @a ~ ~ ~ 1.00 1') {
+    // --- 命令纯函数字面（2026-09-29 改命令方块直写：无 execute 前缀；pitch 经 sfxNum 去浮点噪声：整值无小数位） ---
+    if (psCmd('music:test', 100, 45) !== 'playsound music:test master @a ~ ~ ~ 1.00 1') {
       console.log(`FAIL L 命令字面：${psCmd('music:test', 100, 45)}`); ok = false;
-    } else console.log('PASS L 命令字面：playsound music:test … 1.00 1（velocity=100/key=45）');
-    if (psCmd('music:test', 127, 57) !== 'execute at @s run playsound music:test master @a ~ ~ ~ 1.27 2'
-      || psCmd('music:test', 50, 33) !== 'execute at @s run playsound music:test master @a ~ ~ ~ 0.50 0.5') {
+    } else console.log('PASS L 命令字面：playsound music:test … 1.00 1（velocity=100/key=45，无斜杠直写 Command）');
+    if (psCmd('music:test', 127, 57) !== 'playsound music:test master @a ~ ~ ~ 1.27 2'
+      || psCmd('music:test', 50, 33) !== 'playsound music:test master @a ~ ~ ~ 0.50 0.5') {
       console.log('FAIL L 音高/音量映射：key 33/45/57 → 0.5/1.0/2.0、velocity 50/127 → 0.50/1.27'); ok = false;
     } else console.log('PASS L 音高/音量映射：key 33/45/57 → 0.5/1.0/2.0、velocity 50/127 → 0.50/1.27');
     if (normSid('music:my-synth') !== 'music:my-synth' || normSid('  music:test  ') !== 'music:test'
@@ -2373,51 +2373,48 @@ try {
       || JSON.stringify(rPlain.result.tileEntities) !== JSON.stringify(rCfg.result.tileEntities)) {
       console.log('FAIL L1 零回归：空 soundIdMap 产物与无自定义乐器产物不一致'); ok = false;
     } else console.log('PASS L1 零回归护栏：空 soundIdMap → 产物（packed/palette/stats/geometry/TE）逐位一致');
-    // --- L2 配置 music:test（#16）---
+    // --- L2 配置 music:test（#16）：playsound 命令方块直写（2026-09-29 用户定） ---
     const r = runE2E(f, opt({ soundIdMap: new Map([[16, 'music:test']]) }));
-    ok = verifyE2E('L playsound 代位（CB+TE、无 litematic 结构异常）', r) && ok;
+    ok = verifyE2E('L playsound 代位（CB 直写+TE、无 litematic 结构异常）', r) && ok;
     const { result } = r;
     const grid = result.grid, palette = r.palette, g = result.geometry;
     const cellAt = (x, y, z) => (x < 0 || x >= grid.sx || y < 0 || y >= grid.sy || z < 0 || z >= grid.sz)
       ? null : palette[grid.data[(y * grid.sz + z) * grid.sx + x]];
     const zcG = 3 + g.zOffset; // 组车道 dz=3 → 网格 z（CB 在轨道 0 → 用 g.zOffset）
-    const cbAt = (t, x, z, y = 0) => (cellAt(x, y, z) === api.SFX_CB_STATE
-      && result.tileEntities.some(e => e.x === x && e.y === y && e.z === z && e.Command === `function ${api.SFX_NAMESPACE}:${t}`));
-    const tl = result.sfxTickList;
-    // 行字面（tick 0/4/6/8；tick 2 = harp 不受影响）
+    const psTe = (x, y, z, cmd) => (cellAt(x, y, z) === api.SFX_CB_STATE
+      && result.tileEntities.some(e => e.x === x && e.y === y && e.z === z && e.Command === cmd));
     const exp0 = psCmd('music:test', 100, 45), exp4 = psCmd('music:test', 100, 33), exp6 = psCmd('music:test', 100, 57);
-    const e0 = tl.find(e => e.tick === 0), e4 = tl.find(e => e.tick === 4), e6 = tl.find(e => e.tick === 6), e8 = tl.find(e => e.tick === 8);
-    if (!e0 || !e0.lines.includes(exp0) || !e4 || !e4.lines.includes(exp4) || !e6 || !e6.lines.includes(exp6)) {
-      console.log(`FAIL L2 行字面：t0=${JSON.stringify(e0)} t4=${JSON.stringify(e4)} t6=${JSON.stringify(e6)}`); ok = false;
-    } else console.log('PASS L2 行字面：t0/t4/t6 playsound 行（… 1.00 1.00 / 0.50 0.5 / 1.00 2）');
-    // 越界 key=70：不产行（tick 8 无 tickList 条目），代位 + 无 CB（CB 坑回退生效）
-    if (e8 || !tl.every(e => e.tick !== 8)) {
-      console.log(`FAIL L2 越界：tick 8 不应有 playsound 行（${JSON.stringify(e8)}）`); ok = false;
-    } else if (cellAt(17, 1, g.zOffset) !== 'minecraft:redstone_wire' || cellAt(17, 0, g.zOffset) !== 'minecraft:snow_block') {
-      console.log(`FAIL L2 越界代位 @X=17：${cellAt(17, 1, g.zOffset)} / ${cellAt(17, 0, g.zOffset)}`); ok = false;
-    } else if (cbAt(8, 17, g.zOffset)) {
-      console.log('FAIL L2 越界：tick 8 无 playsound 行 → 主位补放 CB 应被回退'); ok = false;
-    } else console.log('PASS L2 越界 key=70：不产 playsound、代位（粉+底座）、无 CB（空 tick 回退）');
-    // 代位格：t0 主位 X=1 上方 = 红石粉（**无** note_block）；主位底座 = CB（该 tick 轨道 0 需 function，
-    //   主位代位补放 CB+TE——CB 坑）。tick 2 的 harp 盒在 t2 段主位（前有空 tick 扩展格，位置不定）→ 扫描定位
-    if (cellAt(1, 1, g.zOffset) !== 'minecraft:redstone_wire') {
-      console.log(`FAIL L2 代位格 @X=1：上层 = ${cellAt(1, 1, g.zOffset)}（期望红石粉）`); ok = false;
+    // 函数管线不再承载 playsound 行：无参考声道 → sfxTickList 空、不产 <t>.mcfunction
+    const tl = result.sfxTickList;
+    if (tl.length !== 0) {
+      console.log(`FAIL L2 函数管线：sfxTickList 应为空（playsound 已直写 Command），实际 ${JSON.stringify(tl)}`); ok = false;
+    } else console.log('PASS L2 函数管线：playsound 不再进 <t>.mcfunction（无参考声道时 sfxTickList 空）');
+    // CB 直写：t0/t4/t6 代位格正上方（yb+2，随代位所在链——本场景 = 组车道 zc=3 → 网格 zcG）各 1 个，
+    //   Command = playsound 裸命令；t8 越界无 CB
+    if (!psTe(1, 2, zcG, exp0) || !psTe(9, 2, zcG, exp4) || !psTe(13, 2, zcG, exp6)
+      || result.tileEntities.length !== 3) {
+      console.log(`FAIL L2 CB 直写：t0/t4/t6 @X=1/9/13 yb+2（组车道 z=${zcG}）应各有 CB（TE=${JSON.stringify(result.tileEntities)}）`); ok = false;
+    } else if (psTe(17, 2, zcG, 'any')) {
+      console.log('FAIL L2 越界：tick 8（key 越界）代位格正上方不应有 CB'); ok = false;
+    } else if (cellAt(17, 1, zcG) !== 'minecraft:redstone_wire' || cellAt(17, 0, zcG) !== 'minecraft:snow_block') {
+      console.log(`FAIL L2 越界代位格 @X=17：${cellAt(17, 1, zcG)} / ${cellAt(17, 0, zcG)}（期望红石粉+雪块）`); ok = false;
+    } else console.log('PASS L2 CB 直写：t0/t4/t6 代位格正上方各 1 CB（Command = playsound 逐 tick 字面）、t8 越界无 CB（代位照放粉+雪块）');
+    // 代位格：t0 主位 X=1 上方 = 红石粉（**无** note_block）；主位底座 = 雪块（统一，**无** function CB）
+    if (cellAt(1, 1, g.zOffset) !== 'minecraft:redstone_wire' || cellAt(1, 0, g.zOffset) !== 'minecraft:snow_block'
+      || cellAt(9, 0, g.zOffset) !== 'minecraft:snow_block' || cellAt(13, 0, g.zOffset) !== 'minecraft:snow_block') {
+      console.log(`FAIL L2 代位格：X=1 上层 = ${cellAt(1, 1, g.zOffset)}（期望红石粉）/ 主位底座 = ${cellAt(1, 0, g.zOffset)}/${cellAt(9, 0, g.zOffset)}/${cellAt(13, 0, g.zOffset)}（期望雪块）`); ok = false;
     } else {
       const harpNote = 'minecraft:note_block[instrument=harp,note=9,powered=false]';
       const harpXs = [];
       for (let x = 4; x <= 7; x++) if (cellAt(x, 1, zcG) === harpNote) harpXs.push(x);
-      if (harpXs.length === 1) console.log(`PASS L2 代位格：X=1 上层红石粉（无音符盒）；tick 2 harp 音符盒在 X=${harpXs[0]}（组车道 z=${zcG}，不受影响）`);
+      if (harpXs.length === 1) console.log(`PASS L2 代位格：X=1 上层红石粉 + 主位底座雪块（无音符盒/无 function CB）；tick 2 harp 音符盒在 X=${harpXs[0]}（组车道 z=${zcG}，不受影响）`);
       else { console.log(`FAIL L2 普通乐器 tick 2：harp 盒定位 ${JSON.stringify(harpXs)}（期望恰 1 个）`); ok = false; }
     }
-    // CB：t0（主位代位补放）/t4/t6（无音符分支）各 1 个，Command 逐 tick 正确
-    if (!cbAt(0, 1, g.zOffset) || !cbAt(4, 9, g.zOffset) || !cbAt(6, 13, g.zOffset) || result.tileEntities.length !== 3) {
-      console.log(`FAIL L2 CB：t0/t4/t6 @X=1/9/13 应各有 CB（TE=${JSON.stringify(result.tileEntities)}）`); ok = false;
-    } else console.log('PASS L2 CB：t0 主位代位补放 + t4/t6 无音符分支，Command = function nbs2sfx:0/4/6');
-    // 计数
+    // 计数：代位 3 + 越界 1 = discarded 4；CB 3 个全为 playsound 直写（无节奏参考 CB）
     const st2 = result.stats;
     if (st2.playsoundNotes !== 3 || st2.noteBlocks !== 1 || st2.notesPlaced !== 1 || st2.notesDiscarded !== 4 || st2.commandBlocks !== 3) {
       console.log(`FAIL L2 计数：playsound=${st2.playsoundNotes} noteBlocks=${st2.noteBlocks} placed=${st2.notesPlaced} discarded=${st2.notesDiscarded} cb=${st2.commandBlocks}（期望 3/1/1/4/3）`); ok = false;
-    } else console.log('PASS L2 计数：playsoundNotes=3、noteBlocks=1（harp）、notesDiscarded=4（代位 3 + 越界 1）、CB=3');
+    } else console.log('PASS L2 计数：playsoundNotes=3、noteBlocks=1（harp）、notesDiscarded=4（代位 3 + 越界 1）、CB=3（全为 playsound 直写）');
     // --- L3 非法 ID（含空格，UI 拒写）→ 行为同未配置 ---
     const rBad = runE2E(f, opt({ soundIdMap: new Map([[16, 'bad id']]) }));
     if (rBad.result.stats.playsoundNotes !== 0 || rBad.result.sfxTickList.length > 0 || rBad.result.tileEntities.length > 0

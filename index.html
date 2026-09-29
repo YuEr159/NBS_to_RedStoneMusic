@@ -722,13 +722,14 @@ const sfxNormSoundId = (v) => {
   const s = v.trim();
   return /^[A-Za-z0-9_.\-]+:[A-Za-z0-9_.\-]+$/.test(s) ? s : null;
 };
-// playsound 行（裸行透传进 <t>.mcfunction）：@s = 执行该 function 的轨道 0 CB。
+// playsound 命令字面（2026-09-29 改命令方块直写：Command 字段不带斜杠，@a 全体玩家、CB 本体位置）。
+//   进命令方块 TE 的 Command 字段（不再进 <t>.mcfunction——函数化管线仅承载粒子行）。
 //   vol = velocity/100（NBS 0-127 → 0.00-1.27，>1.0 游戏内行为未知，README 注明）；
 //   pitch = 0.5 × 2^((key−33)/12)（NBS 播放公式：key 33→0.5、45→1.0、57→2.0）。
 const sfxPlaysoundCmd = (soundId, velocity, key) => {
   const vol = (velocity / 100).toFixed(2);
   const pitch = sfxNum(0.5 * Math.pow(2, (key - 33) / 12));
-  return `execute at @s run playsound ${soundId} master @a ~ ~ ~ ${vol} ${pitch}`;
+  return `playsound ${soundId} master @a ~ ~ ~ ${vol} ${pitch}`;
 };
 // 连接线命令（tickpolarparameter，14 段）：A 处生成，沿 AB 方向以 dis=L·t 展开，t∈[0,1+ε]
 //   （ε=半采样点余量：t += step 浮点累加漂移兜底，最坏偏差半个点距，B 端由触发环接住）
@@ -807,8 +808,10 @@ const SFX_CONNECT_STYLES = {
   line: { len: (d, L) => L, cmd: sfxConnectCmd },
   arc: { len: (d, L, cp) => sfxArcLen(d, L, cp.lift), cmd: sfxArcCmd },
 };
-// 命令方块方块状态：facing=up（1.21.11 jar 查证：command_block 的 blockstate 仅 facing 属性；
-//   轨道 0 主位信号层恒为红石粉，粉在机制正上方按红石规则激活下方方块 → 与音符盒同 tick 触发）
+// 命令方块方块状态：facing=up（1.21.11 jar 查证：command_block 的 blockstate 仅 facing 属性）。
+//   两种放置场景均为「信号层红石粉在机制正上方按红石规则激活 → 同 tick 触发」：
+//   · 节奏参考粒子 CB：轨道 0 主位底座（上方信号层恒红石粉）
+//   · playsound CB（2026-09-29 命令方块直写）：代位格正上方 yb+2（下方信号层红石粉激活其正上方方块）
 const SFX_CB_STATE = 'minecraft:command_block[facing=up]';
 // 各目标版本的数据包写法（查证 2026-09-04，minecraft.wiki Pack format 页 data pack 表 + 1.21.11 server.jar 字节码）：
 //   · 目录名：≤1.20.4 = functions；≥1.21 = function
@@ -1121,7 +1124,6 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
   const soundMap = (settings && settings.soundIdMap instanceof Map) ? settings.soundIdMap : null;
   // 再校验一道（UI 写入时已校验；此处防外部构造的非法值直接进命令——防注入红线）
   const soundIdOf = (inst) => (soundMap ? sfxNormSoundId(soundMap.get(inst)) : null);
-  const sfxSoundTicks = new Set(); // playsound 行支撑的 tick（并入 isSfxTick：该 tick 轨道 0 放 CB）
   const sfxPitchStep = Number.isFinite(settings.sfxPitchStep) ? settings.sfxPitchStep : 1;
   // 旧存档兼容：refLayers 值 bool（= 发声与否）迁移为 { type:'independent', sound }
   const normRef = (v) => (typeof v === 'object' && v !== null && (v.type === 'bound' || v.type === 'independent'))
@@ -1338,6 +1340,22 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
     if (boundRefLayers.indexOf(li) < 0) return;
     stats.sfxDiscarded++;
   }
+  // playsound 命令方块直写（2026-09-29 用户定）：代位格正上方一格（信号层红石粉在机制正上方按红石规则
+  //   激活下方方块 → 音符 tick 执行）；Command = playsound 裸命令（无斜杠），不经 function 管线。
+  //   只写空气格：目标格若被其他结构占用（如极端布局下邻链/参考车道结构），跳过不覆盖（声音缺失优于破坏结构）。
+  function placePlaysoundCb(x, y, z, soundId, velocity, key) {
+    const gy = y + yOffset, gz = z + zOffset;
+    if (!grid.inBounds(x, gy, gz) || grid.data[grid.idx(x, gy, gz)] !== 0) return false;
+    grid.set(x, gy, gz, SFX_CB_STATE);
+    tileEntities.push({
+      id: 'minecraft:command_block',
+      x, y: gy, z: gz,
+      Command: sfxPlaysoundCmd(soundId, velocity, key),
+      auto: false,
+      state: SFX_CB_STATE,
+    });
+    return true;
+  }
   // MIDI式参考行：粒子中心 = 轨道 0 CB + 所属MIDI式参考车道 start（可拖基准，缺省 (0,0) = 旧行为
   //   「与 CB 同高、垂直偏移恒 0」），Z 再按音高 (note−12)×step 展开
   const sfxLaneOf = (li) => chains.find(c => c.isRefLane && c.layers.includes(li)) || null;
@@ -1423,25 +1441,6 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
       if (any) sfxBackgroundTicks.add(t);   // 仅当该小节 tick 实际产了背景行才支撑 CB
     }
   }
-  // --- playsound 预扫描（2026-09-29 自定义乐器资源包路线） ---
-  // 配置了资源包声音 ID 的自定义乐器，其音符不走音符盒：红石粉代位（静音）+ playsound 按 tick 触发。
-  //   isSfxTick 在放置循环内逐 tick 判定，而代位可能发生在主位分支（不走 isSfxTick 检查）→
-  //   先扫一遍全部组全部 tick 的音符，凡乐器已配置 + key 在域的先入 sfxSoundTicks，集合就绪再进放置循环。
-  //   key 越界音符不产 playsound（音高不可表达，与现有越界代位同语义：只代位+计数）。
-  if (soundMap && soundMap.size > 0) {
-    for (const g of groups) {
-      for (const li of g.layers) {
-        const layer = song.layers[li];
-        if (!layer) continue;
-        for (const [t, note] of layer.notes) {
-          if (t < 0 || t >= nTicks) continue;
-          if (!soundIdOf(note.instrument)) continue;
-          if (noteFromKey(note.key) < 0) continue;
-          sfxSoundTicks.add(t);
-        }
-      }
-    }
-  }
   for (let t = 0; t < nTicks; t++) {
     const d = delays[t];
     const cells = 2; // 主链恒 1 档：每 NBS tick 恒 2 格（中继器格 + 主位传导格）
@@ -1489,29 +1488,20 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
           const noteVal = noteFromKey(main.note.key);
           const mainSound = noteVal >= 0 ? soundIdOf(main.note.instrument) : null;
           if (mainSound) {
-            // playsound 代位（2026-09-29 用户定）：音符盒静音，红石粉代位保导电 + 底座照放（视觉保留）；
-            //   真实音色由 playsound 按 tick 触发（行进 sfxTickLines，@s = 轨道 0 CB）。
-            //   主位占位使该 tick 不走 isSfxTick 分支 → 若该 tick 轨道 0 需 CB（有 playsound 行），主位代位补放 CB+TE。
-            const base = baseBlockFor(main.note.instrument, customMap);
+            // playsound 代位（2026-09-29 用户定 · 命令方块直写）：音符盒静音——主位导电层恒红石粉
+            //   （保主链传导：命令方块非红石导体，放导电层会断链），底座统一雪块；
+            //   命令方块放主位正上方（yb+2，信号层红石粉在机制正上方按红石规则激活 → 音符 tick 执行），
+            //   Command 直接写 playsound（无斜杠；@a 全体玩家、CB 本体位置）。不再进 <t>.mcfunction。
+            //   顶层每 32 格蛙灯导轨同在 yb+2，CB 写入覆盖该格（inBounds 越界/已占用时跳过，见下方守卫）。
             W(xCur + 1, ySig, zc, 'minecraft:redstone_wire');
-            W(xCur + 1, yb, zc, base);
+            W(xCur + 1, yb, zc, 'minecraft:snow_block');
             stats.wires++;
             stats.notesDiscarded++;
             stats.playsoundNotes++;
-            stats.discardedDetails.push(`tick ${t} 组 ${c.groupIndex + 1}：#ID ${main.note.instrument} 已配置资源包声音 ${mainSound}，主位音符盒代位（静音，playsound 触发）`);
+            stats.discardedDetails.push(`tick ${t} 组 ${c.groupIndex + 1}：#ID ${main.note.instrument} 已配置资源包声音 ${mainSound}，主位音符盒代位（静音，playsound 命令方块直写）`);
             sfxBoundDiscard(t, main.layerIdx);
-            if (!sfxTickLines.has(t)) sfxTickLines.set(t, []);
-            sfxTickLines.get(t).push(sfxPlaysoundCmd(mainSound, main.note.velocity, main.note.key));
-            if (c.isDefaultRail) {
+            if (placePlaysoundCb(xCur + 1, yb + 2, zc, mainSound, main.note.velocity, main.note.key)) {
               stats.commandBlocks++;
-              sfxCbs.set(t, { x: xCur + 1, y: yb + yOffset, z: zc + zOffset, teIndex: tileEntities.length });
-              tileEntities.push({
-                id: 'minecraft:command_block',
-                x: xCur + 1, y: yb + yOffset, z: zc + zOffset,
-                Command: `function ${SFX_NAMESPACE}:${t}`,
-                auto: false,
-                state: SFX_CB_STATE,
-              });
             }
           } else if (noteVal >= 0) {
             const base = baseBlockFor(main.note.instrument, customMap);
@@ -1535,7 +1525,7 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
           // 轨道 0 且该 tick 有任意参考音符（绑定∪独立）或消失型生成行（t−N 支撑）：主位底座由雪块替换为命令方块
           //   （上方红石粉激活，红石粉置于机制正上方会将其激活——wiki Redstone power；轨道 0 无音符故主位恒为粉，
           //   信号到达本格的 tick 即音符盒发声的同 tick）。<t>.mcfunction 行在放置循环内汇总。
-          const isSfxTick = c.isDefaultRail && (sfxEntries.has(t) || sfxVanishTicks.has(t) || sfxBackgroundTicks.has(t) || sfxSoundTicks.has(t));
+          const isSfxTick = c.isDefaultRail && (sfxEntries.has(t) || sfxVanishTicks.has(t) || sfxBackgroundTicks.has(t));
           W(xCur + 1, yb, zc, isSfxTick ? SFX_CB_STATE : 'minecraft:snow_block');
           stats.wires++;
           if (isSfxTick) {
@@ -1558,18 +1548,17 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
           const noteVal = noteFromKey(s2.note.key);
           const s2Sound = noteVal >= 0 ? soundIdOf(s2.note.instrument) : null;
           if (s2Sound) {
-            // playsound 代位（slot 1/2 不补 CB：该 tick 轨道 0 有普通音符时本无 CB，
-            //   与现有粒子「track 0 有音符时该行丢失」语义一致，不扩面）
-            const base = baseBlockFor(s2.note.instrument, customMap);
+            // playsound 代位（slot 1，2026-09-29 命令方块直写）：红石粉保导电 + 底座雪块 + 正上方 CB 直写
             W(xCur + 1, ySig, zc + 1, 'minecraft:redstone_wire');
-            W(xCur + 1, yb, zc + 1, base);
+            W(xCur + 1, yb, zc + 1, 'minecraft:snow_block');
             stats.wires++;
             stats.notesDiscarded++;
             stats.playsoundNotes++;
-            stats.discardedDetails.push(`tick ${t} 组 ${c.groupIndex + 1}：#ID ${s2.note.instrument} 已配置资源包声音 ${s2Sound}，第2位音符盒代位（静音，playsound 触发）`);
+            stats.discardedDetails.push(`tick ${t} 组 ${c.groupIndex + 1}：#ID ${s2.note.instrument} 已配置资源包声音 ${s2Sound}，第2位音符盒代位（静音，playsound 命令方块直写）`);
             sfxBoundDiscard(t, s2.layerIdx);
-            if (!sfxTickLines.has(t)) sfxTickLines.set(t, []);
-            sfxTickLines.get(t).push(sfxPlaysoundCmd(s2Sound, s2.note.velocity, s2.note.key));
+            if (placePlaysoundCb(xCur + 1, yb + 2, zc + 1, s2Sound, s2.note.velocity, s2.note.key)) {
+              stats.commandBlocks++;
+            }
           } else if (noteVal >= 0) {
             const base = baseBlockFor(s2.note.instrument, customMap);
             const inst = instrumentNameFor(s2.note.instrument);
@@ -1589,16 +1578,17 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
           const noteVal = noteFromKey(s3.note.key);
           const s3Sound = noteVal >= 0 ? soundIdOf(s3.note.instrument) : null;
           if (s3Sound) {
-            const base = baseBlockFor(s3.note.instrument, customMap);
+            // playsound 代位（slot 2，2026-09-29 命令方块直写）：红石粉保导电 + 底座雪块 + 正上方 CB 直写
             W(xCur + 1, ySig, zc - 1, 'minecraft:redstone_wire');
-            W(xCur + 1, yb, zc - 1, base);
+            W(xCur + 1, yb, zc - 1, 'minecraft:snow_block');
             stats.wires++;
             stats.notesDiscarded++;
             stats.playsoundNotes++;
-            stats.discardedDetails.push(`tick ${t} 组 ${c.groupIndex + 1}：#ID ${s3.note.instrument} 已配置资源包声音 ${s3Sound}，第3位音符盒代位（静音，playsound 触发）`);
+            stats.discardedDetails.push(`tick ${t} 组 ${c.groupIndex + 1}：#ID ${s3.note.instrument} 已配置资源包声音 ${s3Sound}，第3位音符盒代位（静音，playsound 命令方块直写）`);
             sfxBoundDiscard(t, s3.layerIdx);
-            if (!sfxTickLines.has(t)) sfxTickLines.set(t, []);
-            sfxTickLines.get(t).push(sfxPlaysoundCmd(s3Sound, s3.note.velocity, s3.note.key));
+            if (placePlaysoundCb(xCur + 1, yb + 2, zc - 1, s3Sound, s3.note.velocity, s3.note.key)) {
+              stats.commandBlocks++;
+            }
           } else if (noteVal >= 0) {
             const base = baseBlockFor(s3.note.instrument, customMap);
             const inst = instrumentNameFor(s3.note.instrument);
@@ -1757,7 +1747,6 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
   };
   for (const t of sfxEntries.keys()) rollbackEmptySfxTick(t);
   for (const t of sfxBackgroundTicks) rollbackEmptySfxTick(t);   // 背景 tick 无粒子行（车道取消勾选/模板清空）→ 同样回退
-  for (const t of sfxSoundTicks) rollbackEmptySfxTick(t);        // playsound tick 无行（轨道 0 无此 tick 音符、CB 仅主位补放时）→ 同样回退
   stats.sfxNotes = stats.sfxBoundNotes + stats.sfxStandaloneNotes;
   // 逐 tick 粒子命令行（tick 升序）：与轨道 0 CB 一一对应（有行 ⇔ 有 CB；空 tick 已回退）
   const sfxTickList = [...sfxTickLines.entries()].sort((a, b) => a[0] - b[0])
@@ -3949,8 +3938,8 @@ function renderSettings() {
       sndIn.type = 'text';
       sndIn.className = 'custom-inst-sound';
       sndIn.dataset.instId = String(instId);
-      sndIn.placeholder = '资源包声音 ID（可选，如 music:my_synth）';
-      sndIn.title = `填了则 #${instId} 的音符盒静音代位（红石粉保导电 + 底座照放），真实音色由 playsound 按 tick 触发（需自备资源包）；留空 = 按左侧映射的内置音色播放`;
+      sndIn.placeholder = '资源包声音 ID（可选，如 minecraft:portal.trigger）';
+      sndIn.title = `填了则 #${instId} 的音符盒静音代位（红石粉保导电 + 底座雪块 + 音符盒正上方命令方块直写 playsound），真实音色按 tick 精确触发（需自备资源包）；留空 = 按左侧映射的内置音色播放`;
       sndIn.value = AppState.settings.soundIdMap.get(instId) || '';
       selects.appendChild(sndIn);
     });
@@ -4842,9 +4831,8 @@ async function generate() {
     // 节奏参考粒子数据包：有参考声道时生成完整数据包 zip（命名空间 nbs2sfx）；
     // 逐 tick 粒子行取 result.sfxTickList（与产物命令方块严格一致：单线式按轨道排布偏移、MIDI式按音高偏移）
     AppState.sfxZipBytes = null;
-    // 2026-09-29 playsound 路线：无参考声道但配置了资源包声音时，sfxTickList 也含 playsound 行 →
-    //   同样导出 zip（数据包只含 function 文件，合法）。旧产物零回归：无 playsound 时 sfxTickList 为空。
-    if (AppState.refLayers.size > 0 || result.sfxTickList.length > 0) {
+    // 2026-09-29 playsound 改命令方块直写后，zip 只承载粒子 function 行（有参考声道才生成）
+    if (AppState.refLayers.size > 0) {
       const { bytes } = buildSfxDatapackZip(song, AppState.refLayers, AppState.settings.targetVersion, result.sfxTickList);
       AppState.sfxZipBytes = bytes;
       $('sfxZipBtn').hidden = false;
@@ -4878,11 +4866,10 @@ function renderStats() {
     ['已放置音符', stats.notesPlaced],
     ['中继器数', stats.repeaters],
     ['红石线数', stats.wires],
-    ...(stats.commandBlocks > 0 ? [['节奏参考 CB', `${stats.commandBlocks}（轨道 0）· 粒子 ${stats.sfxNotes}`
+    ...(stats.commandBlocks > 0 ? [['命令方块', `${stats.commandBlocks}（节奏参考 ${stats.commandBlocks - stats.playsoundNotes}（轨道 0）+ playsound ${stats.playsoundNotes}（代位格正上方直写））· 粒子 ${stats.sfxNotes}`
       + (stats.sfxConnectLines ? ` · 连接线 ${stats.sfxConnectLines}` : '')
       + (stats.sfxVanishNotes ? ` · 消失型 ${stats.sfxVanishNotes}` : '')
-      + (stats.sfxBackgroundNotes ? ` · 背景型 ${stats.sfxBackgroundNotes}` : '')
-      + (stats.playsoundNotes ? ` · playsound ${stats.playsoundNotes}` : '')]] : []),
+      + (stats.sfxBackgroundNotes ? ` · 背景型 ${stats.sfxBackgroundNotes}` : '')]] : []),
     ...(stats.playsoundNotes > 0 ? [['playsound 代位', `${stats.playsoundNotes}（资源包声音，音符盒静音代位）`]] : []),
   ];
   $('statsPanel').innerHTML = cards.map(([k, v]) =>

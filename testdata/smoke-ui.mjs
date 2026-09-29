@@ -1307,7 +1307,7 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
     // 结构层：设置区出现 custom-inst-sound 输入，placeholder 指认、缺省空
     const sndK = recK('custom-inst-sound');
     check(sndK.length === 1 && sndK[0].dataset.instId === String(instIdK)
-      && sndK[0].value === '' && sndK[0].placeholder === '资源包声音 ID（可选，如 music:my_synth）',
+      && sndK[0].value === '' && sndK[0].placeholder === '资源包声音 ID（可选，如 minecraft:portal.trigger）',
       `8k 结构：自定义乐器行出现资源包声音 ID 输入（#${instIdK}，缺省空）`);
     // 状态层：合法写入 → map 更新；非法（含空格）→ 保持旧值 + 输入框回填；清空 → delete
     //   （change 注册在容器 #customInstSelects 上，事件对象按真实 DOM 冒泡语义带 target）
@@ -1325,16 +1325,17 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
     check(!stK.settings.soundIdMap.has(instIdK), '8k 状态：清空 → 显式不配置（delete）');
     sndK[0].value = 'music:my_synth';
     boxK.dispatch('change', { target: sndK[0] });
-    // 产物层：playsound 行前缀 + 计数 + zip 内含 <tick>.mcfunction 裸行（无参考声道也可导出：数据包只含 function 文件）
+    // 产物层（2026-09-29 命令方块直写）：代位格正上方 CB 的 Command = playsound 裸命令（无斜杠）；
+    //   函数管线不再承载 playsound（无参考声道 → 无数据包 zip）
     await context.generate();
     const resK = stK.result.result;
-    const psLinesK = resK.sfxTickList.flatMap(e => e.lines).filter(l => l.startsWith('execute at @s run playsound music:my_synth master @a ~ ~ ~ '));
-    check(resK.stats.playsoundNotes === 1 && psLinesK.length === 1
-      && /\s\d+\.\d{2} [\d.]+$/.test(psLinesK[0]),
-      `8k 产物：playsound 行 ×1（volume/pitch 数值尾段）：${psLinesK[0]}`);
-    check(stK.sfxZipBytes && stK.sfxZipBytes.length > 40
-      && Buffer.from(stK.sfxZipBytes).toString('latin1').includes(psLinesK[0]),
-      '8k 产物：数据包 zip 生成且含 playsound 行逐字内容（STORE 无压缩可直读）');
+    const psTeK = resK.tileEntities.filter(e => typeof e.Command === 'string'
+      && e.Command.startsWith('playsound music:my_synth master @a ~ ~ ~ '));
+    check(resK.stats.playsoundNotes === 1 && psTeK.length === 1
+      && /\s\d+\.\d{2} [\d.]+$/.test(psTeK[0].Command),
+      `8k 产物：playsound 命令方块 ×1（Command 直写，volume/pitch 数值尾段）：${psTeK[0].Command}`);
+    check(resK.sfxTickList.length === 0 && !stK.sfxZipBytes,
+      '8k 产物：playsound 不进 <t>.mcfunction（无参考声道时不产数据包 zip）');
     // 持久化层：settings.soundIdMap 进载荷
     context.saveStateNow();
     const rawK = context.localStorage.getItem(context.stateKey(stK.song));
