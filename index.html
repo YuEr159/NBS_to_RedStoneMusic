@@ -3938,7 +3938,7 @@ function renderSettings() {
       sndIn.type = 'text';
       sndIn.className = 'custom-inst-sound';
       sndIn.dataset.instId = String(instId);
-      sndIn.placeholder = '资源包声音 ID（可选，如 minecraft:portal.trigger）';
+      sndIn.placeholder = '资源包声音 ID（可选，如 minecraft:block.portal.trigger）';
       sndIn.title = `填了则 #${instId} 的音符盒静音代位（红石粉保导电 + 底座雪块 + 音符盒正上方命令方块直写 playsound），真实音色按 tick 精确触发（需自备资源包）；留空 = 按左侧映射的内置音色播放`;
       sndIn.value = AppState.settings.soundIdMap.get(instId) || '';
       selects.appendChild(sndIn);

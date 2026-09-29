@@ -1307,7 +1307,7 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
     // 结构层：设置区出现 custom-inst-sound 输入，placeholder 指认、缺省空
     const sndK = recK('custom-inst-sound');
     check(sndK.length === 1 && sndK[0].dataset.instId === String(instIdK)
-      && sndK[0].value === '' && sndK[0].placeholder === '资源包声音 ID（可选，如 minecraft:portal.trigger）',
+      && sndK[0].value === '' && sndK[0].placeholder === '资源包声音 ID（可选，如 minecraft:block.portal.trigger）',
       `8k 结构：自定义乐器行出现资源包声音 ID 输入（#${instIdK}，缺省空）`);
     // 状态层：合法写入 → map 更新；非法（含空格）→ 保持旧值 + 输入框回填；清空 → delete
     //   （change 注册在容器 #customInstSelects 上，事件对象按真实 DOM 冒泡语义带 target）
