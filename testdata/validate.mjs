@@ -579,8 +579,9 @@ try {
 }
 
 // ---------- M3：合成 NBS 文件测固定挡位 D=1 / D=8 扩展 ----------
-function makeNbs({ version = 5, tempoTps = 20, layers = 1, songLength = 8, noteSpecs = [], timeSig = 4 }) {
-  // noteSpecs: [{tick, layer, instrument, key}]
+function makeNbs({ version = 5, tempoTps = 20, layers = 1, songLength = 8, noteSpecs = [], timeSig = 4, customInstruments = null }) {
+  // noteSpecs: [{tick, layer, instrument, key, velocity=100}]
+  // customInstruments: [{name, soundFile, pitch, pressKey}]（默认空，NBS 自定义乐器 ID = defaultInstruments + idx）
   const out = [];
   const u8 = v => out.push(v & 0xFF);
   const u16 = v => { out.push(v & 0xFF, (v >> 8) & 0xFF); };
@@ -619,14 +620,16 @@ function makeNbs({ version = 5, tempoTps = 20, layers = 1, songLength = 8, noteS
       u16(n.layer - prevLayer);
       prevLayer = n.layer;
       u8(n.instrument); u8(n.key);
-      u8(100); u8(100); i16(0); // velocity, panning+100, pitch (v4+)
+      u8(n.velocity !== undefined ? n.velocity : 100); u8(100); i16(0); // velocity, panning+100, pitch (v4+)
     }
     u16(0);
   }
   u16(0);
   // layers 元数据
   for (let i = 0; i < layers; i++) { str('L' + i); u8(0); u8(100); u8(100); }
-  u8(0); // custom instruments count
+  const ci = customInstruments || [];
+  u8(ci.length); // custom instruments count
+  for (const c of ci) { str(c.name); str(c.soundFile); u8(c.pitch); u8(c.pressKey ? 1 : 0); }
   return Buffer.from(out);
 }
 
@@ -2309,6 +2312,148 @@ try {
   } catch (e) {
     console.log('FAIL 参考车道池异常:', e.stack || e.message);
     ok = false;
+  }
+}
+
+// ===== 场景 L：自定义乐器资源包 playsound（2026-09-29 用户定）=====
+// L1 零回归护栏（未配置 → 产物逐位一致）/ L2 代位+行字面 / L3 非法 ID / L4 持久化往返
+{
+  const api = context.window.__NBS2SCHEMATIC;
+  const normSid = api.sfxNormSoundId, psCmd = api.sfxPlaysoundCmd, INSTR = api.INSTRUMENT_BLOCKS;
+  const CI = [{ name: 'MySynth', soundFile: 'my_synth.ogg', pitch: 12, pressKey: false }];
+  const notes = [
+    { tick: 0, layer: 0, instrument: 16, key: 45 },   // 目标乐器：F#4 → pitch 1.00
+    { tick: 2, layer: 0, instrument: 0, key: 42 },    // 普通乐器（harp）：不受影响
+    { tick: 4, layer: 0, instrument: 16, key: 33 },   // 域内最低 → 0.5
+    { tick: 6, layer: 0, instrument: 16, key: 57 },   // 域内最高 → 2
+    { tick: 8, layer: 0, instrument: 16, key: 70 },   // 越界 → 不产 playsound
+  ];
+  const opt = (settings) => ({
+    lane0: { dz: 0, dy: 0 },
+    groups: [{ layers: [0] }], groupStarts: [{ dz: 3, dy: 0 }],
+    refLanes: null, refLayers: new Map(),
+    ...(settings ? { settings } : {}),
+  });
+  try {
+    // --- 命令纯函数字面（pitch 经 sfxNum 去浮点噪声：整值无小数位） ---
+    if (psCmd('music:test', 100, 45) !== 'execute at @s run playsound music:test master @a ~ ~ ~ 1.00 1') {
+      console.log(`FAIL L 命令字面：${psCmd('music:test', 100, 45)}`); ok = false;
+    } else console.log('PASS L 命令字面：playsound music:test … 1.00 1（velocity=100/key=45）');
+    if (psCmd('music:test', 127, 57) !== 'execute at @s run playsound music:test master @a ~ ~ ~ 1.27 2'
+      || psCmd('music:test', 50, 33) !== 'execute at @s run playsound music:test master @a ~ ~ ~ 0.50 0.5') {
+      console.log('FAIL L 音高/音量映射：key 33/45/57 → 0.5/1.0/2.0、velocity 50/127 → 0.50/1.27'); ok = false;
+    } else console.log('PASS L 音高/音量映射：key 33/45/57 → 0.5/1.0/2.0、velocity 50/127 → 0.50/1.27');
+    if (normSid('music:my-synth') !== 'music:my-synth' || normSid('  music:test  ') !== 'music:test'
+      || normSid('bad id') !== null || normSid('nospace') !== null || normSid('a: b') !== null
+      || normSid('a:b:c') !== null || normSid('') !== null || normSid(16) !== null) {
+      console.log('FAIL L sfxNormSoundId 边界（空格/无冒号/多冒号/空/非字符串）'); ok = false;
+    } else console.log('PASS L sfxNormSoundId 边界：合法 trim、非法（空格/无冒号/多冒号/空/非字符串）→ null');
+    // --- 文件 ---
+    const nbs = makeNbs({ layers: 1, songLength: 12, noteSpecs: notes, customInstruments: CI });
+    const f = 'synth_psound.nbs';
+    writeFileSync(path.join(__dirname, f), nbs);
+    const song = api.parseNBS(new Uint8Array(nbs));
+    if (song.defaultInstruments !== 16 || song.customInstruments.length !== 1 || song.customInstruments[0].name !== 'MySynth') {
+      console.log(`FAIL L 解析自定义乐器：${JSON.stringify(song.customInstruments)}`); ok = false;
+    } else console.log('PASS L 解析：defaultInstruments=16、自定义乐器 #16 MySynth');
+    // --- L1 零回归护栏：soundIdMap 空 → 与未注入自定义乐器的同形状歌曲逐位一致 ---
+    const nbsPlain = makeNbs({ layers: 1, songLength: 12, noteSpecs: notes });
+    writeFileSync(path.join(__dirname, 'synth_psound_plain.nbs'), nbsPlain);
+    const rCfg = runE2E(f, opt({ soundIdMap: new Map() }));
+    const rPlain = runE2E('synth_psound_plain.nbs', opt());
+    const plainStats = { ...rPlain.result.stats, discardedDetails: rPlain.result.stats.discardedDetails.map(s => s.replace(/#ID 16 /, '#ID 0 ')) };
+    const cfgStats = { ...rCfg.result.stats, discardedDetails: rCfg.result.stats.discardedDetails.map(s => s.replace(/#ID 16 /, '#ID 0 ')) };
+    const eqPacked = (p1, p2) => p1.bits === p2.bits
+      && Buffer.compare(Buffer.from(p1.longs.buffer, p1.longs.byteOffset, p1.longs.byteLength),
+                        Buffer.from(p2.longs.buffer, p2.longs.byteOffset, p2.longs.byteLength)) === 0;
+    if (!eqPacked(rPlain.packed, rCfg.packed)
+      || JSON.stringify(rPlain.palette) !== JSON.stringify(rCfg.palette)
+      || JSON.stringify(plainStats) !== JSON.stringify(cfgStats)
+      || JSON.stringify(rPlain.result.geometry) !== JSON.stringify(rCfg.result.geometry)
+      || JSON.stringify(rPlain.result.tileEntities) !== JSON.stringify(rCfg.result.tileEntities)) {
+      console.log('FAIL L1 零回归：空 soundIdMap 产物与无自定义乐器产物不一致'); ok = false;
+    } else console.log('PASS L1 零回归护栏：空 soundIdMap → 产物（packed/palette/stats/geometry/TE）逐位一致');
+    // --- L2 配置 music:test（#16）---
+    const r = runE2E(f, opt({ soundIdMap: new Map([[16, 'music:test']]) }));
+    ok = verifyE2E('L playsound 代位（CB+TE、无 litematic 结构异常）', r) && ok;
+    const { result } = r;
+    const grid = result.grid, palette = r.palette, g = result.geometry;
+    const cellAt = (x, y, z) => (x < 0 || x >= grid.sx || y < 0 || y >= grid.sy || z < 0 || z >= grid.sz)
+      ? null : palette[grid.data[(y * grid.sz + z) * grid.sx + x]];
+    const zcG = 3 + g.zOffset; // 组车道 dz=3 → 网格 z（CB 在轨道 0 → 用 g.zOffset）
+    const cbAt = (t, x, z, y = 0) => (cellAt(x, y, z) === api.SFX_CB_STATE
+      && result.tileEntities.some(e => e.x === x && e.y === y && e.z === z && e.Command === `function ${api.SFX_NAMESPACE}:${t}`));
+    const tl = result.sfxTickList;
+    // 行字面（tick 0/4/6/8；tick 2 = harp 不受影响）
+    const exp0 = psCmd('music:test', 100, 45), exp4 = psCmd('music:test', 100, 33), exp6 = psCmd('music:test', 100, 57);
+    const e0 = tl.find(e => e.tick === 0), e4 = tl.find(e => e.tick === 4), e6 = tl.find(e => e.tick === 6), e8 = tl.find(e => e.tick === 8);
+    if (!e0 || !e0.lines.includes(exp0) || !e4 || !e4.lines.includes(exp4) || !e6 || !e6.lines.includes(exp6)) {
+      console.log(`FAIL L2 行字面：t0=${JSON.stringify(e0)} t4=${JSON.stringify(e4)} t6=${JSON.stringify(e6)}`); ok = false;
+    } else console.log('PASS L2 行字面：t0/t4/t6 playsound 行（… 1.00 1.00 / 0.50 0.5 / 1.00 2）');
+    // 越界 key=70：不产行（tick 8 无 tickList 条目），代位 + 无 CB（CB 坑回退生效）
+    if (e8 || !tl.every(e => e.tick !== 8)) {
+      console.log(`FAIL L2 越界：tick 8 不应有 playsound 行（${JSON.stringify(e8)}）`); ok = false;
+    } else if (cellAt(17, 1, g.zOffset) !== 'minecraft:redstone_wire' || cellAt(17, 0, g.zOffset) !== 'minecraft:snow_block') {
+      console.log(`FAIL L2 越界代位 @X=17：${cellAt(17, 1, g.zOffset)} / ${cellAt(17, 0, g.zOffset)}`); ok = false;
+    } else if (cbAt(8, 17, g.zOffset)) {
+      console.log('FAIL L2 越界：tick 8 无 playsound 行 → 主位补放 CB 应被回退'); ok = false;
+    } else console.log('PASS L2 越界 key=70：不产 playsound、代位（粉+底座）、无 CB（空 tick 回退）');
+    // 代位格：t0 主位 X=1 上方 = 红石粉（**无** note_block）；主位底座 = CB（该 tick 轨道 0 需 function，
+    //   主位代位补放 CB+TE——CB 坑）。tick 2 的 harp 盒在 t2 段主位（前有空 tick 扩展格，位置不定）→ 扫描定位
+    if (cellAt(1, 1, g.zOffset) !== 'minecraft:redstone_wire') {
+      console.log(`FAIL L2 代位格 @X=1：上层 = ${cellAt(1, 1, g.zOffset)}（期望红石粉）`); ok = false;
+    } else {
+      const harpNote = 'minecraft:note_block[instrument=harp,note=9,powered=false]';
+      const harpXs = [];
+      for (let x = 4; x <= 7; x++) if (cellAt(x, 1, zcG) === harpNote) harpXs.push(x);
+      if (harpXs.length === 1) console.log(`PASS L2 代位格：X=1 上层红石粉（无音符盒）；tick 2 harp 音符盒在 X=${harpXs[0]}（组车道 z=${zcG}，不受影响）`);
+      else { console.log(`FAIL L2 普通乐器 tick 2：harp 盒定位 ${JSON.stringify(harpXs)}（期望恰 1 个）`); ok = false; }
+    }
+    // CB：t0（主位代位补放）/t4/t6（无音符分支）各 1 个，Command 逐 tick 正确
+    if (!cbAt(0, 1, g.zOffset) || !cbAt(4, 9, g.zOffset) || !cbAt(6, 13, g.zOffset) || result.tileEntities.length !== 3) {
+      console.log(`FAIL L2 CB：t0/t4/t6 @X=1/9/13 应各有 CB（TE=${JSON.stringify(result.tileEntities)}）`); ok = false;
+    } else console.log('PASS L2 CB：t0 主位代位补放 + t4/t6 无音符分支，Command = function nbs2sfx:0/4/6');
+    // 计数
+    const st2 = result.stats;
+    if (st2.playsoundNotes !== 3 || st2.noteBlocks !== 1 || st2.notesPlaced !== 1 || st2.notesDiscarded !== 4 || st2.commandBlocks !== 3) {
+      console.log(`FAIL L2 计数：playsound=${st2.playsoundNotes} noteBlocks=${st2.noteBlocks} placed=${st2.notesPlaced} discarded=${st2.notesDiscarded} cb=${st2.commandBlocks}（期望 3/1/1/4/3）`); ok = false;
+    } else console.log('PASS L2 计数：playsoundNotes=3、noteBlocks=1（harp）、notesDiscarded=4（代位 3 + 越界 1）、CB=3');
+    // --- L3 非法 ID（含空格，UI 拒写）→ 行为同未配置 ---
+    const rBad = runE2E(f, opt({ soundIdMap: new Map([[16, 'bad id']]) }));
+    if (rBad.result.stats.playsoundNotes !== 0 || rBad.result.sfxTickList.length > 0 || rBad.result.tileEntities.length > 0
+      || !eqPacked(rPlain.packed, rBad.packed)) {
+      console.log(`FAIL L3 非法 ID：playsound=${rBad.result.stats.playsoundNotes} 行=${rBad.result.sfxTickList.length}（期望同未配置）`); ok = false;
+    } else console.log('PASS L3 非法 ID（含空格）：norm null → 行为同未配置（产物逐位一致）');
+    // --- L4 持久化往返（saveStateNow 载荷 + applySavedState 校验）---
+    // saveStateNow 需 AppState.song + fileBytes（stateKey 哈希用）；直接换入本段歌曲、断言后恢复
+    const keep4 = context.window.__NBS2SCHEMATIC.state;
+    const prevSong = keep4.song, prevFileBytes = keep4.fileBytes;
+    const prevSi = keep4.settings.soundIdMap.get(16);
+    keep4.song = song;
+    keep4.fileBytes = new Uint8Array(nbs);
+    keep4.settings.soundIdMap.set(16, 'music:test');
+    api.saveStateNow();
+    const raw = context.localStorage.getItem(context.stateKey(song));
+    const p4 = raw && JSON.parse(raw);
+    if (!p4 || !Array.isArray(p4.settings.soundIdMap) || JSON.stringify(p4.settings.soundIdMap) !== JSON.stringify([[16, 'music:test']])) {
+      console.log(`FAIL L4 载荷：${p4 && JSON.stringify(p4.settings)}`); ok = false;
+    } else console.log('PASS L4 载荷：settings.soundIdMap = [[16,"music:test"]]');
+    // 校验：完整载荷 + 混入非法值（含空格）→ 合法保留、非法剔除
+    const testSaved4 = JSON.parse(JSON.stringify(p4));
+    testSaved4.settings.soundIdMap = [[16, 'music:test'], [17, 'bad id'], [18, 'ns:ok-1']];
+    context.applySavedState(song, testSaved4);
+    const sm4 = keep4.settings.soundIdMap;
+    if (sm4.get(16) !== 'music:test' || sm4.has(17) || sm4.get(18) !== 'ns:ok-1') {
+      console.log(`FAIL L4 校验：${JSON.stringify([...sm4.entries()])}`); ok = false;
+    } else {
+      keep4.settings.soundIdMap.delete(17); keep4.settings.soundIdMap.delete(18);
+      if (prevSi === undefined) keep4.settings.soundIdMap.delete(16); else keep4.settings.soundIdMap.set(16, prevSi);
+      console.log('PASS L4 校验：合法保留、非法值（含空格）剔除（16/18 保留、17 剔除）');
+    }
+    keep4.song = prevSong;
+    keep4.fileBytes = prevFileBytes;
+  } catch (e) {
+    console.log('FAIL 场景 L 异常:', e.stack || e.message); ok = false;
   }
 }
 

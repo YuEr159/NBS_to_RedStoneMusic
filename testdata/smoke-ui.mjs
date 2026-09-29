@@ -53,7 +53,14 @@ function makeEl(tag) {
     appendChild(c) { el.children.push(c); return c; },
     removeChild(c) { el.children = el.children.filter(x => x !== c); },
     get firstChild() { return el.children[0] || null; },
-    closest() { return null; },
+    // 类选择器自匹配（事件处理器用 closest('.custom-inst-select') 等按 className 找回自身）
+    closest(sel) {
+      if (sel && sel.startsWith('.')) {
+        const name = sel.slice(1);
+        if (el.classList && el.classList.contains(name)) return el;
+      }
+      return null;
+    },
     getContext() { return makeCtx(); },
     setPointerCapture() {}, click() {}, remove() {},
   };
@@ -1277,6 +1284,74 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
     const laneJ3 = parsedJ && parsedJ.refLanes[boundLi];
     check(!!laneJ3 && !(laneJ3.sfxParams || {}).connect,
       '8j 回归：connect 全默认 → connect 键被删，载荷回旧形状（持久化往返）');
+  }
+  // 8k) 自定义乐器资源包 playsound（2026-09-29 用户定）：结构 → 状态（合法/非法/清空）→ 产物
+  //     → 持久化 四层断言；末尾恢复 demo 原歌（无自定义乐器），不污染 9) 段
+  {
+    const songK = context.parseNBS(new Uint8Array(readFileSync(path.join(__dirname, 'demo_song.nbs'))));
+    songK.sourceFileName = 'demo_song.nbs';
+    // 注入 1 个自定义乐器（ID = defaultInstruments + 0 = 16），并把声部 0 第 1 个音符改成该乐器
+    songK.customInstruments = [{ name: 'MySynth', soundFile: 'my_synth.ogg', pitch: 12, pressKey: false }];
+    const [kK, nK] = songK.layers[0].notes.entries().next().value;
+    nK.instrument = songK.defaultInstruments;
+    // 8i/8j 在 demo 同 key 下遗留 refLanes（layer 0 绑参考车道 → 虚拟不放置 → 无 playsound 行）→ 清档
+    context.localStorage.removeItem(context.stateKey(songK));
+    context.onSongLoaded(songK, null);
+    const stK = context.window.__NBS2SCHEMATIC.state;
+    const instIdK = songK.defaultInstruments; // 16
+    const recK = (cls) => {
+      const out = [];
+      (function rec(n) { if (n.className === cls) out.push(n); (n.children || []).forEach(rec); })(elements.get('customInstSelects'));
+      return out;
+    };
+    // 结构层：设置区出现 custom-inst-sound 输入，placeholder 指认、缺省空
+    const sndK = recK('custom-inst-sound');
+    check(sndK.length === 1 && sndK[0].dataset.instId === String(instIdK)
+      && sndK[0].value === '' && sndK[0].placeholder === '资源包声音 ID（可选，如 music:my_synth）',
+      `8k 结构：自定义乐器行出现资源包声音 ID 输入（#${instIdK}，缺省空）`);
+    // 状态层：合法写入 → map 更新；非法（含空格）→ 保持旧值 + 输入框回填；清空 → delete
+    //   （change 注册在容器 #customInstSelects 上，事件对象按真实 DOM 冒泡语义带 target）
+    const boxK = elements.get('customInstSelects');
+    sndK[0].value = 'music:my_synth';
+    boxK.dispatch('change', { target: sndK[0] });
+    check(stK.settings.soundIdMap.get(instIdK) === 'music:my_synth',
+      '8k 状态：填写合法 ID → settings.soundIdMap 写入');
+    sndK[0].value = 'bad id';
+    boxK.dispatch('change', { target: sndK[0] });
+    check(stK.settings.soundIdMap.get(instIdK) === 'music:my_synth' && sndK[0].value === 'music:my_synth',
+      '8k 状态：非法 ID（含空格）拒写，输入框回填旧值');
+    sndK[0].value = '';
+    boxK.dispatch('change', { target: sndK[0] });
+    check(!stK.settings.soundIdMap.has(instIdK), '8k 状态：清空 → 显式不配置（delete）');
+    sndK[0].value = 'music:my_synth';
+    boxK.dispatch('change', { target: sndK[0] });
+    // 产物层：playsound 行前缀 + 计数 + zip 内含 <tick>.mcfunction 裸行（无参考声道也可导出：数据包只含 function 文件）
+    await context.generate();
+    const resK = stK.result.result;
+    const psLinesK = resK.sfxTickList.flatMap(e => e.lines).filter(l => l.startsWith('execute at @s run playsound music:my_synth master @a ~ ~ ~ '));
+    check(resK.stats.playsoundNotes === 1 && psLinesK.length === 1
+      && /\s\d+\.\d{2} [\d.]+$/.test(psLinesK[0]),
+      `8k 产物：playsound 行 ×1（volume/pitch 数值尾段）：${psLinesK[0]}`);
+    check(stK.sfxZipBytes && stK.sfxZipBytes.length > 40
+      && Buffer.from(stK.sfxZipBytes).toString('latin1').includes(psLinesK[0]),
+      '8k 产物：数据包 zip 生成且含 playsound 行逐字内容（STORE 无压缩可直读）');
+    // 持久化层：settings.soundIdMap 进载荷
+    context.saveStateNow();
+    const rawK = context.localStorage.getItem(context.stateKey(stK.song));
+    const parsedK = rawK && JSON.parse(rawK);
+    check(!!parsedK && JSON.stringify(parsedK.settings.soundIdMap) === JSON.stringify([[instIdK, 'music:my_synth']]),
+      '8k 持久化：settings.soundIdMap 进载荷');
+    // 收尾：恢复 demo 原歌（无自定义乐器 → 输入行消失、playsound 计数归零）
+    const songK2 = context.parseNBS(new Uint8Array(readFileSync(path.join(__dirname, 'demo_song.nbs'))));
+    songK2.sourceFileName = 'demo_song.nbs';
+    context.onSongLoaded(songK2, null);
+    const stK2 = context.window.__NBS2SCHEMATIC.state;
+    check(elements.get('customInstRow').hidden === true,
+      '8k 收尾：原 demo 歌无自定义乐器 → 设置区输入行隐藏');
+    stK2.settings.soundIdMap.clear();
+    await context.generate();
+    check(stK2.result.result.stats.playsoundNotes === 0,
+      '8k 收尾：playsound 计数归零（原歌无自定义乐器音符）');
   }
   // 9) 旧格式迁移：手工写入旧 bool 载荷 → 重载按MIDI式迁移
   if (parsed) {
