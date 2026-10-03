@@ -783,8 +783,10 @@ const sfxArcLen = (d, L, lift) => {
 //   重参数化 s = 1 − (1−t)^p（s(0)=0/s(1)=1 端点恰抵 B；ds/dt(0)=p 快、ds/dt(1)=0 慢 = 阻力感）。
 //   表达式 = 单条矩阵赋值 (x,y,z)=(S·(2cx+S·kx), …)，S 字面展开三次；系数全部构建时算好嵌入。
 //   语法只用生产在用/源码实锤元素：矩阵赋值（与速度表达式 (vx,vy,vz)= 同构）、四则、pow/abs——
-//   不用局部变量/多语句/引号（tickparameter 的表达式参数是裸 StringArgumentType，直接透传无引号剥离）；
-//   abs 兜 t>1 溢出点（end=1+0.5·step，(1−t)^p 负底数非整数幂 = NaN，JS/Java 同）。
+//   abs 兜 t>1 溢出点（end=1+0.5·step，(1−t)^p 负底数非整数幂 = NaN，JS/Java 同）；
+//   不用局部变量/多语句（tickparameter 的表达式参数须**双引号包裹**——与 tickpolarparameter/conditional 同约定，
+//   2026-10-04 游戏日志实锤：无引号时 brigadier 只消费 1 个 token，end 后撞 '(' 报「期望空格」整函数加载失败；
+//   引号经 brigadier 消费剥离，表达式解析器看到的是裸内容，与缺省命令 'dis=1;…' 带引号写法一致）
 function sfxArcCmd(a, d, L, P, cpt, m, alpha, cp) {
   const H = 2 * cp.lift * L;
   const c = [d[0] / 2, H, d[2] / 2];
@@ -799,7 +801,7 @@ function sfxArcCmd(a, d, L, P, cpt, m, alpha, cp) {
     'particleex tickparameter', cp.particle,
     `~${a[0]}`, `~${a[1]}`, `~${a[2]}`, cp.color,
     sfxNum(vx), sfxNum(vy), sfxNum(vz),
-    '0', sfxNum(end), expr,
+    '0', sfxNum(end), `"${expr}"`,
     sfxNum(step), String(cpt), String(m), 'null', '1.0', cp.group || 'null',
   ].join(' ');
 }

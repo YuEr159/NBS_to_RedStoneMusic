@@ -1751,16 +1751,16 @@ try {
           || JSON.stringify(tlbK7[0].lines) !== JSON.stringify([sfxParticleCmd(0, 0, 0), EXI(0, 0), expK7])
           || JSON.stringify(tlbK7[1].lines) !== JSON.stringify([sfxParticleCmd(0, 0, 5), EXI(0, 5)])
           || !expK7.startsWith('particleex tickparameter minecraft:end_rod ~0 ~0 ~0 1 0.95 0.89 1 0 0 0 0')
-          || !expK7.includes('(x,y,z)=((1-pow(abs(1-t),1.4))*(2*2+(1-pow(abs(1-t),1.4))*0),'
+          || !expK7.includes('"(x,y,z)=((1-pow(abs(1-t),1.4))*(2*2+(1-pow(abs(1-t),1.4))*0),'
               + '(1-pow(abs(1-t),1.4))*(2*1.920937271+(1-pow(abs(1-t),1.4))*-3.841874542),'
-              + '(1-pow(abs(1-t),1.4))*(2*2.5+(1-pow(abs(1-t),1.4))*0))')
+              + '(1-pow(abs(1-t),1.4))*(2*2.5+(1-pow(abs(1-t),1.4))*0))"')
           || fK7[13] !== '0' || Math.abs(Number(fK7[14]) - (1 + 0.5 / (Pk7 - 1))) > 1e-9
           || !(cptF === cptK7 && pK7 === Pk7 && Math.ceil(pK7 / cptF) === 5 && Math.abs(stepK7 * (Pk7 - 1) - 1) < 1e-6)
           || fK7[fK7.length - 1] !== 'null'
           || rK7.packed.longs.length !== rK1.packed.longs.length || !rK1.packed.longs.every((v, i) => v === rK7.packed.longs[i])) {
           console.log(`FAIL 连接线弧线：indep=${statK7.sfxStandaloneNotes} conn=${statK7.sfxConnectLines} 行=${JSON.stringify(tlbK7)}（期望 tick0 [独立行, 弧线线] / tick1 [独立行]；tickparameter 直角坐标 + Bézier 表达式 + pow(abs(1-t),1.4)；N0=⌈1.4·arcLen/0.1⌉=${n0K7}、cpt=${cptK7}、P=${Pk7}、跨 2Δt+1=5 游戏 tick；litematic 与 K1 逐位一致）`); ok = false;
         } else {
-          console.log('PASS 连接线弧线（style=arc，缺省 lift=0.15/p=1.4）：抛物线拱 +Y（顶点高 lift·L）+ 近 B 端减速（轻阻力感，端点仍恰抵 B）；tickparameter 直角坐标、表达式单条矩阵赋值无引号无局部变量；litematic 与直线逐位一致（零改动）');
+          console.log('PASS 连接线弧线（style=arc，缺省 lift=0.15/p=1.4）：抛物线拱 +Y（顶点高 lift·L）+ 近 B 端减速（轻阻力感，端点仍恰抵 B）；tickparameter 直角坐标、表达式单条矩阵赋值双引号包裹（与 tickpolarparameter 同约定）无局部变量；litematic 与直线逐位一致（零改动）');
         }
         // K8 显式 style='line' 护栏：产物与 K1 缺省（无 style 键）逐位一致 → 缺省语义未被风格键扰动
         const rK8 = runE2E(tmpFile, { ...k1Opts, refLanes: [{ tracks: [0], start: { dz: 0, dy: 0 }, sfxParams: { connect: { ...SFX_CONNECT_DEFAULTS, style: 'line' } } }] });
