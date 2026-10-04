@@ -3566,13 +3566,13 @@ function renderSfxLaneParams(lane, li) {
   lbStyle.textContent = '风格';
   const inStyle = document.createElement('select');
   inStyle.className = 'sfx-connect-style';
-  inStyle.value = conn.style;
   inStyle.title = '直线 = tickpolarparameter 线性参数化；弧线 = 抛物线拱（垂直向上）+ 近 B 端减速（阻力感）';
   ['line', 'arc'].forEach(v => {
     const o = document.createElement('option');
     o.value = v; o.textContent = v === 'line' ? '直线' : '弧线';
     inStyle.appendChild(o);
   });
+  inStyle.value = conn.style;   // 必须在 option 挂入后再赋值（否则无匹配 option，控件显示落空）
   inStyle.addEventListener('change', (e) => onSfxConnectEdit(li, 'style', e.target.value));
   rowConn.appendChild(lbStyle); rowConn.appendChild(inStyle);
   const lbLift = document.createElement('label');
