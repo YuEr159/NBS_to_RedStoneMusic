@@ -453,9 +453,11 @@ const sfxBarLen = (song) => {
 // 背景型模板归一化：非空字符串（trim 后）→ 返回 trim 文本（用户全文命令，逐字执行）；否则 null（不产行）
 const sfxNormBackground = (v) => (typeof v === 'string' && v.trim() !== '') ? v.trim() : null;
 
-// 粒子命令文本：用户提供的参考命令第二行原样（particleex 为用户自定义/模组命令，不得改动）
+// 粒子命令文本：用户提供的参考命令原样（particleex 为用户自定义/模组命令，不得改动）。
+// 2026-10-05 用户提供改进版（圆环）：dis=0.05 小圆环 + s1=t 扫一圈 + 速度表达式 exp 衰减振荡；
+// 旧版（dis=1 平面螺旋「螺旋展开」）保留为内置预设 SFX_BUILTIN_PRESETS，预设模板库可点选回填。
 const SFX_PARTICLE_CMD =
-  "particleex polarparameter minecraft:end_rod ~ ~2 ~ 1 0.95 0.89 1 0 0 0 -10 10 'dis=1;s1=2*t;s2=0' 0.1 20 'i=0.1;(vx,vy,vz)=((i)*cos(s1),0,(i)*sin(s1))' 1.0 null";
+  "particleex polarparameter minecraft:end_rod ~ ~2 ~ 1 0.95 0.89 1 0 0 0 0 6.2832 'dis=0.05;s1=t;s2=0' 0.0628 20 '(vx,vy,vz)=(0.25*exp(0-(t+0.5)/8)*cos(s1),0,0.25*exp(0-(t+0.5)/8)*sin(s1))' 1 null";
 // 模板结构化字段（用户 2026-09-07 选「结构化关键参数」）：命令头 / 坐标段 x·y·z / 尾参。
 //   尾参整体保留为一段文本——particleex 各参数语义无法查证（用户模组命令），不逐字段拆分以免猜错；
 //   车道无 sfxParams（缺省）时按默认字段重构，与 SFX_PARTICLE_CMD 逐字一致（默认产物与旧版逐位不变）。
@@ -503,6 +505,20 @@ function sfxParamsPayload(l) {
 //   点选即回填本车道触发型表单。独立全局 localStorage key（跨歌保留，不进 per-song state）。
 //   预设项 = { name, params }，params = normSfxParams 结果（5 字段全合法）；name 单 token。
 const SFX_PRESET_KEY = 'nbs2schematic:sfxpresets';
+// 整条命令 → 5 字段（head/x/y/z/tail，同 SFX_PARTICLE_FIELDS 解析规则：前 3 词后首个 ~ 起为坐标段）；
+//   缺 ~ 坐标段 → null（不可入库）
+const sfxNormParticleCmd = (cmd) => {
+  if (typeof cmd !== 'string') return null;
+  const s = cmd.trim();
+  if (s === '') return null;
+  const parts = s.split(' ');
+  const ci = parts.findIndex((p, i) => i >= 3 && p.startsWith('~'));
+  if (ci < 3) return null;
+  return {
+    head: parts.slice(0, ci).join(' '), x: parts[ci], y: parts[ci + 1], z: parts[ci + 2],
+    tail: parts.slice(ci + 3).join(' '),
+  };
+};
 const sfxPresetLoad = () => {
   let raw;
   try { raw = localStorage.getItem(SFX_PRESET_KEY); } catch (e) { return []; }
@@ -524,6 +540,13 @@ const sfxPresetSave = (list) => {
   try { localStorage.setItem(SFX_PRESET_KEY, JSON.stringify(list || [])); } catch (e) { /* 存储满/隐私模式：忽略，下次 load 回退 */ }
 };
 const sfxPresetByName = (name) => sfxPresetLoad().find(p => p.name === name) || null;
+// 内置预设（2026-10-05）：用户内置命令改版（圆环）为默认模板后，旧默认（dis=1 平面螺旋「螺旋展开」）
+//   保留为可点选预设，随库渲染注入（不在库里的才补，库里有同名的以库为准；删除内置项后下次渲染自动补回）。
+const SFX_BUILTIN_PRESETS = (() => {
+  const cmd = "particleex polarparameter minecraft:end_rod ~ ~2 ~ 1 0.95 0.89 1 0 0 0 -10 10 'dis=1;s1=2*t;s2=0' 0.1 20 'i=0.1;(vx,vy,vz)=((i)*cos(s1),0,(i)*sin(s1))' 1.0 null";
+  const f = sfxNormParticleCmd(cmd);
+  return f ? [{ name: '螺旋展开', params: f }] : [];
+})();
 //   偏移 = 粒子中心坐标 − CB 坐标（布局坐标，CB 恒在轨道 0 主位底座）。
 const sfxParticleCmd = (dx, dy, dz) => sfxParticleCmdFromParts(dx, dy, dz, SFX_PARTICLE_FIELDS);
 // 车道级模板版：p = normSfxParams 结果（缺省 = SFX_PARTICLE_FIELDS）；
@@ -3321,8 +3344,7 @@ function renderSfxEffectList() {
     '由音符触发，参数由 1 个音符决定。每个参考音符在轨道 0 同 tick 触发一次粒子：' +
     '单线式 = 粒子中心锚定所属参考车道虚拟盒位的**主位（中间槽位）**（每 tick 每车道至多 1 行，多成员齐响不展开第2/3位，与「发声」无关、恒产生，' +
     '可被下方车道勾选关闭）；MIDI式 = 锚定轨道 0 CB + 所属参考车道的起点基准（「参考车道起点布局」窗口可拖，缺省 (0,0)），再按音高偏移 (音高−12)×sfxPitchStep。' +
-    '当前效果条目：end_rod 螺旋展开（particleex polarparameter minecraft:end_rod：' +
-    '20 个粒子、寿命 0.1s、半径 1、角度随 t 扫描的平面螺旋，坐标段由构建时按车道起点/槽位/音高求解替换）。');
+    '当前效果条目：end_rod 圆环（particleex polarparameter minecraft:end_rod：dis=0.05 小圆环、s1=t 扫一圈、速度表达式 exp 衰减振荡，20 粒子，坐标段由构建时按车道起点/槽位/音高求解替换；旧版「螺旋展开」= 内置预设，预设模板库可点选回填）。');
   card('② 连接型', 'on',
     '由音符触发，参数由 2 个音符决定：连接参考车道**相邻演奏 tick**（t_A < t_B，按车道连；和弦 = 多成员同 tick 齐响，按 ≤32 tick 规则配对连线）——' +
     'MIDI式按各音粒子中心画**真空间斜线**（A = t_A 粒子中心、B = t_B 粒子中心沿链前移 2Δt 格，同音高退化为沿链 +X 水平线），同 tick 和弦配对（间隔 ≤32 tick 时 1:1 最近邻 + 落单音就近挂靠，否则严格 1:1）；' +
@@ -3524,10 +3546,19 @@ function renderSfxLaneParams(lane, li) {
   optP0.value = '';
   optP0.textContent = '选择预设…回填本表单';
   selP.appendChild(optP0);
+  const libNames = sfxPresetLoad().map(p => p.name);
   for (const pr of sfxPresetLoad()) {
     const op = document.createElement('option');
     op.value = pr.name;
     op.textContent = pr.name;
+    selP.appendChild(op);
+  }
+  // 内置预设（不在用户库里的才注入选项；不写 localStorage——删除内置项后下次渲染自动补回）
+  for (const bp of SFX_BUILTIN_PRESETS) {
+    if (libNames.includes(bp.name)) continue;
+    const op = document.createElement('option');
+    op.value = bp.name;
+    op.textContent = bp.name + '（内置）';
     selP.appendChild(op);
   }
   selP.addEventListener('change', () => onSfxPresetSelect(li, selP.value));
@@ -3703,7 +3734,7 @@ function onSfxExtraEdit(li, v) {
 function onSfxPresetSelect(li, name) {
   const lane = AppState.refLanes[li];
   if (!lane || !name) return;
-  const pr = sfxPresetByName(name);
+  const pr = sfxPresetByName(name) || SFX_BUILTIN_PRESETS.find(p => p.name === name);
   if (!pr) return;
   const out = { ...pr.params };
   if (typeof out.group !== 'string' || out.group === '') delete out.group;
@@ -3726,6 +3757,7 @@ function onSfxPresetSave(li, rawName) {
 }
 function onSfxPresetDelete(li, name) {
   if (!name) return;
+  if (SFX_BUILTIN_PRESETS.some(p => p.name === name)) { alert('内置预设不可删除（「螺旋展开」为旧版默认模板，可另存改名保留）'); return; }
   sfxPresetSave(sfxPresetLoad().filter(p => p.name !== name));
   renderSfxEffectLanes();
 }
@@ -4719,7 +4751,7 @@ window.__NBS2SCHEMATIC = {
   SFX_NAMESPACE, SFX_PARTICLE_CMD, SFX_CB_STATE, SFX_PACKFORMAT, sfxPackFormat, sfxParticleCmd,
   SFX_PARTICLE_FIELDS, sfxParticleCmdFromParts, sfxParticleCmdWithGroup, normSfxParams, sfxParamsPayload,
   sfxParseCmdCoord, sfxNormExtra, sfxParseExtraCommands, SFX_EXTRA_DEFAULT_CMD,
-  SFX_PRESET_KEY, sfxPresetLoad, sfxPresetSave, sfxPresetByName,
+  SFX_PRESET_KEY, sfxPresetLoad, sfxPresetSave, sfxPresetByName, sfxNormParticleCmd, SFX_BUILTIN_PRESETS,
   SFX_NBS_TICK_PER_BEAT, sfxBarLen, sfxNormBackground,
   SFX_CONNECT_DEFAULTS, SFX_CONNECT_POINT_GAP, SFX_CONNECT_MIN_LEN, SFX_CONNECT_NEAR_DT, normConnectParams, sfxNum, sfxConnectCmd, sfxChordPairs,
   SFX_CONNECT_STYLES, sfxArcCmd, sfxArcLen, sfxConnectPacing,

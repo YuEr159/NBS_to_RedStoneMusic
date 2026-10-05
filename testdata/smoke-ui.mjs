@@ -1149,6 +1149,23 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
     check(AP.sfxPresetLoad().length === 0, '删除选中：库清空');
     const selH4 = recH('sfx-preset-sel');
     check(!selH4[0].children.map(o => o.value).includes('p1'), '删除后 select 选项刷新（不含 p1）');
+    // 2026-10-05 内置预设：「螺旋展开」（旧默认模板 dis=1 平面螺旋）渲染注入选项（不写用户库）→
+    //   点选回填旧模板 5 字段；不可删除（alert 拒绝 + 选项仍在）
+    const selH5 = recH('sfx-preset-sel');
+    const optNames5 = selH5[0].children.map(o => o.value);
+    check(optNames5.includes('螺旋展开'), `8h 内置预设：select 选项含「螺旋展开」（实际 ${JSON.stringify(optNames5)}）`);
+    check(AP.sfxPresetLoad().length === 0, '8h 内置预设：不写用户库（sfxPresetLoad 仍空）');
+    selH5[0].value = '螺旋展开';
+    selH5[0].dispatch('change', { target: selH5[0] });
+    const spH = st.refLanes[boundLi].sfxParams;
+    check(spH && /dis=1;s1=2\*t;s2=0/.test(spH.tail) && spH.head.endsWith('minecraft:end_rod'),
+      '8h 内置预设：点选「螺旋展开」回填旧默认模板（dis=1 平面螺旋）');
+    const selH6 = recH('sfx-preset-sel'), delH6 = recH('sfx-preset-del');
+    selH6[0].value = '螺旋展开';
+    delH6[0].dispatch('click', {});
+    check(recH('sfx-preset-sel')[0].children.map(o => o.value).includes('螺旋展开'),
+      '8h 内置预设：删除被拒（alert），选项仍在');
+    st.refLanes[boundLi].sfxParams = { ...baseP };   // 还原默认模板，不污染后续段
   }
   // 8i) 触发型追加命令（2026-09-25）：多行文本框每行一条完整命令（含单引号条件表达式）→
   //     change → sfxParams.extra 更新 → 主行后逐行追加（坐标段 = 与主命令相同偏移）→ 持久化往返；
