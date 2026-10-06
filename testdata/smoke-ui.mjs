@@ -175,6 +175,11 @@ check(elements.get('statsPanel').innerHTML.includes('音符盒数'), '统计面�
 check(elements.get('previewPanel').hidden === false, '预览面板可见');
 check(context.window.__NBS2SCHEMATIC.topPreview && context.window.__NBS2SCHEMATIC.topPreview.off !== null, '俯视预览离屏图已构建');
 check(context.window.__NBS2SCHEMATIC.frontPreview && context.window.__NBS2SCHEMATIC.frontPreview.off !== null, '正视预览离屏图已构建');
+// 生成进度条（2026-10-06）：成功收尾 → 条 100% 不隐藏 + 按钮恢复 + 状态行完成文案
+check(elements.get('genProgressFill').style.width === '100%' && elements.get('genProgress').hidden === false,
+  '生成进度条：完成后宽 100% 且可见');
+check(elements.get('generateBtn').disabled === false, '生成进度条：按钮完成后恢复可用');
+check(elements.get('genStatus').textContent.includes('自检通过'), '生成进度条：状态行含完成文案（自检通过）');
 
 // 中继器朝向：facing=输入侧 → 主链必须 west（输出 +X）
 // 触发区（总线/tap/开关）已按用户要求从产物移除 → 产物中无总线/开关；
@@ -1707,6 +1712,36 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
     '预置放射：普通车道由近及远 (3,0)→(-3,0)，参考车道保持不动 (6,0)');
   const { errors: pErrs } = ed.validate();
   check(pErrs.length === 0, '预置放射后布局无重叠错误');
+  // 4c) 预置：声像（2026-10-06，参考 NBS-to-minecraftsave 的 panning 自动布局）：
+  //     临时换合成 song（lane0 响度低 pan+90 / lane1 pan−100 vel30 / lane2 pan+50 vel10）+ 3 音轨车道，测后还原
+  {
+    const origSong = st2.song;
+    st2.song = {
+      songLength: 4, tempo: 20,
+      layers: [
+        { panning: 0, notes: new Map([[0, { velocity: 10, panning: 90 }]]) },
+        { panning: 0, notes: new Map([[0, { velocity: 30, panning: -100 }]]) },
+        { panning: 0, notes: new Map([[0, { velocity: 10, panning: 50 }]]) },
+      ],
+    };
+    st2.lanes = [{ tracks: [0] }, { tracks: [1] }, { tracks: [2] }];
+    st2.lane0.start = { dz: 0, dy: 0 };
+    st2.refLanes = [{ tracks: [i0], start: { dz: 7, dy: 2 } }];
+    // panPresetMode 桩元素懒创建：先经 document.getElementById 触发建元（与真实 DOM 一致，ID 来自 index.html）
+    const modeSel = context.document.getElementById('panPresetMode');
+    modeSel.value = 'panning';
+    elements.get('presetPanBtn').dispatch('click', {});
+    check(st2.lanes[0].start.dz === 3 && st2.lanes[0].start.dy === 0
+      && st2.lanes[1].start.dz === 6 && st2.lanes[2].start.dz === -3,
+      '预置声像·panning：均值降序（90>50>−100）两侧交替、大 panning 靠 +Z → (3,0)/(6,0)/(−3,0)');
+    modeSel.value = 'volume';
+    elements.get('presetPanBtn').dispatch('click', {});
+    check(st2.lanes[0].start.dz === 3 && st2.lanes[1].start.dz === -9 && st2.lanes[2].start.dz === 6,
+      '预置声像·volume：响度定距+方向定侧+occupied 外推（lane2 的 slot1 被 lane0 占 → 外推 slot2）→ (3,0)/(−9,0)/(6,0)');
+    check(st2.refLanes[0].start.dz === 7 && st2.refLanes[0].start.dy === 2,
+      '预置声像：参考车道保持不动 (7,2)（预置只重排普通车道）');
+    st2.song = origSong; // 还原
+  }
   st2.lanes = [{ tracks: [i0], start: { dz: 3, dy: 0 } }]; st2.refLanes = [{ tracks: [i0] }];
   st2.lane0.start = { dz: 0, dy: 0 };
   context.window.__NBS2SCHEMATIC.syncRefLaneStarts(); // 预置还原的新车道补起点（供后续持久化断言）

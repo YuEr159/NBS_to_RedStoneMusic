@@ -173,6 +173,8 @@ input[type="number"] { width: 70px; }
 .legend-row span { display: inline-flex; align-items: center; gap: 4px; }
 .legend-row i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
 .hint { color: var(--text-dim); font-size: 12px; }
+.gen-progress { flex-basis: 100%; height: 6px; background: var(--panel2); border: 1px solid var(--border); border-radius: 3px; overflow: hidden; }
+.gen-progress > div { height: 100%; width: 0; background: var(--accent); transition: width .15s; }
 </style>
 </head>
 <body>
@@ -239,6 +241,11 @@ input[type="number"] { width: 70px; }
       <button id="presetLineBtn">预置：单行</button>
       <button id="presetGridBtn">预置：网格</button>
       <button id="presetRadialBtn">预置：放射</button>
+      <button id="presetPanBtn">预置：声像</button>
+      <select id="panPresetMode" class="hint">
+        <option value="panning">按声像（panning）</option>
+        <option value="volume">按音量（velocity）</option>
+      </select>
       <label class="hint">网格/放射行距(格) <input type="number" id="gridHeight" min="3" max="30" value="5"></label>
       <button id="fitLayoutBtn">缩放到全部</button>
       <span class="hint">点击标记选中；拖拽移动；选中后可用方向键微调（Shift=大步）；预置模板只重排普通车道</span>
@@ -372,6 +379,7 @@ input[type="number"] { width: 70px; }
       <button id="sfxZipBtn" hidden title="粒子数据包（pack.mcmeta + data/nbs2sfx/…/<tick>.mcfunction + 歌词字库 data/nbs2sfx/lyric/*.png）：放入世界 datapacks 目录后 /reload，配合 .litematic 使用；歌词 PNG 另需部署到 .minecraft/particleImages/lyric/">⬇ 下载粒子数据包 (.zip)</button>
       <button id="debugBtn" hidden>导出 JSON 调试包</button>
       <span class="hint" id="genStatus"></span>
+      <div class="gen-progress" id="genProgress" hidden><div id="genProgressFill"></div></div>
     </div>
     <div id="statsPanel" hidden></div>
     <div id="warnings"></div>
@@ -1472,7 +1480,7 @@ const DEFAULT_RAIL_LIGHT = 'minecraft:ochre_froglight';
 //   （绑定+独立混合，每音符一行，各带各自计算的相对偏移，见 sfxParticleCmd）。
 // 类型选型按参考车道（用户 2026-09-04 定）：refLanes[l].type 决定该车道全部成员的粒子类型
 //   （绑定集合/独立行均按成员实际所在参考车道取类型）；refLanes 为 null 时回退按声道 refLayers 取类型（旧行为）。
-function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, refLanes = null, refLayersRef = null, lyricOpts = null) {
+function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, refLanes = null, refLayersRef = null, lyricOpts = null, progress = null) {
   const refLayers = refLayersRef;
   const customMap = settings.customInstrumentMap;
   const soundMap = (settings && settings.soundIdMap instanceof Map) ? settings.soundIdMap : null;
@@ -1997,6 +2005,7 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
       }
     }
     xCur += cells;
+    if (progress) progress((t + 1) / nTicks); // 可选进度回调（UI 进度条；缺省 null 零开销）
   }
 
   // --- 单线式参考（refMode）：粒子行按参考车道**虚拟主位**生成（2026-09-07 参考车道虚拟化） ---
@@ -2256,7 +2265,7 @@ function buildSfxFunctions(song, refLayers, sfxTickList = null) {
 //   lyricPngs：Map('lyric/s0000_l0.png' → PNG 字节)，文件名规则与 lyricLineGeoms 完全一致
 //   （同一 li/r → 同一 fileName，命令与字库一一对应）。
 // 无效句（空文本/时间非法/行渲染失败）：进 result.warnings 跳过，不阻断生成。
-function buildLyricPngs() {
+async function buildLyricPngs(onProgress = null) {
   const res = { rowMeta: [], lyricPngs: new Map(), warnings: [] };
   const sents = Array.isArray(AppState.lyrics) ? AppState.lyrics : [];
   if (sents.length === 0) return res;
@@ -2297,6 +2306,7 @@ function buildLyricPngs() {
       continue;
     }
     res.rowMeta[i] = meta;
+    if (onProgress) { onProgress((i + 1) / sents.length); await new Promise(r => setTimeout(r, 0)); }
   }
   if (res.warnings.length === 0 && res.lyricPngs.size > 0 && fontNote !== '') res.warnings.push(fontNote);
   return res;
@@ -5289,6 +5299,7 @@ window.__NBS2SCHEMATIC = {
   lyricWrapChars, renderLyricLine, lyricBase64ToBytes, LYRIC_CANVAS_MAX_W, LYRIC_CANVAS_MAX_H,
   lyricLineGeoms, sfxLyricImageCmd, LYRIC_SCALING,
   buildLyricPngs,
+  lanePanStats, panPreset,
   SFX_VANISH_DEFAULTS, SFX_VANISH_PROTO, sfxVanishCmd, normVanishParams,
   SFX_EFFECT_TYPES, renderSfxEffectList, renderSfxEffectLanes, onSfxEffectToggle,
   buildSfxPackMcmeta, buildSfxFunctions, buildZip, zipCrc32, buildSfxDatapackZip,
@@ -5314,9 +5325,22 @@ async function generate() {
     if (!confirm('布局警告：\n' + warnings.join('\n') + '\n\n仍然生成？')) return;
   }
 
-  $('genStatus').textContent = '生成中…';
+  // 进度反馈（2026-10-06，参考 NBS-to-minecraftsave 实时进度）：进度条 + 阶段文字 + 按钮禁用。
+  // buildLayout 为同步长任务（执行期间无 paint），布局段进度 15→60 一次跳完——接受该限制换取
+  // buildLayout 保持同步、validate 9 参零回归；分段边界的 await setTimeout(0) 让 UI 有机会 paint。
+  const genBar = $('genProgress'), genFill = $('genProgressFill'), genBtn = $('generateBtn');
+  let lastPct = -1;
+  const setStage = (label, lo, hi, frac = 1) => {
+    const p = Math.max(0, Math.min(100, Math.round(lo + (hi - lo) * Math.max(0, Math.min(1, frac)))));
+    genBar.hidden = false;
+    $('genStatus').textContent = label;
+    if (p !== lastPct) { lastPct = p; genFill.style.width = p + '%'; }
+  };
+  genBtn.disabled = true;
+  setStage('生成中…', 0, 15, 0);
   await new Promise(r => setTimeout(r, 30)); // 让 UI 刷新
 
+  let genOk = false;
   try {
     // 防陈旧产物：先清上一次结果（本次失败时下载按钮不得亮着旧字节）
     AppState.result = null;
@@ -5342,7 +5366,8 @@ async function generate() {
       return;
     }
     // 粒子歌词：先渲染全部行 PNG（裁剪后像素尺寸 + 字节），行几何与命令在 buildLayout 内同源生成
-    const lyricPng = buildLyricPngs();
+    setStage('歌词渲染中…', 0, 15, 0);
+    const lyricPng = await buildLyricPngs(f => setStage('歌词渲染中…', 0, 15, f));
     for (const w of lyricPng.warnings) {
       const d = document.createElement('div'); d.className = 'w'; d.textContent = '⚠ ' + w;
       $('warnings').appendChild(d);
@@ -5358,7 +5383,10 @@ async function generate() {
         sentences: AppState.lyrics,
         settings: (AppState.settings || {}).lyric,
         rowMeta: lyricPng.rowMeta,
-      } : null);
+      } : null,
+      f => setStage('布局构建中…', 15, 60, f)); // 主循环逐 tick 进度（buildLayout 第 10 参，缺省 null 零回归）
+    await new Promise(r => setTimeout(r, 0)); // 分段边界让 UI paint（同步段进度一次跳完，文字实时）
+    setStage('打包中…', 60, 70, 0);
     const palette = buildPalette(result.grid);
     const packed = packBlockStates(result.grid.data, palette.length);
     let totalBlocks = 0;
@@ -5368,9 +5396,12 @@ async function generate() {
     const target = targetEntry(AppState.settings.targetVersion);
     const nbtBytes = buildLitematic(song, palette, packed, size, totalBlocks, nowMs, target.dataVersion,
       { tileEntities: result.tileEntities, entities: result.entities });
+    setStage('压缩中…', 70, 75, 0);
     const gz = await gzipBytes(nbtBytes);
+    setStage('压缩中…', 70, 75, 1);
 
     // 产物自检：解码刚生成的 NBT 与内存网格逐格比对（失败不亮下载按钮）
+    setStage('自检中…', 75, 90, 0);
     const verify = verifyLitematic(nbtBytes, {
       grid: result.grid, palette, size, totalBlocks,
       dataVersion: target.dataVersion, packed,
@@ -5411,6 +5442,7 @@ async function generate() {
     AppState.sfxZipBytes = null;
     // 2026-09-29 playsound 改命令方块直写后，zip 只承载粒子 function 行；
     // 2026-10-06 歌词随包导出：纯歌词歌（无参考声道）也产 zip（pack.mcmeta + 歌词 function + PNG）
+    setStage('数据包打包中…', 90, 100, 0);
     if (AppState.refLayers.size > 0 || lyricPng.lyricPngs.size > 0) {
       const { bytes } = buildSfxDatapackZip(song, AppState.refLayers, AppState.settings.targetVersion, result.sfxTickList, lyricPng.lyricPngs.size > 0 ? lyricPng.lyricPngs : null);
       AppState.sfxZipBytes = bytes;
@@ -5420,13 +5452,18 @@ async function generate() {
     }
     $('downloadBtn').hidden = false;
     $('debugBtn').hidden = false;
+    lastPct = 100; genFill.style.width = '100%';
     $('genStatus').textContent = `完成（NBT ${(nbtBytes.length / 1024).toFixed(1)} KB → gzip ${(gz.length / 1024).toFixed(1)} KB，自检通过）`
       + (result.stats.lyricSentences > 0 ? ` ｜ 歌词 ${result.stats.lyricSentences} 句 · ${result.stats.lyricParticles.toLocaleString()} 粒子 · PNG ${result.stats.lyricPngs}（部署：.minecraft/particleImages/lyric/）` : '');
     renderStats();
     renderPreviews();
+    genOk = true;
   } catch (err) {
     showError(err.message || String(err), err);
     $('genStatus').textContent = '';
+  } finally {
+    genBtn.disabled = false;
+    if (!genOk) { lastPct = -1; genFill.style.width = '0'; genBar.hidden = true; } // 失败复位进度条（成功保持 100%）
   }
 }
 
@@ -5852,7 +5889,7 @@ $('downloadBtn').addEventListener('click', downloadLitematic);
 $('sfxZipBtn').addEventListener('click', downloadSfxDatapack);
 $('debugBtn').addEventListener('click', exportDebugBundle);
 
-// 预置布局（用户 2026-09-04 定）：三模板均以 0 号车道（轨道 0）起点为中心对称排布，
+// 预置布局（用户 2026-09-04 定）：模板均以 0 号车道（轨道 0）起点为中心对称排布，
 // 只重排音轨车道（2026-09-07 参考车道虚拟化后：参考车道不生成物理结构、不参与碰撞，
 // 其位置由上方「参考车道池」独立窗口单独管理，预置模板不再动它）——0 号不动，一次摆齐不重叠。
 // 排布顺序 = [音轨车道…]（池内保序）；第 k 位（0 基）按模板分配（相对中心 c0）：
@@ -5860,6 +5897,9 @@ $('debugBtn').addEventListener('click', exportDebugBundle);
 //   网格：中间行 k=2m、k+1=2m+1 → Z 由中心外扩 ±3(m+1)，Y 上下交替 ±h·m（首行在上）
 //   放射：候选位 = 环 k（Z=±3k，Y=±h·j，|j|≤floor(k/2)），按到中心欧氏距离升序取前 N 个
 //         （平手：+Z 侧优先、再 +Y 侧优先）——由近及远一圈圈展开
+//   声像（2026-10-06，参考 sensen1234/NBS-to-minecraftsave 的 panning 自动布局）：
+//         按成员层音符的 panning/velocity 统计排 Z——panning 模式均值降序（大 panning 靠 +Z）、
+//         volume 模式响度定距离、声像方向定侧（纯布局辅助，不改变产物）
 function presetAllLanes(apply) {
   const c0 = (AppState.lane0 && AppState.lane0.start) || { dz: 0, dy: 0 };
   const all = AppState.lanes; // 只普通车道（参考车道虚拟，位置独立管理）
@@ -5868,6 +5908,70 @@ function presetAllLanes(apply) {
   refLayoutEditor && refLayoutEditor.refresh(); // 参考窗口背景（普通车道）随之刷新
   scheduleStateSave();
 }
+// 声像预置纯函数（window.__NBS2SCHEMATIC 导出，validate 单测）：
+// lanePanStats 按车道成员层全部音符统计（重复层按 slot 逐次计入——占多 slot 声音占比大，
+// 与「重复拖入更响」语义一致）；pan = clamp(layer.panning + note.panning, -100, 100) 累加。
+function lanePanStats(song, lanes) {
+  return lanes.map(lane => {
+    let panSum = 0, velSum = 0, cnt = 0;
+    for (const li of lane.tracks) {
+      const layer = song.layers[li];
+      if (!layer) continue;
+      for (const note of layer.notes.values()) {
+        panSum += Math.max(-100, Math.min(100, (layer.panning || 0) + note.panning));
+        velSum += note.velocity;
+        cnt++;
+      }
+    }
+    return { panSum, velSum, cnt };
+  });
+}
+function panPreset(mode, stats, nLanes, c0) {
+  const pos = new Array(nLanes);
+  if (mode === 'volume') {
+    // 音量模式：side = sign(panSum)（0 = 中心车道），dist = max(1, round(velAvg/10))（响 = 远）；
+    // 放置序 = 非中心按 (dist 升、|panAvg| 降【交叉乘】、k 升)，随后中心按 k 升；
+    // 槽位被占（occupied 含中心 dz）则同向外推，互异槽位 ⇒ 间距恰 3（不触「起点过近」警告）
+    const items = stats.map((s, k) => ({
+      k,
+      side: s.panSum > 0 ? 1 : (s.panSum < 0 ? -1 : 0),
+      dist: s.cnt > 0 ? Math.max(1, Math.round(s.velSum / s.cnt / 10)) : 0,
+      s,
+    }));
+    const nonCenter = items.filter(x => x.side !== 0).sort((a, b) =>
+      (a.dist - b.dist)
+      || (Math.abs(b.s.panSum) * a.s.cnt - Math.abs(a.s.panSum) * b.s.cnt)
+      || (a.k - b.k));
+    const center = items.filter(x => x.side === 0).sort((a, b) => a.k - b.k);
+    const occupied = new Set([c0.dz]);
+    const put = (k, side, startSlot) => {
+      let slot = startSlot;
+      while (occupied.has(c0.dz + side * 3 * slot)) slot++;
+      occupied.add(c0.dz + side * 3 * slot);
+      pos[k] = { dz: c0.dz + side * 3 * slot, dy: c0.dy };
+    };
+    for (const x of nonCenter) put(x.k, x.side, x.dist);
+    center.forEach((x, i) => put(x.k, (i % 2 === 0 ? 1 : -1), Math.floor(i / 2) + 1));
+  } else {
+    // panning 模式：均值降序（整数交叉乘 panB·cntA vs panA·cntB，禁浮点均值比较；平手 k 升），
+    // 大 panning 靠 +Z 两侧交替；全 0 时平手按 k ⇒ 与单行逐位一致
+    const order = stats.map((s, k) => k).sort((a, b) =>
+      (stats[b].panSum * stats[a].cnt - stats[a].panSum * stats[b].cnt)
+      || (a - b));
+    order.forEach((k, r) => {
+      pos[k] = { dz: c0.dz + (r % 2 === 0 ? 1 : -1) * 3 * (Math.floor(r / 2) + 1), dy: c0.dy };
+    });
+  }
+  return pos;
+}
+$('presetPanBtn').addEventListener('click', () => {
+  const song = AppState.song;
+  if (!song || !song.layers) return;
+  const mode = $('panPresetMode').value === 'volume' ? 'volume' : 'panning';
+  const stats = lanePanStats(song, AppState.lanes);
+  const pos = panPreset(mode, stats, AppState.lanes.length, (AppState.lane0 && AppState.lane0.start) || { dz: 0, dy: 0 });
+  presetAllLanes((c0, k) => pos[k]);
+});
 $('presetLineBtn').addEventListener('click', () => {
   presetAllLanes((c0, k) => ({ dz: c0.dz + (k % 2 === 0 ? 1 : -1) * 3 * (Math.floor(k / 2) + 1), dy: c0.dy }));
 });
