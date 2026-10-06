@@ -1400,7 +1400,7 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
     context.document.getElementById('lyricText');
     check(elements.get('lyric-section').hidden === false, '8l 结构：lyric-section 已显示');
     check(['lyricFileBtn', 'lyricParseBtn', 'lyricText', 'lyricList', 'lyricAddBtn', 'lyricParticle', 'lyricSize',
-      'lyricGap', 'lyricMaxChars', 'lyricRotate', 'lyricFont', 'lyricFontSample', 'lyricFontUploadBtn', 'lyricPosX', 'lyricCanvas', 'lyricLayoutInfo']
+      'lyricGap', 'lyricMaxChars', 'lyricRotate', 'lyricPitch', 'lyricFont', 'lyricFontSample', 'lyricFontUploadBtn', 'lyricPosX', 'lyricCanvas', 'lyricLayoutInfo']
       .every(id => !!elements.get(id)), '8l 结构：导入/设置/句列表/字体/位置窗口控件齐备');
     const fsL0 = elements.get('lyricFontSample');
     check(!!fsL0 && fsL0.textContent === '我的世界' && /LXGW/.test(fsL0.style.fontFamily || ''),
@@ -1471,6 +1471,11 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
     fSel.value = 'lxgw';
     fSel.dispatch('change', { target: fSel });
     check(/LXGW/.test(fsL.style.fontFamily || ''), '8l 设置：字体还原 lxgw → 样例回 LXGW 链');
+    // 6c) 俯仰：pitch 0→2 → settings.lyric 更新 + 输入框回填（xRot 位传透由 validate N 段断言）
+    const pIn = elements.get('lyricPitch');
+    pIn.value = '2';
+    pIn.dispatch('change', { target: pIn });
+    check(stL2.settings.lyric.pitch === 2 && pIn.value === '2', '8l 设置：俯仰改 0→2 → settings.lyric.pitch=2 且输入框回填');
     // 7) 删除：✕ → 剩 1 句
     elements.get('lyricList').children[0].children[3].dispatch('click', {});
     check(stL2.lyrics.length === 1, '8l 删除：✕ 点击 → 剩 1 句');

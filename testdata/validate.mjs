@@ -2525,18 +2525,18 @@ try {
     const d = api.LYRIC_DEFAULTS;
     if (JSON.stringify(normL(null)) !== JSON.stringify(d) || JSON.stringify(normL({})) !== JSON.stringify(d)) {
       console.log(`FAIL M6 缺省：${JSON.stringify(normL(null))}`); ok = false;
-    } else if (JSON.stringify(normL({ particle: 'minecraft:glow', size: 48, maxChars: 12, rotate: 2,
+    } else if (JSON.stringify(normL({ particle: 'minecraft:glow', size: 48, maxChars: 12, rotate: 2, pitch: 1,
       pos: { x: 1.5, y: -2, z: 7 }, font: 'upload' }))
-      !== JSON.stringify({ particle: 'minecraft:glow', size: 48, gap: 2, maxChars: 12, rotate: 2,
+      !== JSON.stringify({ particle: 'minecraft:glow', size: 48, gap: 2, maxChars: 12, rotate: 2, pitch: 1,
         pos: { x: 1.5, y: -2, z: 7 }, font: 'upload' })) {
       console.log('FAIL M6 合法值保留'); ok = false;
     } else if (JSON.stringify(normL({ particle: ' ', size: 999, gap: -3, maxChars: 2, rotate: 7,
       pos: { x: 1, y: NaN, z: 3 }, font: 'x' }))
-      !== JSON.stringify({ particle: d.particle, size: 64, gap: 0, maxChars: 4, rotate: 0,
+      !== JSON.stringify({ particle: d.particle, size: 64, gap: 0, maxChars: 4, rotate: 0, pitch: 0,
         pos: { ...d.pos }, font: d.font })) {
       console.log(`FAIL M6 非法回退：${JSON.stringify(normL({ particle: ' ', size: 999, gap: -3, maxChars: 2, rotate: 7,
         pos: { x: 1, y: NaN, z: 3 }, font: 'x' }))}`); ok = false;
-    } else console.log('PASS M6 normLyricSettings：缺省兜底 / 合法保留 / 非法回退（size 999→64、gap -3→0、maxChars 2→4、rotate 7→0、pos NaN→缺省、font 非法→lxgw）');
+    } else console.log('PASS M6 normLyricSettings：缺省兜底 / 合法保留（pitch 1）/ 非法回退（size 999→64、gap -3→0、maxChars 2→4、rotate 7→0、pos NaN→缺省、font 非法→lxgw）');
   } catch (e) {
     console.log('FAIL 场景 M 异常:', e.stack || e.message); ok = false;
   }
@@ -2563,10 +2563,10 @@ try {
     if (JSON.stringify(geo) !== JSON.stringify(gExp)) {
       console.log(`FAIL N0 行几何：${JSON.stringify(geo)}（期望 ${JSON.stringify(gExp)}）`); ok = false;
     } else console.log('PASS N0 lyricLineGeoms：X=−widthPx/64 水平居中、Y=3.6/2.4 居中堆叠（lineH=1.2、首行最高）');
-    const cmdL = sfxL('minecraft:end_rod', -1, 3.6, 0, 'lyric/s0000_l0.png', 2, 16);
-    if (cmdL !== 'particleex image minecraft:end_rod -1 3.6 0 lyric/s0000_l0.png 0.03125 0 2 0 0 10 0 0 0 16 null 1 null') {
+    const cmdL = sfxL('minecraft:end_rod', -1, 3.6, 0, 'lyric/s0000_l0.png', 2, 16, 1);
+    if (cmdL !== 'particleex image minecraft:end_rod -1 3.6 0 lyric/s0000_l0.png 0.03125 1 2 0 0 10 0 0 0 16 null 1 null') {
       console.log(`FAIL N0 命令字面：${cmdL}`); ok = false;
-    } else console.log('PASS N0 sfxLyricImageCmd 18 token 字面（scaling 0.03125 / rotate 2 / age 16 / dpb 10 / 静止 / group null）');
+    } else console.log('PASS N0 sfxLyricImageCmd 18 token 字面（scaling 0.03125 / pitch 1 / rotate 2 / age 16 / dpb 10 / 静止 / group null）');
     // --- N1 e2e：合成歌 10 t/s 曲长 100；句 0(0,8,2行) 句 1(20,20 无效 en≤st 跳过) 句 2(50,120 截断) 句 3 无效（NaN 跳过）---
     const nbsN = makeNbs({ tempoTps: 10, songLength: 100, layers: 1, noteSpecs: [
       { tick: 0, layer: 0, instrument: 0, key: 45 },
@@ -2587,7 +2587,7 @@ try {
         { start: 50, end: 120, text: '截断句' },
         { start: NaN, end: 30, text: '无效句' },
       ],
-      settings: { pos: { x: 0, y: 3, z: 0 }, size: 32 },
+      settings: { pos: { x: 0, y: 3, z: 0 }, size: 32, pitch: 2 },
       rowMeta,
     };
     const rN = runE2E(tmpFileN, { lane0: { dz: 0, dy: 0 }, groups: [{ layers: [0] }], groupStarts: [{ dz: 3, dy: 0 }], lyricOpts });
@@ -2600,11 +2600,11 @@ try {
     } else if (!stN.discardedDetails.some(d => d.includes('歌词第 2 句无效')) || !stN.discardedDetails.some(d => d.includes('歌词第 4 句无效'))) {
       console.log(`FAIL N1 无效句明细警告缺失：${JSON.stringify(stN.discardedDetails)}`); ok = false;
     } else console.log('PASS N1 统计：2 句（退化/NaN 句跳过 + discardedDetails 明细）· 3 行 · 190 粒子 · 3 PNG、CB=2 无空 tick 回退');
-    // 2) 命令字面：tick 0 双行居中堆叠（X −1/−0.5、Y 3.6/2.4、age 16）；tick 50 截断 age 100；退化句不产行
+    // 2) 命令字面：tick 0 双行居中堆叠（X −1/−0.5、Y 3.6/2.4、age 16）；tick 50 截断 age 100；退化句不产行；settings pitch=2 传透
     const e0 = tlN.find(e => e.tick === 0), e50 = tlN.find(e => e.tick === 50);
-    const expL0 = sfxL('minecraft:end_rod', -1, 3.6, 0, 'lyric/s0000_l0.png', 0, 16);
-    const expL1 = sfxL('minecraft:end_rod', -0.5, 2.4, 0, 'lyric/s0000_l1.png', 0, 16);
-    const expL3 = sfxL('minecraft:end_rod', -0.75, 3, 0, 'lyric/s0002_l0.png', 0, 100);
+    const expL0 = sfxL('minecraft:end_rod', -1, 3.6, 0, 'lyric/s0000_l0.png', 0, 16, 2);
+    const expL1 = sfxL('minecraft:end_rod', -0.5, 2.4, 0, 'lyric/s0000_l1.png', 0, 16, 2);
+    const expL3 = sfxL('minecraft:end_rod', -0.75, 3, 0, 'lyric/s0002_l0.png', 0, 100, 2);
     if (!e0 || JSON.stringify(e0.lines) !== JSON.stringify([expL0, expL1])) {
       console.log(`FAIL N1 tick 0 行：${JSON.stringify(e0 && e0.lines)}（期望 ${JSON.stringify([expL0, expL1])}）`); ok = false;
     } else if (!e50 || JSON.stringify(e50.lines) !== JSON.stringify([expL3])) {

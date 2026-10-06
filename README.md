@@ -134,11 +134,11 @@ NBS 的自定义乐器（导入的 .ogg 声音文件，ID ≥ defaultInstruments
 NBS 格式没有歌词字段，歌词在**「粒子歌词」section**（参考车道池之后、设置之前）独立导入：把一句句歌词渲染成整行 PNG 字库、随数据包 zip 导出，游戏内由 `particleex image` 命令逐句生成粒子显示（依赖 `particleex` 模组，与节奏参考声道同族）。
 
 - **导入**：「选择 LRC/文本」文件或 textarea 粘贴，点「解析」生成句列表（每句一行：起始/结束 tick 输入框（title 显示换算秒）+ 文本输入 + ✕ 删除；「＋ 添加句」手动增补）。**LRC**：`[mm:ss.xx]` 时间戳，秒→tick = round(sec × tempo)，一行可多时间戳（多句同文本），`ar:`/`ti:` 等元数据行跳过；**纯文本**（无时间戳）：按非空行均分全曲长。缺省 end = 下一句 start，末句 end = 曲长。重叠/超曲长/空文本/时间非法只提示不阻断
-- **设置**：**字体源**（CDN LXGW WenKai Lite（SIL OFL，jsdelivr webfont）/ 系统楷体链 / 本地上传 ttf·otf（FontFace 运行时加载，**不持久化**——刷新后需重传）；select 旁实时渲染「我的世界」样例供预览；CDN 加载 5s 超时自动回退系统楷体链并在生成摘要提示）、**字号**（16/24/32/48/64，缺省 32）、**字距**（像素，缺省 2）、**每行字数**（自动换行，缺省 8）、**粒子名**（缺省 `minecraft:end_rod`）、**旋转**（0/90/180/270°，朝向以游戏实测为准）、**歌词位置**（布局编辑器第三窗口「歌词位置」，Y-Z 截面拖拽「歌词中心点」，缺省 (0,3,0)）
+- **设置**：**字体源**（CDN LXGW WenKai Lite（SIL OFL，jsdelivr webfont）/ 系统楷体链 / 本地上传 ttf·otf（FontFace 运行时加载，**不持久化**——刷新后需重传）；select 旁实时渲染「我的世界」样例供预览；CDN 加载 5s 超时自动回退系统楷体链并在生成摘要提示）、**字号**（16/24/32/48/64，缺省 32）、**字距**（像素，缺省 2）、**每行字数**（自动换行，缺省 8）、**粒子名**（缺省 `minecraft:end_rod`）、**旋转**（偏航 0/90/180/270°，缺省 0°）、**俯仰**（0/90/180/270°，缺省 0°；90° = 文字躺平朝上；朝向以游戏实测为准）、**歌词位置**（布局编辑器第三窗口「歌词位置」，Y-Z 截面拖拽「歌词中心点」，缺省 (0,3,0)）
 - **渲染**：每句按每行字数分行，每行 canvas 渲染（白字透明底）→ 按不透明边界裁剪为整行 PNG（`lyric/s{句序号04d}_l{行}.png`，文件名 ASCII，与命令一一对应）；canvas 尺寸上限守护（2000×1000，超宽行告警跳过）
 - **命令**（每行一条，写入该句**起始 tick** 的 `<t>.mcfunction`，18 token）：
-  `particleex image <粒子> <X> <Y> <Z> <path> 0.03125 0 <rotate> 0 0 10 0 0 0 <age> null 1 null`
-  ——scaling 固定 1/32 = 1 格/32px；X = 位置.x − 行宽/2（行水平居中）、Y = 位置.y + 行偏移（行高 = 字号/32×1.2，句内多行以中心垂直堆叠）、Z = 位置.z；**age = (end−start)×2 游戏 tick**（1 NBS tick = 2 游戏 tick）到期**模组端自动消失**（`setMaxAge`，模组源码实锤）→ 句末**无 remove 行**；group null。起始 tick 轨道 0 主位放底座命令方块（`function nbs2sfx:<t>`，与参考声道同一套 CB 支撑）
+  `particleex image <粒子> <X> <Y> <Z> <path> 0.03125 <pitch> <rotate> 0 0 10 0 0 0 <age> null 1 null`
+  ——scaling 固定 1/32 = 1 格/32px；`<pitch>` = 俯仰（xRot，0-3）、`<rotate>` = 偏航（yRot，0-3）；X = 位置.x − 行宽/2（行水平居中）、Y = 位置.y + 行偏移（行高 = 字号/32×1.2，句内多行以中心垂直堆叠）、Z = 位置.z；**age = (end−start)×2 游戏 tick**（1 NBS tick = 2 游戏 tick）到期**模组端自动消失**（`setMaxAge`，模组源码实锤）→ 句末**无 remove 行**；group null。起始 tick 轨道 0 主位放底座命令方块（`function nbs2sfx:<t>`，与参考声道同一套 CB 支撑）
 - **数据包**：zip 条件放宽为「**有参考声道或有歌词**」——纯歌词（无参考声道）也产 zip（pack.mcmeta + 歌词 function + PNG 条目 `data/nbs2sfx/lyric/*.png`，二进制条目，STORE 零依赖自写写入器 + CRC32）
 - **部署**：从数据包 zip 取 `data/nbs2sfx/lyric/` 目录**整体复制到 `.minecraft/particleImages/lyric/`**（模组 image 命令读客户端本地 `./particleImages/` 相对路径，支持子目录，按 (文件, scaling) 缓存），与 datapacks 部署相互独立
 - **持久化**：导入的歌词（`lyrics`，tick 整数）与设置（`settings.lyric`）进 per-song 载荷（可选键，旧存档无此键 = 无歌词，产物逐位不变；v=2 不变）；字体文件不持久化
@@ -200,4 +200,4 @@ node gen-example.mjs # 重新生成示例 .litematic
 - [ ] 音符盒上方无遮挡（发声正常）
 - [ ] 参考声道（如有）：粒子数据包已放入 datapacks 且 `/reload` 成功（无红字报错）；链推进时参考 tick 处粒子出现，与音符盒演奏同 tick；「发声」勾选的参考声道在普通轨道有真实盒发声；「发声」未勾选的参考声道普通轨道无盒、无声音（参考车道纯虚拟不生成结构，只剩节奏/音高粒子参考，粒子恒产生）
 - [ ] 自定义乐器 playsound（如有）：自备资源包已放入 resourcepacks（声音 ID 与设置区填写一致）；配置了 sound ID 的乐器音符处为**红石粉代位 + 雪块底座 + 正上方命令方块**（不发声）；演奏到该 tick 时命令方块执行，从代位格位置向全体玩家播出真实音色，音高/音量与 NBS 大致一致（volume >1.0 未校准，偏响属正常）；填 `minecraft:block.portal.trigger` 可免资源包试听末地门音
-- [ ] 粒子歌词（如有）：数据包 zip 内 `data/nbs2sfx/lyric/` 已整体复制到 `.minecraft/particleImages/lyric/`（与 datapacks 部署相互独立）；演奏到各句**起始 tick** 时歌词粒子在设定位置出现（整行图、白字、字号/换行与设置一致）、到句末（age 到期）**自动消失**（无 remove 命令、无残留）；旋转 4 选项选一个朝向正确（缺省 0 = x-y 竖直面朝 z）；位置窗口拖动后出现位置随之移动；CDN 字体加载状态（超时回退系统楷体链、生成摘要有提示）；粒子数性能（32px × 8 字 ≈ 数千粒子/句，长句多行时观察卡顿）
+- [ ] 粒子歌词（如有）：数据包 zip 内 `data/nbs2sfx/lyric/` 已整体复制到 `.minecraft/particleImages/lyric/`（与 datapacks 部署相互独立）；演奏到各句**起始 tick** 时歌词粒子在设定位置出现（整行图、白字、字号/换行与设置一致）、到句末（age 到期）**自动消失**（无 remove 命令、无残留）；旋转 4 选项 + 俯仰 4 选项选一个朝向正确（缺省均 0 = x-y 竖直面朝 z）；位置窗口拖动后出现位置随之移动；CDN 字体加载状态（超时回退系统楷体链、生成摘要有提示）；粒子数性能（32px × 8 字 ≈ 数千粒子/句，长句多行时观察卡顿）
