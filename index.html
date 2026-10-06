@@ -5329,6 +5329,8 @@ async function generate() {
   // buildLayout 为同步长任务（执行期间无 paint），布局段进度 15→60 一次跳完——接受该限制换取
   // buildLayout 保持同步、validate 9 参零回归；分段边界的 await setTimeout(0) 让 UI 有机会 paint。
   const genBar = $('genProgress'), genFill = $('genProgressFill'), genBtn = $('generateBtn');
+  // 本次生成的歌词警告节点（失败/重试时整体移除，避免 #warnings 跨次累积）
+  const lyricWarnDivs = [];
   let lastPct = -1;
   const setStage = (label, lo, hi, frac = 1) => {
     const p = Math.max(0, Math.min(100, Math.round(lo + (hi - lo) * Math.max(0, Math.min(1, frac)))));
@@ -5336,11 +5338,26 @@ async function generate() {
     $('genStatus').textContent = label;
     if (p !== lastPct) { lastPct = p; genFill.style.width = p + '%'; }
   };
+  // 失败出口统一复位：隐藏下载/数据包/调试按钮（不亮旧产物）、清歌词警告与统计面板（不亮旧卡片）、
+  // 进度条归零隐藏、恢复按钮、清 genStatus（含拖入未发声音轨残留的琥珀色）
+  const failReset = () => {
+    $('downloadBtn').hidden = true;
+    $('sfxZipBtn').hidden = true;
+    $('debugBtn').hidden = true;
+    while (lyricWarnDivs.length) lyricWarnDivs.pop().remove();
+    $('statsPanel').innerHTML = '';
+    $('statsPanel').hidden = true;
+    lastPct = -1;
+    genFill.style.width = '0';
+    genBar.hidden = true;
+    genBtn.disabled = false;
+    $('genStatus').textContent = '';
+    $('genStatus').style.color = '';
+  };
   genBtn.disabled = true;
   setStage('生成中…', 0, 15, 0);
   await new Promise(r => setTimeout(r, 30)); // 让 UI 刷新
 
-  let genOk = false;
   try {
     // 防陈旧产物：先清上一次结果（本次失败时下载按钮不得亮着旧字节）
     AppState.result = null;
@@ -5352,17 +5369,19 @@ async function generate() {
     const delays = computeDelays(song.tempo, effectiveTickCount(song)); // 覆盖 songLength 及可能的超出音符；固定挡位全歌恒定
     // 体积上限预估（Uint16Array 内存 ×2 字节 + 位打包开销）；主链恒 1 档：每 NBS tick 恒 2 格
     // 余量来源：+10 = X 向安全余量（buildLayout 的 xMax = ticks×2 恰为链尾）；
-    //   +3 = 与 buildLayout 的 sy = maxYb + 3 一致（顶层赭黄蛙灯导轨在 yb+2）；
-    //   +5 = Z 向估计上限（buildLayout 的 sz = zMax + zOffset + 2，zOffset ≥ 1；起点为负时实际更大，
-    //   本预估偏大是安全方向——只用于拒绝超限，不用于产物尺寸）
+    //   +3 = 与 buildLayout 的 sy = maxYb + yOffset + 3 一致（顶层赭黄蛙灯导轨在 yb+2）；
+    //   +5 = Z 向安全余量（buildLayout 的 sz = zMax + zOffset + 2，zOffset ≥ 1）
     const estX = delays.length * 2 + 10;
-    // 2026-09-07 参考车道虚拟化：参考车道不生成任何物理结构 → 体积只由真实链（轨道 0 + 普通车道）决定
-    const estY = Math.max(...lanes.map(l => l.start.dy), AppState.lane0.start.dy, 0) + 3;
-    const estZ = Math.max(...lanes.map(l => l.start.dz), AppState.lane0.start.dz, 0) + 5;
+    // 2026-09-07 参考车道虚拟化：参考车道不生成任何物理结构 → 体积只由真实链（轨道 0 + 普通车道）决定；
+    // 负起点时网格整体平移（yOffset/zOffset，见 buildLayout），实际跨度 = max − min（min 可为负），
+    // 故按 max−min 预估才能与 buildLayout 的真实包围盒一致（起点为负时跨度更大，只估 max 会绕过 40M 上限）
+    const ys = lanes.map(l => l.start.dy), zs = lanes.map(l => l.start.dz);
+    const estY = Math.max(...ys, AppState.lane0.start.dy) - Math.min(...ys, AppState.lane0.start.dy, 0) + 3;
+    const estZ = Math.max(...zs, AppState.lane0.start.dz) - Math.min(...zs, AppState.lane0.start.dz, 0) + 5;
     // 4000 万格：Uint16Array 2 字节/格 ≈ 80MB 网格 + 调色板/位打包/产物 NBT 开销，防止浏览器内存打爆
     if (estX * estY * estZ > 40_000_000) {
       showError(`预估体素 ${estX}×${estY}×${estZ} = ${((estX * estY * estZ) / 1e6).toFixed(0)}M 格，超过 4000 万格上限，请减少音轨或缩短歌曲`);
-      $('genStatus').textContent = '';
+      failReset();
       return;
     }
     // 粒子歌词：先渲染全部行 PNG（裁剪后像素尺寸 + 字节），行几何与命令在 buildLayout 内同源生成
@@ -5371,6 +5390,7 @@ async function generate() {
     for (const w of lyricPng.warnings) {
       const d = document.createElement('div'); d.className = 'w'; d.textContent = '⚠ ' + w;
       $('warnings').appendChild(d);
+      lyricWarnDivs.push(d); // 失败/重试时由 failReset 统一移除
     }
     const result = buildLayout(song,
       lanes.map(l => ({ layers: l.tracks })), lanes.map(l => l.start),
@@ -5409,7 +5429,7 @@ async function generate() {
     });
     if (!verify.ok) {
       showError('产物自检失败：' + verify.message);
-      $('genStatus').textContent = '';
+      failReset();
       return;
     }
     // gzip 往返：解压产物与未压缩 NBT 逐字节一致（浏览器压缩流自检）
@@ -5418,19 +5438,19 @@ async function generate() {
         const roundtrip = await gunzipBytes(gz);
         if (roundtrip.length !== nbtBytes.length) {
           showError(`产物自检失败：gzip 解压后长度 ${roundtrip.length} ≠ NBT 长度 ${nbtBytes.length}`);
-          $('genStatus').textContent = '';
+          failReset();
           return;
         }
         for (let i = 0; i < nbtBytes.length; i++) {
           if (roundtrip[i] !== nbtBytes[i]) {
             showError(`产物自检失败：gzip 往返字节 ${i} 不一致`);
-            $('genStatus').textContent = '';
+            failReset();
             return;
           }
         }
       } catch (e) {
         showError(`产物自检失败：gzip 解压异常（${e.message}）`);
-        $('genStatus').textContent = '';
+        failReset();
         return;
       }
     }
@@ -5457,13 +5477,11 @@ async function generate() {
       + (result.stats.lyricSentences > 0 ? ` ｜ 歌词 ${result.stats.lyricSentences} 句 · ${result.stats.lyricParticles.toLocaleString()} 粒子 · PNG ${result.stats.lyricPngs}（部署：.minecraft/particleImages/lyric/）` : '');
     renderStats();
     renderPreviews();
-    genOk = true;
   } catch (err) {
     showError(err.message || String(err), err);
-    $('genStatus').textContent = '';
+    failReset();
   } finally {
-    genBtn.disabled = false;
-    if (!genOk) { lastPct = -1; genFill.style.width = '0'; genBar.hidden = true; } // 失败复位进度条（成功保持 100%）
+    genBtn.disabled = false; // 失败复位已由 failReset 覆盖；成功路径保持 100%
   }
 }
 
