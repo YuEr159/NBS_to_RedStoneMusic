@@ -9,6 +9,15 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// 预清理：清除上次运行残留的合成 NBS（本脚本每次重建它们，只写不读）
+for (const f of readdirSync(__dirname)) if (/^synth_.*\.nbs$/.test(f)) rmSync(path.join(__dirname, f));
+
+// PASS/FAIL 计数（包裹全局 console.log，统计所有断言输出）
+let passedCnt = 0, failedCnt = 0;
+const _log = console.log.bind(console);
+console.log = (...a) => { const s = String(a[0] ?? ''); if (/^PASS\b/.test(s)) passedCnt++; else if (/^FAIL\b/.test(s)) failedCnt++; _log(...a); };
+
 const html = readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
 const m = html.match(/<script>([\s\S]*)<\/script>/);
 if (!m) { console.error('FAIL: 未找到 <script> 块'); process.exit(1); }
@@ -653,10 +662,7 @@ function makeNbs({ version = 5, tempoTps = 20, layers = 1, songLength = 8, noteS
     else console.log('PASS M3 X 跨度 18（每段 2 格）');
     if (d1.result.stats.notesPlaced !== 4) { console.log(`FAIL M3 音符 ${d1.result.stats.notesPlaced} ≠ 4`); ok = false; }
     else console.log('PASS M3 音符全部放置');
-    // 恒 1 档：任何 tempo 延迟均为 1，R = 2×tempo
-    const delays = computeDelays(20, 9);
-    if (!delays.every(d => d === 1)) { console.log('FAIL M3 延迟非恒定 1', delays.join(',')); ok = false; }
-    else console.log('PASS M3 tempo=20 延迟全为 1（恒 1 档）');
+    // 恒 1 档：任何 tempo 延迟均为 1（computeDelays 现返回 tick 数，延迟由 playbackPlan 承载），R = 2×tempo
     const plan20 = context.playbackPlan(20);
     if (!(plan20.delay === 1 && Math.abs(plan20.tickRate - 40) < 1e-9)) {
       console.log(`FAIL M3 playbackPlan(20) D=${plan20.delay} R=${plan20.tickRate}（期望 1/40）`); ok = false;
@@ -2802,4 +2808,5 @@ try {
   } else console.log('PASS P6 buildLayout 第 10 参 progress：产物逐位一致、fraction 单调递增末值 1');
 }
 
+console.log(`汇总：共 ${passedCnt + failedCnt} 项 — ${passedCnt} PASS / ${failedCnt} FAIL`);
 process.exit(ok ? 0 : 1);

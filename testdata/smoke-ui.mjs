@@ -110,8 +110,8 @@ context.window = context;
 vm.createContext(context);
 vm.runInContext(code, context);
 
-let failed = 0;
-const check = (cond, msg) => { if (!cond) { failed++; console.log('FAIL', msg); } else console.log('PASS', msg); };
+let failed = 0, passed = 0;
+const check = (cond, msg) => { if (!cond) { failed++; console.log('FAIL', msg); } else { passed++; console.log('PASS', msg); } };
 
 // 模拟用户：载入 demo_song.nbs
 const { parseNBS } = context.window.__NBS2SCHEMATIC;
@@ -1779,4 +1779,5 @@ context.onSongLoaded(context.parseNBS(new Uint8Array(v5Buf)), null);
 infoHtml = elements.get('songInfo').innerHTML;
 check(!infoHtml.includes('小号'), 'v5 歌曲：ID 16 是自定义乐器而非内置小号，不触发小号提示');
 
+console.log(`汇总：共 ${passed + failed} 项 — ${passed} PASS / ${failed} FAIL`);
 process.exit(failed ? 1 : 0);

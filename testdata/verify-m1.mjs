@@ -46,7 +46,7 @@ const cases = [
   ['v6_sample.nbs', 6, 36, 671, 1022, 18.93, 14],
 ];
 
-let failed = 0;
+let failed = 0, passed = 0;
 for (const [file, expVer, expLayers, expLen, expNotes, expTempo, expUsed] of cases) {
   const bytes = new Uint8Array(readFileSync(path.join(__dirname, file)));
   try {
@@ -66,6 +66,7 @@ for (const [file, expVer, expLayers, expLen, expNotes, expTempo, expUsed] of cas
       failed++;
       console.log(`FAIL ${file}: ${bad.map(([k, g, w]) => `${k}=${g}(期望${w})`).join(', ')}`);
     } else {
+      passed++;
       console.log(`PASS ${file}: v${song.version} ${song.songLayers}层 ${song.songLength}tick ${totalNotes}音符 tempo=${song.tempo}`);
     }
   } catch (err) {
@@ -76,7 +77,7 @@ for (const [file, expVer, expLayers, expLen, expNotes, expTempo, expUsed] of cas
 
 // --- 输入校验：格式嗅探 + 规模上限（防选错文件/损坏文件/超大文件） ---
 const expectParse = (buf) => { try { return { ok: true, song: parseNBS(buf) }; } catch (e) { return { ok: false, msg: e.message }; } };
-const check = (ok, msg) => { if (ok) console.log('PASS ' + msg); else { failed++; console.log('FAIL ' + msg); } };
+const check = (ok, msg) => { if (ok) { passed++; console.log('PASS ' + msg); } else { failed++; console.log('FAIL ' + msg); } };
 
 // 伪造 v7 头（新格式标记 00 00 + version=7）→ 版本嗅探拒绝
 const fakeV7 = new Uint8Array([0x00, 0x00, 0x07, 0x14, 0x08, 0x00, ...Buffer.alloc(40)]);
@@ -104,4 +105,5 @@ check(!r.ok && /文件太小/.test(r.msg), '空文件被拒绝');
 r = expectParse(new Uint8Array([0x00, 0x00, 0x04]));
 check(!r.ok, '3 字节文件被拒绝');
 
+console.log(`汇总：共 ${passed + failed} 项 — ${passed} PASS / ${failed} FAIL`);
 process.exit(failed ? 1 : 0);

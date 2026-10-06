@@ -5,3 +5,5 @@ v*.json
 vm.json
 # 本地工具配置
 .[c]laude/
+# validate.mjs 运行期写入的合成 NBS（只写不读，每次运行前预清理）
+testdata/synth_*.nbs

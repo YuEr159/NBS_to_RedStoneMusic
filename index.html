@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NBS2schematic — 红石音乐投影转换器</title>
+<link rel="icon" href="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%2316181d'/%3E%3Cg fill='%23f0c040'%3E%3Cpath d='M26 12v30a10 10 0 1 1-4-7.9V12z'/%3E%3Cpath d='M26 12h14c5 0 9 4 9 9 0 7-6 13-13 15-3-4-6-7-10-9z'/%3E%3C/g%3E%3C/svg%3E">
 <style>
 :root {
   --bg: #16181d;
@@ -1413,9 +1414,10 @@ function playbackPlan(tempo) {
   }
   return { assumedTps: assumed, delay: 1, tickRate: 2 * tempo };
 }
+// 主链恒 1 档：每 NBS tick 恒 2 格，无逐 tick 延迟数组 → 只返回 tick 数
 function computeDelays(tempo, tickCount) {
   if (!isFinite(tempo) || tempo <= 0) throw new Error(`无法处理的 tempo：${tempo} tps`);
-  return new Array(tickCount).fill(playbackPlan(tempo).delay);
+  return tickCount;
 }
 
 /* ===== 05 电路布局生成（主链 + 底座；触发区由用户手动放置） ===== */
@@ -1480,7 +1482,7 @@ const DEFAULT_RAIL_LIGHT = 'minecraft:ochre_froglight';
 //   （绑定+独立混合，每音符一行，各带各自计算的相对偏移，见 sfxParticleCmd）。
 // 类型选型按参考车道（用户 2026-09-04 定）：refLanes[l].type 决定该车道全部成员的粒子类型
 //   （绑定集合/独立行均按成员实际所在参考车道取类型）；refLanes 为 null 时回退按声道 refLayers 取类型（旧行为）。
-function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, refLanes = null, refLayersRef = null, lyricOpts = null, progress = null) {
+function buildLayout(song, groups, groupStarts, nTicks, settings, defaultStart, refLanes = null, refLayersRef = null, lyricOpts = null, progress = null) {
   const refLayers = refLayersRef;
   const customMap = settings.customInstrumentMap;
   const soundMap = (settings && settings.soundIdMap instanceof Map) ? settings.soundIdMap : null;
@@ -1543,7 +1545,6 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
 
   // --- X 跨度 ---
   // 音符可能出现在 tick == songLength（NBS 的 song_length 即最后一个音符的 tick），循环需覆盖
-  const nTicks = delays.length;
   // 主链恒 1 档：每 tick 占 2 格（中继器格 + 主位传导格）
   let xMax = nTicks * 2;
   if (chains.length === 0) throw new Error('没有可生成的车道组（默认轨道 0 未启用且无音轨车道）');
@@ -1819,17 +1820,12 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
     const ps = normLyricSettings(lyricOpts.settings);
     const out = [];
     for (let i = 0; i < lyricOpts.sentences.length; i++) {
-      const snt = lyricOpts.sentences[i] || {};
-      const txt = String(snt.text || '').trim();
-      const st = Math.round(Number(snt.start));
-      const en = Math.round(Number(snt.end));
-      if (!txt || !Number.isFinite(st) || !Number.isFinite(en) || en <= st) {
+      const nm = lyricNormalizeSentence(lyricOpts.sentences[i] || {}, S);
+      if (!nm) {
         stats.discardedDetails.push(`歌词第 ${i + 1} 句无效（文本空或时间非法）：跳过`);
         continue;
       }
-      const start = Math.max(0, st);
-      let end = Math.min(en, S > 0 ? S : en);
-      if (end <= start) end = start + 1;
+      const { start, end } = nm;
       const rows = lyricLineGeoms({ age: (end - start) * 2 },
         (lyricOpts.rowMeta && lyricOpts.rowMeta[i]) || [], i, ps);
       if (rows.length === 0) continue;
@@ -1842,7 +1838,6 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
     for (const snt of lyricOptsN.out) sfxLyricTicks.add(snt.start);
   }
   for (let t = 0; t < nTicks; t++) {
-    const d = delays[t];
     const cells = 2; // 主链恒 1 档：每 NBS tick 恒 2 格（中继器格 + 主位传导格）
 
     for (const c of chains) {
@@ -1877,7 +1872,7 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
         // 标准段：中继器格 + 音符格
         // 音符盒是红石导体：主音符盒被中继器输出端强充能 → 发声 + 导电 + 激活两侧紧挨的第 2/3 音符盒
         // 无音符 tick 主位放红石粉直通传导
-        const repDelay = Math.min(4, d);
+        const repDelay = 1; // 主链恒 1 档
         W(xCur, ySig, zc, `minecraft:repeater[facing=west,delay=${repDelay},locked=false,powered=false]`);
         W(xCur, yb, zc, 'minecraft:snow_block');
         stats.repeaters++;
@@ -2265,6 +2260,21 @@ function buildSfxFunctions(song, refLayers, sfxTickList = null) {
 //   lyricPngs：Map('lyric/s0000_l0.png' → PNG 字节)，文件名规则与 lyricLineGeoms 完全一致
 //   （同一 li/r → 同一 fileName，命令与字库一一对应）。
 // 无效句（空文本/时间非法/行渲染失败）：进 result.warnings 跳过，不阻断生成。
+// 歌词句时间归一（buildLayout 与 buildLyricPngs 共用，保证两处理词一致）：
+// 无效（空文本/时间非数/end≤start）→ null；start 下限钳 0、end 钳曲长（S=0 不钳）；
+// 钳后 end≤start（整句超出歌曲范围）→ null（跳过，不生成命令/PNG）
+function lyricNormalizeSentence(snt, songLen) {
+  const txt = String(snt.text || '').trim();
+  const st = Math.round(Number(snt.start));
+  const en = Math.round(Number(snt.end));
+  if (!txt || !Number.isFinite(st) || !Number.isFinite(en) || en <= st) return null;
+  const S = Math.max(0, Math.round(songLen || 0));
+  const start = Math.max(0, st);
+  const end = Math.min(en, S > 0 ? S : en);
+  if (end <= start) return null;
+  return { start, end };
+}
+
 async function buildLyricPngs(onProgress = null) {
   const res = { rowMeta: [], lyricPngs: new Map(), warnings: [] };
   const sents = Array.isArray(AppState.lyrics) ? AppState.lyrics : [];
@@ -2277,19 +2287,13 @@ async function buildLyricPngs(onProgress = null) {
     : (!ready && ps.font === 'upload') ? '（上传字体未就绪，已用回退字体链）' : '';
   for (let i = 0; i < sents.length; i++) {
     const snt = sents[i] || {};
-    const txt = String(snt.text || '').trim();
-    const st = Math.round(Number(snt.start));
-    const en = Math.round(Number(snt.end));
-    if (!txt || !Number.isFinite(st) || !Number.isFinite(en) || en <= st) {
+    const nm = lyricNormalizeSentence(snt, S);
+    if (!nm) {
       res.warnings.push(`歌词第 ${i + 1} 句无效（文本空或时间非法），已跳过`);
       continue;
     }
-    const start = Math.max(0, st);
-    const end = Math.min(en, S > 0 ? S : en);
-    if (end <= start) {
-      res.warnings.push(`歌词第 ${i + 1} 句时间超出歌曲范围，已跳过`);
-      continue;
-    }
+    const { start, end } = nm;
+    const txt = String(snt.text || '').trim();
     const rows = lyricWrapChars(txt, ps.maxChars);
     const meta = [];
     for (let r = 0; r < rows.length; r++) {
@@ -4801,7 +4805,6 @@ class LayoutEditor {
     ctx.fillText('Z →', W - 36, H - 8);
     ctx.fillText('Y ↑', 6, 16);
     // 校验冲突标记（仅 main 窗口：ref/lyric 窗口全部标记为虚拟几何，重叠=粒子叠放/槽位参照，无冲突语义）
-    const { warnings, errors } = this.validate();
     const errorPairs = new Set(), warnPairs = new Set();
     const items = this.starts();
     if (this.mode !== 'ref' && this.mode !== 'lyric') {
@@ -5164,21 +5167,32 @@ class NbtReader {
 }
 
 // 位解包（LitematicaBitArray 语义：LSB-first、可跨 long 边界）
+// 性能：BigInt64Array 预拆成 lo/hi 两个 Uint32 表示后全走 Number 位运算（免逐体素 BigInt）
 function decodePacked(longs, bits, count) {
-  const mask = (1n << BigInt(bits)) - 1n;
+  const mask = (1 << bits) - 1; // bits < 32（Litematica bits = ceil(log2(palette 数))）
+  const lo = new Uint32Array(longs.length), hi = new Uint32Array(longs.length);
+  for (let k = 0; k < longs.length; k++) {
+    const L = BigInt.asUintN(64, longs[k]);
+    lo[k] = Number(L & 0xFFFFFFFFn);
+    hi[k] = Number((L >> 32n) & 0xFFFFFFFFn);
+  }
   const out = new Array(count);
   for (let i = 0; i < count; i++) {
     const start = i * bits;
-    const li = Math.floor(start / 64);
-    const shift = start % 64;
-    // BigInt64Array 元素有符号：必须 asUintN 转无符号再右移（Java 用 >>> 无符号移位）
-    const L = BigInt.asUintN(64, longs[li]);
-    let v = (L >> BigInt(shift)) & mask;
-    if (shift + bits > 64 && li + 1 < longs.length) {
-      const L2 = BigInt.asUintN(64, longs[li + 1]);
-      v = ((L >> BigInt(shift)) | (L2 << BigInt(64 - shift))) & mask;
+    const s = start & 63;
+    const li = start >> 6;
+    let v;
+    if (s === 0) v = lo[li] & mask;
+    else if (s < 32) {
+      v = (lo[li] >>> s) & mask;
+      if (s + bits > 32) v |= (hi[li] & ((1 << (s + bits - 32)) - 1)) << (32 - s);
+    } else {
+      v = hi[li] >>> (s - 32) & mask;
     }
-    out[i] = Number(v);
+    if (s + bits > 64 && li + 1 < longs.length) {
+      v = (v | (lo[li + 1] << (64 - s))) & mask; // 跨 long：低位拼下一个 long 的低 64−s 位
+    }
+    out[i] = v;
   }
   return out;
 }
@@ -5371,7 +5385,7 @@ async function generate() {
     // 余量来源：+10 = X 向安全余量（buildLayout 的 xMax = ticks×2 恰为链尾）；
     //   +3 = 与 buildLayout 的 sy = maxYb + yOffset + 3 一致（顶层赭黄蛙灯导轨在 yb+2）；
     //   +5 = Z 向安全余量（buildLayout 的 sz = zMax + zOffset + 2，zOffset ≥ 1）
-    const estX = delays.length * 2 + 10;
+    const estX = delays * 2 + 10;
     // 2026-09-07 参考车道虚拟化：参考车道不生成任何物理结构 → 体积只由真实链（轨道 0 + 普通车道）决定；
     // 负起点时网格整体平移（yOffset/zOffset，见 buildLayout），实际跨度 = max − min（min 可为负），
     // 故按 max−min 预估才能与 buildLayout 的真实包围盒一致（起点为负时跨度更大，只估 max 会绕过 40M 上限）
@@ -5866,12 +5880,13 @@ $('targetVersion').addEventListener('change', (e) => {
   scheduleStateSave();
 });
 $('customInstSelects').addEventListener('change', (e) => {
+  // 乐器映射下拉 与 资源包声音 ID 输入 各走各的分支（同容器内两类控件）
   const sel = e.target.closest('.custom-inst-select');
-  if (!sel) return;
-  AppState.settings.customInstrumentMap.set(parseInt(sel.dataset.instId, 10), parseInt(sel.value, 10));
-  scheduleStateSave();
-});
-$('customInstSelects').addEventListener('change', (e) => {
+  if (sel) {
+    AppState.settings.customInstrumentMap.set(parseInt(sel.dataset.instId, 10), parseInt(sel.value, 10));
+    scheduleStateSave();
+    return;
+  }
   // 资源包声音 ID（2026-09-29 playsound 路线）：合法才写入（trim 规范化）；空串 = 显式不配置（delete）；
   //   非法 → 保持旧值并回填输入框（title 已说明规则）
   const inp = e.target.closest('.custom-inst-sound');
@@ -5969,7 +5984,7 @@ function panPreset(mode, stats, nLanes, c0) {
       pos[k] = { dz: c0.dz + side * 3 * slot, dy: c0.dy };
     };
     for (const x of nonCenter) put(x.k, x.side, x.dist);
-    center.forEach((x, i) => put(x.k, (i % 2 === 0 ? 1 : -1), Math.floor(i / 2) + 1));
+    center.forEach((x, i) => put(x.k, altSlot(i).side, altSlot(i).slot));
   } else {
     // panning 模式：均值降序（整数交叉乘 panB·cntA vs panA·cntB，禁浮点均值比较；平手 k 升），
     // 大 panning 靠 +Z 两侧交替；全 0 时平手按 k ⇒ 与单行逐位一致
@@ -5977,11 +5992,14 @@ function panPreset(mode, stats, nLanes, c0) {
       (stats[b].panSum * stats[a].cnt - stats[a].panSum * stats[b].cnt)
       || (a - b));
     order.forEach((k, r) => {
-      pos[k] = { dz: c0.dz + (r % 2 === 0 ? 1 : -1) * 3 * (Math.floor(r / 2) + 1), dy: c0.dy };
+      const { side, slot } = altSlot(r);
+      pos[k] = { dz: c0.dz + side * 3 * slot, dy: c0.dy };
     });
   }
   return pos;
 }
+// rank 交替槽位：偶 rank +Z 侧 / 奇 rank −Z 侧，槽位 1,2,3…（单行/网格/声像 volume 中心放置共用）
+const altSlot = (rank) => ({ side: rank % 2 === 0 ? 1 : -1, slot: Math.floor(rank / 2) + 1 });
 $('presetPanBtn').addEventListener('click', () => {
   const song = AppState.song;
   if (!song || !song.layers) return;
@@ -5991,14 +6009,13 @@ $('presetPanBtn').addEventListener('click', () => {
   presetAllLanes((c0, k) => pos[k]);
 });
 $('presetLineBtn').addEventListener('click', () => {
-  presetAllLanes((c0, k) => ({ dz: c0.dz + (k % 2 === 0 ? 1 : -1) * 3 * (Math.floor(k / 2) + 1), dy: c0.dy }));
+  presetAllLanes((c0, k) => { const { side, slot } = altSlot(k); return { dz: c0.dz + side * 3 * slot, dy: c0.dy }; });
 });
 $('presetGridBtn').addEventListener('click', () => {
   const h = parseInt($('gridHeight').value, 10) || 5;
   presetAllLanes((c0, k) => {
-    const m = Math.floor(k / 2);            // 0 基行号（中间行 0，向上下递增）
-    const sgn = k % 2 === 0 ? 1 : -1;       // 偶位 +Z 侧 / 奇位 -Z 侧
-    return { dz: c0.dz + sgn * 3 * (m + 1), dy: c0.dy + sgn * h * m };
+    const { side: sgn, slot } = altSlot(k);  // 0 基行号 = slot−1（中间行 0，向上下递增）
+    return { dz: c0.dz + sgn * 3 * slot, dy: c0.dy + sgn * h * (slot - 1) };
   });
 });
 $('presetRadialBtn').addEventListener('click', () => {
