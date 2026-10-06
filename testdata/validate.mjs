@@ -149,7 +149,8 @@ function decodePacked(longs, bits, count) {
 // ---------- 端到端流程 ----------
 // refLayers：Map<声部下标, {type:'bound'|'independent', sound:bool}>（节奏参考双类型，旧 bool 值按MIDI式迁移）；传入后 buildLayout 在轨道 0 生成命令方块
 // refLanes：参考车道池 [{tracks, type, start, effects?}]（纯虚拟：不生成任何物理结构，2026-09-07 起仅粒子锚点几何；传数组即启用 refMode——单线式粒子锚定参考车道虚拟槽位；effects 缺省 = 三类特效全选）
-function runE2E(nbsFile, { autoGroup = true, groups = null, groupStarts = null, settings = null, targetMc = null, lane0 = null, refLayers = null, refLanes = null } = {}) {
+// lyricOpts：歌词第 9 参 {sentences:[{start,end,text}], settings, rowMeta:[[ {widthPx,pixels} …] … ]}（2026-10-06；不传 → 零产出零回归）
+function runE2E(nbsFile, { autoGroup = true, groups = null, groupStarts = null, settings = null, targetMc = null, lane0 = null, refLayers = null, refLanes = null, lyricOpts = null } = {}) {
   const bytes = new Uint8Array(readFileSync(path.join(__dirname, nbsFile)));
   const song = parseNBS(bytes);
   let maxTick = song.songLength;
@@ -176,7 +177,7 @@ function runE2E(nbsFile, { autoGroup = true, groups = null, groupStarts = null, 
     ...(Array.isArray(l.effects) ? { effects: [...l.effects] } : {}),
     ...(l.sfxParams && typeof l.sfxParams === 'object' ? { sfxParams: { ...l.sfxParams } } : {}) }));
   const result = buildLayout(song, groups2, starts, delays, s, lane0,
-    refLanes === null ? null : refGroups, refLayers);
+    refLanes === null ? null : refGroups, refLayers, lyricOpts);
   const palette = buildPalette(result.grid);
   const packed = packBlockStates(result.grid.data, palette.length);
   let totalBlocks = 0;
@@ -2451,6 +2452,296 @@ try {
     keep4.fileBytes = prevFileBytes;
   } catch (e) {
     console.log('FAIL 场景 L 异常:', e.stack || e.message); ok = false;
+  }
+}
+
+// ===== 场景 M：粒子歌词 LRC/纯文本解析纯函数（2026-10-06 用户定）=====
+// tempo = NBS 语义 ticks/秒（parseNBS：u16/100.0）；秒 → tick = round(sec × tempo)
+{
+  const api = context.window.__NBS2SCHEMATIC;
+  const parse = api.lyricParse, normL = api.normLyricSettings;
+  try {
+    // --- M1 标准 LRC：换算 / 缺省 end=下一句 start / 末句 end=min(下一句 start, 曲长) ---
+    const r1 = parse('[00:00.50]你好世界\n[00:01.20]第二段\n[00:02.00]最后\n', 10, 100);
+    const t1 = r1.lines.map(l => [l.start, l.end, l.text]);
+    if (JSON.stringify(t1) !== JSON.stringify([[5, 12, '你好世界'], [12, 20, '第二段'], [20, 100, '最后']])
+      || r1.warnings.length !== 0) {
+      console.log(`FAIL M1 标准 LRC：${JSON.stringify(t1)} w=${JSON.stringify(r1.warnings)}`); ok = false;
+    } else console.log('PASS M1 标准 LRC：0.50/1.20/2.00s @10t/s → 5/12/20 tick、缺省 end、末句 end=曲长 100');
+    // --- M2 一行多时间戳 + 元数据行跳过（10 t/s：0/2/4s → 0/20/40 tick，S=50）---
+    const r2 = parse('[ar:Test]艺人\n[00:00.00][00:02.00]同一句\n[ti:歌名]\n[00:04.00]第三句\n', 10, 50);
+    const t2 = r2.lines.map(l => [l.start, l.end, l.text]);
+    if (JSON.stringify(t2) !== JSON.stringify([[0, 20, '同一句'], [20, 40, '同一句'], [40, 50, '第三句']])) {
+      console.log(`FAIL M2 多时间戳/元数据：${JSON.stringify(t2)}`); ok = false;
+    } else console.log('PASS M2 一行多时间戳（0/20 各一句同文本）+ ar:/ti: 元数据行跳过');
+    // --- M3 纯文本均分（无时间戳 → 按非空行均分 [0, 曲长]）---
+    const r3 = parse('第一行\n\n第二行\n第三行\n第四行\n', 10, 100);
+    const t3 = r3.lines.map(l => [l.start, l.end]);
+    if (JSON.stringify(t3) !== JSON.stringify([[0, 25], [25, 50], [50, 75], [75, 100]])
+      || r3.lines.length !== 4) {
+      console.log(`FAIL M3 纯文本均分：${JSON.stringify(t3)}`); ok = false;
+    } else console.log('PASS M3 纯文本均分：4 非空行 × 25 tick（空行跳过）');
+    // --- M4 警告：起始超曲长（含 start==S 边界）跳过（乱序按 tick 排序，重叠由 lyricCheck 承担）---
+    const r4 = parse('[00:01.50]a\n[00:01.00]b\n', 10, 10);
+    const t4 = r4.lines.map(l => [l.start, l.end, l.text]);
+    if (JSON.stringify(t4) !== JSON.stringify([])) {
+      console.log(`FAIL M4 截断：${JSON.stringify(t4)} w=${JSON.stringify(r4.warnings)}`); ok = false;
+    } else {
+      const hasSkipA = r4.warnings.some(w => w.includes('a') && w.includes('超出曲长，跳过'));
+      const hasSkipB = r4.warnings.some(w => w.includes('b') && w.includes('超出曲长，跳过'));
+      if (!hasSkipA || !hasSkipB) { console.log(`FAIL M4 警告集：${JSON.stringify(r4.warnings)}`); ok = false; }
+      else console.log('PASS M4 警告：a(15)/b(10=S) 起始均 ≥ 曲长 10 → 跳过（不阻断、乱序按 tick 排序）');
+    }
+    const r4b = parse('[00:01.00]a\n[00:00.50]b\n[00:01.50]c\n', 10, 20);
+    if (r4b.lines.length !== 3 || JSON.stringify(r4b.lines.map(l => [l.start, l.end])) !== JSON.stringify([[5, 10], [10, 15], [15, 20]])
+      || r4b.warnings.length !== 0) {
+      console.log(`FAIL M4b 乱序排列：${JSON.stringify(r4b.lines)} w=${JSON.stringify(r4b.warnings)}`); ok = false;
+    } else console.log('PASS M4b 乱序：按 tick 排序 5/10/15、无警告（end=下一句 start 不算重叠）');
+    // --- M4c lyricCheck：手编句列表的重叠 / 超曲长 / 时间非法 / 空文本 ---
+    const ck = api.lyricCheck;
+    const wCk = ck([{ start: 5, end: 20, text: 'x' }, { start: 10, end: 35, text: 'y' }, { start: 40, end: 50, text: 'z' }], 30);
+    if (!wCk.some(w => w.includes('x') && w.includes('重叠'))
+      || !wCk.some(w => w.includes('y') && w.includes('截断'))
+      || !wCk.some(w => w.includes('z') && w.includes('起始超出曲长'))) {
+      console.log(`FAIL M4c lyricCheck：${JSON.stringify(wCk)}`); ok = false;
+    } else {
+      const wBad = ck([{ start: -1, end: 2, text: '' }, { start: 9, end: 4, text: 'ok' }], 10);
+      if (!wBad.some(w => w.includes('文本为空')) || !wBad.some(w => w.includes('时间非法')) || wBad.some(w => w.includes('ok'))) {
+        console.log(`FAIL M4c lyricCheck 边界：${JSON.stringify(wBad)}`); ok = false;
+      } else console.log('PASS M4c lyricCheck：重叠/截断/超曲长/空文本/时间非法 五类警告齐备');
+    }
+    // --- M5 边界：空文本 / tempo 无效 / 纯文本无曲长 ---
+    if (parse('', 10, 100).lines.length !== 0 || parse(null, 10, 100).lines.length !== 0
+      || parse('   \n\n  ', 10, 100).lines.length !== 0) {
+      console.log('FAIL M5 空文本'); ok = false;
+    } else if (parse('[00:00.50]x', 0, 100).lines.length !== 0
+      || !parse('[00:00.50]x', 0, 100).warnings.some(w => w.includes('tempo'))) {
+      console.log(`FAIL M5 tempo 无效：${JSON.stringify(parse('[00:00.50]x', 0, 100))}`); ok = false;
+    } else if (parse('a\nb', 10, 0).lines.length !== 0
+      || !parse('a\nb', 10, 0).warnings.some(w => w.includes('曲长'))) {
+      console.log(`FAIL M5 纯文本无曲长：${JSON.stringify(parse('a\nb', 10, 0))}`); ok = false;
+    } else console.log('PASS M5 边界：空文本空结果、tempo≤0 警告、纯文本曲长 0 警告');
+    // --- M6 normLyricSettings 缺省兜底与非法回退 ---
+    const d = api.LYRIC_DEFAULTS;
+    if (JSON.stringify(normL(null)) !== JSON.stringify(d) || JSON.stringify(normL({})) !== JSON.stringify(d)) {
+      console.log(`FAIL M6 缺省：${JSON.stringify(normL(null))}`); ok = false;
+    } else if (JSON.stringify(normL({ particle: 'minecraft:glow', size: 48, maxChars: 12, rotate: 2,
+      pos: { x: 1.5, y: -2, z: 7 }, font: 'upload' }))
+      !== JSON.stringify({ particle: 'minecraft:glow', size: 48, gap: 2, maxChars: 12, rotate: 2,
+        pos: { x: 1.5, y: -2, z: 7 }, font: 'upload' })) {
+      console.log('FAIL M6 合法值保留'); ok = false;
+    } else if (JSON.stringify(normL({ particle: ' ', size: 999, gap: -3, maxChars: 2, rotate: 7,
+      pos: { x: 1, y: NaN, z: 3 }, font: 'x' }))
+      !== JSON.stringify({ particle: d.particle, size: 64, gap: 0, maxChars: 4, rotate: 0,
+        pos: { ...d.pos }, font: d.font })) {
+      console.log(`FAIL M6 非法回退：${JSON.stringify(normL({ particle: ' ', size: 999, gap: -3, maxChars: 2, rotate: 7,
+        pos: { x: 1, y: NaN, z: 3 }, font: 'x' }))}`); ok = false;
+    } else console.log('PASS M6 normLyricSettings：缺省兜底 / 合法保留 / 非法回退（size 999→64、gap -3→0、maxChars 2→4、rotate 7→0、pos NaN→缺省、font 非法→lxgw）');
+  } catch (e) {
+    console.log('FAIL 场景 M 异常:', e.stack || e.message); ok = false;
+  }
+}
+
+// ===== 场景 N：粒子歌词 e2e（2026-10-06 用户定：image 命令/age/CB/zip PNG/零回归护栏）=====
+// validate 无 canvas（getContext 返回 null）→ 手构 rowMeta（与 renderLyricLine 输出同构）直接喂
+//   buildLayout 第 9 参，走通 命令生成 → CB 支撑 → 函数管线 → zip PNG 条目 全链路。
+//   lyricPngs 用假 PNG 字节（魔数 + 句序号），zip 断言只验 CRC/字节一致性，不验像素。
+{
+  const api = context.window.__NBS2SCHEMATIC;
+  const { buildSfxDatapackZip, zipCrc32, SFX_CB_STATE } = api;
+  const L = api.lyricLineGeoms, sfxL = api.sfxLyricImageCmd;
+  const PNG_HDR = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+  const fakePng = (n) => new Uint8Array([...PNG_HDR, n & 0xFF, 0xA5, 0x00, 0x00, n & 0xFF]);
+  try {
+    // --- N0 纯函数：lyricLineGeoms 居中堆叠（pos=(0,3,0)、size=32 → lineH=1.2、首行最高）---
+    const geo = L({ age: 16 }, [{ widthPx: 64, pixels: 100 }, { widthPx: 32, pixels: 50 }], 7,
+      { pos: { x: 0, y: 3, z: 0 }, size: 32 });
+    const gExp = [
+      { fileName: 'lyric/s0007_l0.png', X: -1, Y: 3.6, Z: 0, age: 16, widthPx: 64, pixels: 100 },
+      { fileName: 'lyric/s0007_l1.png', X: -0.5, Y: 2.4, Z: 0, age: 16, widthPx: 32, pixels: 50 },
+    ];
+    if (JSON.stringify(geo) !== JSON.stringify(gExp)) {
+      console.log(`FAIL N0 行几何：${JSON.stringify(geo)}（期望 ${JSON.stringify(gExp)}）`); ok = false;
+    } else console.log('PASS N0 lyricLineGeoms：X=−widthPx/64 水平居中、Y=3.6/2.4 居中堆叠（lineH=1.2、首行最高）');
+    const cmdL = sfxL('minecraft:end_rod', -1, 3.6, 0, 'lyric/s0000_l0.png', 2, 16);
+    if (cmdL !== 'particleex image minecraft:end_rod -1 3.6 0 lyric/s0000_l0.png 0.03125 0 2 0 0 10 0 0 0 16 null 1 null') {
+      console.log(`FAIL N0 命令字面：${cmdL}`); ok = false;
+    } else console.log('PASS N0 sfxLyricImageCmd 18 token 字面（scaling 0.03125 / rotate 2 / age 16 / dpb 10 / 静止 / group null）');
+    // --- N1 e2e：合成歌 10 t/s 曲长 100；句 0(0,8,2行) 句 1(20,20 无效 en≤st 跳过) 句 2(50,120 截断) 句 3 无效（NaN 跳过）---
+    const nbsN = makeNbs({ tempoTps: 10, songLength: 100, layers: 1, noteSpecs: [
+      { tick: 0, layer: 0, instrument: 0, key: 45 },
+      { tick: 6, layer: 0, instrument: 0, key: 50 },
+      { tick: 12, layer: 0, instrument: 0, key: 52 },
+    ]});
+    const tmpFileN = 'synth_lyric.nbs';
+    writeFileSync(path.join(__dirname, tmpFileN), nbsN);
+    const rowMeta = [
+      [{ widthPx: 64, pixels: 100 }, { widthPx: 32, pixels: 50 }],
+      [{ widthPx: 16, pixels: 10 }],
+      [{ widthPx: 48, pixels: 40 }],
+    ];
+    const lyricOpts = {
+      sentences: [
+        { start: 0, end: 8, text: '第一句' },
+        { start: 20, end: 20, text: '退化句' },
+        { start: 50, end: 120, text: '截断句' },
+        { start: NaN, end: 30, text: '无效句' },
+      ],
+      settings: { pos: { x: 0, y: 3, z: 0 }, size: 32 },
+      rowMeta,
+    };
+    const rN = runE2E(tmpFileN, { lane0: { dz: 0, dy: 0 }, groups: [{ layers: [0] }], groupStarts: [{ dz: 3, dy: 0 }], lyricOpts });
+    const stN = rN.result.stats, tlN = rN.result.sfxTickList;
+    // 1) 统计：2 句（en≤st 句与 NaN 句均走无效分支跳过）· 3 行 · 190 粒子 · 3 PNG；无空 tick 回退
+    if (stN.lyricSentences !== 2 || stN.lyricLines !== 3 || stN.lyricParticles !== 190 || stN.lyricPngs !== 3) {
+      console.log(`FAIL N1 统计：sent=${stN.lyricSentences} lines=${stN.lyricLines} px=${stN.lyricParticles} png=${stN.lyricPngs}（期望 2/3/190/3）`); ok = false;
+    } else if (stN.sfxEmptyTicks !== 0 || stN.commandBlocks !== 2) {
+      console.log(`FAIL N1 统计：emptyTicks=${stN.sfxEmptyTicks} CB=${stN.commandBlocks}（期望 0/2）`); ok = false;
+    } else if (!stN.discardedDetails.some(d => d.includes('歌词第 2 句无效')) || !stN.discardedDetails.some(d => d.includes('歌词第 4 句无效'))) {
+      console.log(`FAIL N1 无效句明细警告缺失：${JSON.stringify(stN.discardedDetails)}`); ok = false;
+    } else console.log('PASS N1 统计：2 句（退化/NaN 句跳过 + discardedDetails 明细）· 3 行 · 190 粒子 · 3 PNG、CB=2 无空 tick 回退');
+    // 2) 命令字面：tick 0 双行居中堆叠（X −1/−0.5、Y 3.6/2.4、age 16）；tick 50 截断 age 100；退化句不产行
+    const e0 = tlN.find(e => e.tick === 0), e50 = tlN.find(e => e.tick === 50);
+    const expL0 = sfxL('minecraft:end_rod', -1, 3.6, 0, 'lyric/s0000_l0.png', 0, 16);
+    const expL1 = sfxL('minecraft:end_rod', -0.5, 2.4, 0, 'lyric/s0000_l1.png', 0, 16);
+    const expL3 = sfxL('minecraft:end_rod', -0.75, 3, 0, 'lyric/s0002_l0.png', 0, 100);
+    if (!e0 || JSON.stringify(e0.lines) !== JSON.stringify([expL0, expL1])) {
+      console.log(`FAIL N1 tick 0 行：${JSON.stringify(e0 && e0.lines)}（期望 ${JSON.stringify([expL0, expL1])}）`); ok = false;
+    } else if (!e50 || JSON.stringify(e50.lines) !== JSON.stringify([expL3])) {
+      console.log(`FAIL N1 tick 50 行（end 超曲长截断 100 → age 100）：${JSON.stringify(e50 && e50.lines)}`); ok = false;
+    } else if (JSON.stringify(tlN.map(e => e.tick)) !== JSON.stringify([0, 50])) {
+      console.log(`FAIL N1 sfxTickList tick 序列 ${JSON.stringify(tlN.map(e => e.tick))}（期望 [0,50]：6/12 音符盒在组车道、无参考/触发/歌词行 → 不产管线）`); ok = false;
+    } else console.log('PASS N1 image 命令逐字：居中/堆叠/age（截断 100）、sfxTickList = [0,50] 仅歌词起始 tick 产行');
+    // 3) CB 支撑：起始 tick 0/50 各 1 个命令方块（轨道 0 主位底座，facing=up），Command=function nbs2sfx:<tick>
+    const cbsN = rN.result.tileEntities.filter(t => t.id === 'minecraft:command_block' && t.Command.startsWith('function nbs2sfx:'));
+    if (cbsN.length !== 2) {
+      console.log(`FAIL N1 CB 数量 ${cbsN.length} ≠ 2（起始 tick 0/50）：${JSON.stringify(cbsN)}`); ok = false;
+    } else {
+      let cbOk = true;
+      for (const [tick, x] of [[0, 1], [50, 101]]) {
+        const te = cbsN.find(t => t.x === x);
+        if (!te || te.Command !== `function ${api.SFX_NAMESPACE}:${tick}` || te.state !== SFX_CB_STATE) {
+          console.log(`FAIL N1 CB @X=${x}（tick ${tick}）：${JSON.stringify(te)}`); cbOk = false;
+        }
+      }
+      if (cbOk) console.log('PASS N1 CB 支撑：起始 tick 0/50 → 轨道 0 主位底座命令方块（Command=function nbs2sfx:0/50）');
+      else ok = false;
+    }
+    // 4) 结束 tick 无 remove 行：tick 8（句 0 结束）/ 20（退化句被跳过 → 本无行）/ 120（截断句结束，超曲长）均无函数管线行、无命令方块（age 到期自动消失，模组 setMaxAge）
+    let endTickOk = true;
+    for (const tEnd of [8, 20, 120]) {
+      if (tlN.some(e => e.tick === tEnd)) {
+        console.log(`FAIL N1 结束 tick ${tEnd} 出现函数管线行（age 自动消失，不应有 remove 行）`); endTickOk = false; ok = false;
+      }
+    }
+    if (endTickOk) console.log('PASS N1 结束 tick（8/20/120）无 remove 行、无 CB（age 到期模组端自动消失；20 因句无效本就无行）');
+    // 5) zip：1 mcmeta + 2 mcfunction（0/50）+ 3 PNG = 6 条目（退化句被跳过 → 无 s0001）；PNG 条目 CRC 逐字节一致、排序在 function 后
+    const songN = rN.song;
+    const pngMapN = new Map([
+      ['lyric/s0000_l0.png', fakePng(1)], ['lyric/s0000_l1.png', fakePng(2)],
+      ['lyric/s0002_l0.png', fakePng(4)],
+    ]);
+    const zipN = buildSfxDatapackZip(songN, new Map(), '1.21.11', rN.result.sfxTickList, pngMapN);
+    const parseZipEntries = (b) => {
+      const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
+      let eocd = -1;
+      for (let i = b.length - 22; i >= 0; i--) if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+      const ents = [];
+      let off = 0;
+      for (let i = 0; i < dv.getUint16(eocd + 10, true); i++) {
+        const sig = dv.getUint32(off, true);
+        const crc = dv.getUint32(off + 14, true);
+        const compSize = dv.getUint32(off + 18, true);
+        const nameLen = dv.getUint16(off + 26, true);
+        const name = new TextDecoder().decode(b.subarray(off + 30, off + 30 + nameLen));
+        const ds = off + 30 + nameLen;
+        const data = b.subarray(ds, ds + compSize);
+        ents.push({ sig, name, data, dataCrc: zipCrc32(data), storedCrc: crc });
+        off = ds + compSize;
+      }
+      return { ents, centralOff: dv.getUint32(eocd + 16, true), eocd, centralSize: dv.getUint32(eocd + 12, true) };
+    };
+    const zN = parseZipEntries(zipN.bytes);
+    const namesN = zN.ents.map(e => e.name);
+    const expNamesN = [
+      'pack.mcmeta',
+      'data/nbs2sfx/function/0.mcfunction', 'data/nbs2sfx/function/50.mcfunction',
+      'data/nbs2sfx/lyric/s0000_l0.png', 'data/nbs2sfx/lyric/s0000_l1.png',
+      'data/nbs2sfx/lyric/s0002_l0.png',
+    ];
+    if (zipN.fileCount !== 6 || JSON.stringify(namesN) !== JSON.stringify(expNamesN)) {
+      console.log(`FAIL N1 zip 条目 ${zipN.fileCount}：${JSON.stringify(namesN)}（期望 ${JSON.stringify(expNamesN)}）`); ok = false;
+    } else if (!zN.ents.every(e => e.sig === 0x04034b50 && e.dataCrc === e.storedCrc)) {
+      console.log('FAIL N1 zip local 签名/CRC 校验'); ok = false;
+    } else if (zN.centralOff + zN.centralSize !== zN.eocd) {
+      console.log('FAIL N1 zip central 偏移/大小不衔接 EOCD'); ok = false;
+    } else {
+      const pngOk = zN.ents.filter(e => e.name.includes('.png')).every(e =>
+        Buffer.compare(Buffer.from(e.data), Buffer.from(pngMapN.get(e.name.slice('data/nbs2sfx/'.length)))) === 0);
+      const f0 = new TextDecoder().decode(zN.ents.find(e => e.name.endsWith('/0.mcfunction')).data);
+      if (!pngOk || f0 !== `${expL0}\n${expL1}\n`) {
+        console.log(`FAIL N1 zip 内容：PNG 字节一致性=${pngOk}、0.mcfunction=${JSON.stringify(f0)}`); ok = false;
+      } else console.log('PASS N1 zip：6 条目（mcmeta + 2 function + 3 PNG 排序在后）、CRC/EOCD 衔接、PNG 字节逐字一致、0.mcfunction 含双行 image');
+    }
+    // 6) 零回归护栏 a：同一首歌不传第 9 参 → 产物与传空歌词对象（{sentences:[]}）逐位一致（litematic 字节 + 统计 + 管线）
+    const rA = runE2E(tmpFileN, { lane0: { dz: 0, dy: 0 }, groups: [{ layers: [0] }], groupStarts: [{ dz: 3, dy: 0 }] });
+    const rB = runE2E(tmpFileN, { lane0: { dz: 0, dy: 0 }, groups: [{ layers: [0] }], groupStarts: [{ dz: 3, dy: 0 }], lyricOpts: { sentences: [] } });
+    const sameN = (a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)) === 0;
+    if (!sameN(rA.nbtBytes, rB.nbtBytes)
+      || !sameN(rA.result.sfxTickList.map(e => e.lines.join('\n')), rB.result.sfxTickList.map(e => e.lines.join('\n')))
+      || JSON.stringify(rA.result.stats) !== JSON.stringify(rB.result.stats)) {
+      console.log('FAIL N1 零回归：不传第 9 参 vs 传空 sentences 产物不一致（litematic/sfxTickList/stats）'); ok = false;
+    } else if (rA.result.stats.commandBlocks !== 0 || rA.result.tileEntities.length !== 0
+      || rA.result.sfxTickList.length !== 0) {
+      console.log(`FAIL N1 零回归：无歌词产物 CB=${rA.result.stats.commandBlocks} TE=${rA.result.tileEntities.length} 管线=${rA.result.sfxTickList.length}（期望 0/0/0）`); ok = false;
+    } else console.log('PASS N1 零回归护栏：无歌词（缺省/空 sentences）产物逐位一致、0 CB/0 TE/0 管线行');
+    // 7) 纯歌词产 zip（新条件：无参考声道 + 有歌词 → zip 含 mcmeta + 歌词 function + PNG）
+    const zNoRef = buildSfxDatapackZip(songN, new Map(), '1.21.11', rN.result.sfxTickList, pngMapN);
+    if (!zNoRef.bytes.length || zNoRef.fileCount !== 6) {
+      console.log(`FAIL N1 纯歌词 zip：bytes=${zNoRef.bytes.length} 条目=${zNoRef.fileCount}（期望 6）`); ok = false;
+    } else console.log('PASS N1 纯歌词（无参考声道）经 buildSfxDatapackZip 产 zip（pack.mcmeta + 歌词 function + PNG）');
+    // 8) 有参考声道 + 歌词：函数行与歌词行同 tick 共置（绑定行在前、歌词行在后），CB 不重复
+    const refN = new Map([[0, { type: 'bound', sound: true }]]);
+    const rNC = runE2E(tmpFileN, { lane0: { dz: 0, dy: 0 }, groups: [{ layers: [0] }], groupStarts: [{ dz: 3, dy: 0 }], refLayers: refN, lyricOpts });
+    const eC0 = rNC.result.sfxTickList.find(e => e.tick === 0);
+    const PB0 = api.sfxParticleCmd(0, 1, 3);   // 组 dz=3,dy=0 绑定行 = 音符盒(1,1,3) − 轨道0 CB(1,0,0)
+    if (!eC0 || eC0.lines.length !== 3 || eC0.lines[0] !== PB0
+      || !eC0.lines[1].startsWith('particleex image') || !eC0.lines[2].startsWith('particleex image')) {
+      console.log(`FAIL N1 参考+歌词 tick 0 行（期望 绑定行 ${PB0.slice(0, 30)}… + 歌词双行）：${JSON.stringify(eC0 && eC0.lines)}`); ok = false;
+    } else if (rNC.result.stats.commandBlocks !== 4) { // 0/6/12（参考）+ 50（歌词；tick 0 与参考共用、退化句被跳过）
+      console.log(`FAIL N1 参考+歌词 CB 计数 ${rNC.result.stats.commandBlocks} ≠ 4（0/6/12 参考 + 50 歌词）`); ok = false;
+    } else {
+      console.log('PASS N1 参考+歌词：tick 0 绑定行在前 + 歌词双行在后、CB 计数 4（参考 0/6/12 + 歌词 50，tick 0 共用 CB）');
+    }
+    // 9) 系统级解包：PowerShell Expand-Archive 解出 6 文件，PNG 字节与写入一致（二进制条目兼容）
+    const tmpZipN = path.join(__dirname, 'lyric_selftest.zip');
+    const tmpDirN = path.join(__dirname, 'lyric_selftest_out');
+    try {
+      writeFileSync(tmpZipN, Buffer.from(zipN.bytes));
+      rmSync(tmpDirN, { recursive: true, force: true });
+      mkdirSync(tmpDirN, { recursive: true });
+      execFileSync('powershell.exe', ['-NoProfile', '-Command',
+        `Expand-Archive -LiteralPath '${tmpZipN}' -DestinationPath '${tmpDirN}' -Force`], { stdio: 'pipe' });
+      const walk = d => readdirSync(d, { withFileTypes: true }).flatMap(e =>
+        e.isDirectory() ? walk(path.join(d, e.name)) : [path.join(d, e.name)]);
+      const filesN = walk(tmpDirN).map(f => path.relative(tmpDirN, f).replace(/\\/g, '/')).sort();
+      if (filesN.length !== 6 || JSON.stringify(filesN) !== JSON.stringify([...expNamesN].sort())) {
+        console.log(`FAIL N1 系统解包文件清单（${filesN.length} 个）：${filesN.join(', ')}`); ok = false;
+      } else {
+        const pngFile = path.join(tmpDirN, 'data/nbs2sfx/lyric/s0000_l0.png');
+        const samePng = Buffer.compare(readFileSync(pngFile), Buffer.from(fakePng(1))) === 0;
+        const f50 = readFileSync(path.join(tmpDirN, 'data/nbs2sfx/function/50.mcfunction'), 'utf8');
+        if (!samePng || f50 !== `${expL3}\n`) {
+          console.log(`FAIL N1 系统解包内容：PNG 一致=${samePng}、50.mcfunction=${JSON.stringify(f50)}`); ok = false;
+        } else console.log('PASS N1 系统 Expand-Archive 解包：6 文件齐全、PNG 二进制逐字一致、50.mcfunction 逐字');
+      }
+    } catch (e) {
+      console.log(`FAIL N1 系统解包异常：${String(e.message).split('\n')[0]}`); ok = false;
+    } finally {
+      try { rmSync(tmpZipN, { force: true }); rmSync(tmpDirN, { recursive: true, force: true }); } catch {}
+    }
+  } catch (e) {
+    console.log('FAIL 场景 N 异常:', e.stack || e.message); ok = false;
   }
 }
 

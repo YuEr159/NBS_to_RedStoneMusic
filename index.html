@@ -271,6 +271,74 @@ input[type="number"] { width: 70px; }
     <div id="sfxEffectLanes"></div>
   </section>
 
+  <section id="lyric-section" hidden>
+    <h2>粒子歌词（LRC/纯文本导入 → 逐句 particleex image 粒子显示；字库 PNG 随数据包 zip 导出，部署到 .minecraft/particleImages/lyric/）</h2>
+    <div class="toolbar">
+      <button id="lyricFileBtn">选择 LRC/文本文本</button>
+      <input type="file" id="lyricFileInput" accept=".lrc,.txt" hidden>
+      <button id="lyricParseBtn">解析</button>
+      <span class="hint" id="lyricCount"></span>
+    </div>
+    <textarea id="lyricText" rows="10" placeholder="粘贴 LRC（[00:12.35]歌词…，一行可多时间戳）或纯文本（按非空行均分全曲长）"
+      style="width:100%; box-sizing:border-box; min-height:200px; max-height:420px; resize:vertical;
+      background:var(--panel2); color:var(--text); border:1px solid var(--border);
+      border-radius:4px; padding:8px; font-size:13px; font-family:inherit; line-height:1.5"></textarea>
+    <div id="lyricList"></div>
+    <div class="toolbar">
+      <button id="lyricAddBtn">＋ 添加句</button>
+      <span class="hint" id="lyricCheck"></span>
+    </div>
+    <div class="setting-row">
+      <label>粒子名</label>
+      <input type="text" id="lyricParticle" value="minecraft:end_rod" style="width:200px">
+    </div>
+    <div class="setting-row">
+      <label>字号（px）</label>
+      <select id="lyricSize">
+        <option value="16">16</option>
+        <option value="24">24</option>
+        <option value="32">32</option>
+        <option value="48">48</option>
+        <option value="64">64</option>
+      </select>
+      <label>字距（px）</label>
+      <input type="number" id="lyricGap" min="0" max="16" step="1" value="2" style="width:60px">
+      <label>换行字数</label>
+      <input type="number" id="lyricMaxChars" min="4" max="24" step="1" value="8" style="width:60px">
+      <label>旋转</label>
+      <select id="lyricRotate">
+        <option value="0">0°</option>
+        <option value="1">90°</option>
+        <option value="2">180°</option>
+        <option value="3">270°</option>
+      </select>
+    </div>
+    <div class="setting-row">
+      <label>字体</label>
+      <select id="lyricFont">
+        <option value="lxgw">CDN LXGW 文楷（推荐）</option>
+        <option value="system">系统楷体（KaiTi/STKaiti）</option>
+        <option value="upload">上传字体（本地 ttf/otf）</option>
+      </select>
+      <span id="lyricFontSample" title="当前所选字体效果预览">我的世界</span>
+      <button id="lyricFontUploadBtn">上传 ttf/otf</button>
+      <input type="file" id="lyricFontFileInput" accept=".ttf,.otf" hidden>
+      <span class="hint" id="lyricFontStatus"></span>
+    </div>
+    <div class="setting-row">
+      <label>显示 X 坐标（格，行水平居中基准；Y/Z 在下方窗口拖）</label>
+      <input type="number" id="lyricPosX" min="-256" max="256" step="1" value="0" style="width:80px">
+      <span class="hint">歌词中心点 (x, y, z) 缺省 (0, 3, 0)；y/z 在下方「歌词位置」窗口拖拽</span>
+    </div>
+    <h3>歌词位置（Y-Z 截面，独立窗口；「词」= 歌词显示中心点，可拖；轨道 0 与主链仅作参照、不可拖）</h3>
+    <div class="layout-tools">
+      <button id="fitLyricLayoutBtn">缩放到全部</button>
+      <span class="hint">拖拽移动歌词中心点（缺省 (0,3,0)）；方向键微调（Shift=大步）</span>
+    </div>
+    <canvas id="lyricCanvas" width="640" height="420"></canvas>
+    <div class="layout-info" id="lyricLayoutInfo"></div>
+  </section>
+
   <section id="settings-section" hidden>
     <h2>设置</h2>
     <div class="setting-row" id="customInstRow" hidden>
@@ -294,7 +362,7 @@ input[type="number"] { width: 70px; }
     <div class="toolbar">
       <button class="primary" id="generateBtn">生成 schematic</button>
       <button id="downloadBtn" hidden>下载 .litematic</button>
-      <button id="sfxZipBtn" hidden title="节奏参考粒子数据包（pack.mcmeta + data/nbs2sfx/…/<tick>.mcfunction）：放入世界 datapacks 目录后 /reload，配合 .litematic 使用">⬇ 下载粒子数据包 (.zip)</button>
+      <button id="sfxZipBtn" hidden title="粒子数据包（pack.mcmeta + data/nbs2sfx/…/<tick>.mcfunction + 歌词字库 data/nbs2sfx/lyric/*.png）：放入世界 datapacks 目录后 /reload，配合 .litematic 使用；歌词 PNG 另需部署到 .minecraft/particleImages/lyric/">⬇ 下载粒子数据包 (.zip)</button>
       <button id="debugBtn" hidden>导出 JSON 调试包</button>
       <span class="hint" id="genStatus"></span>
     </div>
@@ -547,6 +615,258 @@ const SFX_BUILTIN_PRESETS = (() => {
   const f = sfxNormParticleCmd(cmd);
   return f ? [{ name: '螺旋展开', params: f }] : [];
 })();
+
+// ===== ⑩ 粒子歌词（2026-10-06 用户定：LRC/纯文本导入 → 逐句 particleex image 粒子显示）=====
+// NBS 无歌词字段（实测）→ 歌词外部输入。解析纯函数 lyricParse：
+//   · LRC：行首 `[mm:ss.xx]` 时间戳（无 ss 时为分.秒）；一行可多个时间戳 → 多句同文本；
+//     `[00:00.00]` 及 `ar:`/`ti:` 等元数据标签行跳过。秒 → NBS tick = round(sec × tempo)（tempo = ticks/秒）。
+//   · 纯文本（全篇无时间戳）：按非空行均分 [0, songLength]，每行一句。
+//   · 缺省 end = 下一句 start（末句 = songLength）；重叠（end > 下一句 start）/ 起始超曲长 → 警告不阻断。
+const LYRIC_LRC_TAG_RE = /\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\]/g;
+const LYRIC_META_TAG_RE = /^\[[^\]]*(?:ar|al|ti|au|by|offset|length|re|va|la|language|genre|tool)\s*:/i;
+function lyricParse(rawText, tempo, songLength) {
+  const out = { lines: [], warnings: [] };
+  const S = Math.max(0, Math.round(Number(songLength) || 0));
+  const T = Number(tempo) || 0;
+  if (T <= 0) { out.warnings.push('tempo 无效（≤0）：无法换算歌词时间戳'); return out; }
+  const text = String(rawText || '').replace(/\r\n?/g, '\n').trim();
+  if (text === '') return out;
+  const tags = [...text.matchAll(LYRIC_LRC_TAG_RE)];
+  if (tags.length === 0) {
+    // 纯文本：按非空行均分全曲长
+    const rows = text.split('\n').map(s => s.trim()).filter(s => s !== '');
+    if (S <= 0) { out.warnings.push('纯文本均分需要曲长 > 0'); return out; }
+    const each = S / rows.length;
+    for (let i = 0; i < rows.length; i++) {
+      const start = i === 0 ? 0 : Math.round(i * each);
+      const end = i === rows.length - 1 ? S : Math.round((i + 1) * each);
+      out.lines.push({ start, end, text: rows[i] });
+    }
+    return out;
+  }
+  // LRC：逐时间戳出句（元数据标签行跳过）
+  const raws = [];
+  for (const m of tags) {
+    if (LYRIC_META_TAG_RE.test(m[0])) continue;
+    // 行内可连排多个时间戳（[mm:ss][mm:ss]…）：全部剥掉，文本 = 剩余部分
+    const lineText = text.slice(m.index).split('\n', 1)[0].replace(/^(?:\[[^\]]*\]\s*)+/, '');
+    if (lineText.trim() === '') continue;
+    const frac = m[3] !== undefined ? m[3].padEnd(2, '0').slice(0, 2) : '00';
+    const sec = Number(m[1]) * 60 + Number(m[2]) + Number(frac) / 100;
+    raws.push({ tick: Math.round(sec * T), text: lineText.trim() });
+  }
+  raws.sort((a, b) => a.tick - b.tick);
+  for (let i = 0; i < raws.length; i++) {
+    const start = raws[i].tick;
+    let end = i < raws.length - 1 ? raws[i + 1].tick : S;
+    if (end < start) end = start;          // 时间戳乱序（已排序后仅剩 S < start 场景）
+    let clipped = false;
+    if (S > 0 && end > S) { end = S; clipped = true; }
+    if (start < 0) start = 0;
+    if (start >= S && S > 0) { out.warnings.push(`歌词「${raws[i].text}」起始超出曲长，跳过`); continue; }
+    if (clipped) out.warnings.push(`歌词「${raws[i].text}」结束超出曲长，按曲长截断`);
+    out.lines.push({ start, end, text: raws[i].text });
+  }
+  return out;
+}
+// 句列表校验（UI 手编 start/end 后调用）：重叠 / 超曲长 / 时间非法 / 空文本 → 警告列表（不阻断生成）。
+function lyricCheck(lines, songLength) {
+  const w = [];
+  const S = Math.max(0, Math.round(Number(songLength) || 0));
+  const arr = Array.isArray(lines) ? lines : [];
+  for (let i = 0; i < arr.length; i++) {
+    const l = arr[i] || {};
+    if (typeof l.text !== 'string' || l.text.trim() === '') { w.push(`第 ${i + 1} 句文本为空`); continue; }
+    if (!Number.isInteger(l.start) || l.start < 0 || !Number.isInteger(l.end) || l.end < l.start) {
+      w.push(`第 ${i + 1} 句时间非法（start=${l.start} end=${l.end}）`);
+    }
+    if (S > 0) {
+      if (l.start >= S) w.push(`歌词「${l.text}」起始超出曲长`);
+      else if (l.end > S) w.push(`歌词「${l.text}」结束超出曲长，按曲长截断`);
+    }
+    if (i < arr.length - 1 && l.end > Number((arr[i + 1] || {}).start)) w.push(`歌词「${l.text}」与下一句重叠`);
+  }
+  return w;
+}
+// 归一化 settings.lyric（持久化恢复/缺省兜底）：非法字段回缺省，pos 必须有限数字。
+const LYRIC_DEFAULTS = {
+  particle: 'minecraft:end_rod', size: 32, gap: 2, maxChars: 8, rotate: 0,
+  pos: { x: 0, y: 3, z: 0 }, font: 'lxgw',
+};
+function normLyricSettings(p) {
+  const o = p && typeof p === 'object' ? p : {};
+  const num = (v, d, lo, hi) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : d;
+  };
+  const posOk = o.pos && typeof o.pos === 'object'
+    && Number.isFinite(Number(o.pos.x)) && Number.isFinite(Number(o.pos.y)) && Number.isFinite(Number(o.pos.z));
+  return {
+    particle: typeof o.particle === 'string' && o.particle.trim() !== '' ? o.particle.trim() : LYRIC_DEFAULTS.particle,
+    size: Math.round(num(o.size, LYRIC_DEFAULTS.size, 16, 64)),
+    gap: Math.round(num(o.gap, LYRIC_DEFAULTS.gap, 0, 16)),
+    maxChars: Math.round(num(o.maxChars, LYRIC_DEFAULTS.maxChars, 4, 24)),
+    rotate: [0, 1, 2, 3].includes(Number(o.rotate)) ? Number(o.rotate) : LYRIC_DEFAULTS.rotate,
+    pos: posOk ? { x: Number(o.pos.x), y: Number(o.pos.y), z: Number(o.pos.z) } : { ...LYRIC_DEFAULTS.pos },
+    font: ['lxgw', 'system', 'upload'].includes(o.font) ? o.font : LYRIC_DEFAULTS.font,
+  };
+}
+
+// ===== ⑩-b 歌词字体管理（2026-10-06：开源手写体 LXGW WenKai Lite，SIL OFL）=====
+// 三来源：'lxgw' = CDN webfont（LXGW 官方 jsdelivr，unicode-range 分片，document.fonts.load 触发
+//   当前字形所需子集；5s 超时 → 回退系统楷体链 + UI 提示）/ 'system' = 系统楷体链 /
+//   'upload' = 用户本地 ttf/otf（FontFace 只存内存，**不持久化**：刷新后需重传，回退系统楷体）。
+// 页面加载时后台预加载（不 await）；generate 保持同步（字体未就绪即用回退字体链渲染，不阻塞）。
+const LYRIC_FONT_FAMILY_LXGW = '"LXGW WenKai Lite","LXGW WenKai",cursive';
+const LYRIC_FONT_FAMILY_SYSTEM = '"KaiTi","STKaiti","DFKai-SB","BiauKai","cursive"';
+const LYRIC_FONT_FAMILY_UPLOAD = '"UserLyricFont",' + LYRIC_FONT_FAMILY_SYSTEM;
+const LYRIC_FONT_CDN = 'https://cdn.jsdelivr.net/npm/lxgw-wenkai-lite-webfont@1.7.0/style.css';
+const LyricFont = {
+  state: 'loading',     // loading | ok | fallback（lxgw 来源专用；system/upload 恒 'ok'）
+  uploaded: null,       // FontFace（upload 来源）
+  uploadName: '',       // 上传文件名（仅 UI 显示）
+};
+function lyricFontFamily() {
+  const f = (AppState.settings.lyric || LYRIC_DEFAULTS).font;
+  if (f === 'system') return LYRIC_FONT_FAMILY_SYSTEM;
+  if (f === 'upload') return LyricFont.uploaded ? LYRIC_FONT_FAMILY_UPLOAD : LYRIC_FONT_FAMILY_SYSTEM;
+  return LYRIC_FONT_FAMILY_LXGW;
+}
+function lyricFontReady() {
+  const f = (AppState.settings.lyric || LYRIC_DEFAULTS).font;
+  if (f === 'lxgw') return LyricFont.state === 'ok';
+  if (f === 'upload') return !!LyricFont.uploaded;
+  return true;
+}
+async function lyricFontEnsureLoad() {
+  if (!('fonts' in document) || LyricFont.state !== 'loading') return;
+  try {
+    await Promise.race([
+      document.fonts.load('32px "LXGW WenKai Lite"'),
+      new Promise((res) => setTimeout(res, 5000)),
+    ]);
+    LyricFont.state = document.fonts.check('16px "LXGW WenKai Lite"') ? 'ok' : 'fallback';
+  } catch (e) { LyricFont.state = 'fallback'; }
+}
+function lyricFontUpload(buf, name) {
+  if (!buf || !buf.byteLength) return false;
+  try {
+    const ff = new FontFace('UserLyricFont', buf);
+    const p = ff.load ? ff.load() : Promise.resolve();
+    const done = new Promise((res) => setTimeout(res, 4000));
+    Promise.race([p, done]).then(() => {
+      try { document.fonts.add(ff); LyricFont.uploaded = ff; LyricFont.uploadName = String(name || ''); }
+      catch (e2) { LyricFont.uploaded = null; LyricFont.uploadName = ''; }
+      try { if (typeof renderLyricSection === 'function') renderLyricSection(); } catch (e3) { /* 测试桩无 UI */ }
+    });
+    return true;
+  } catch (e) { return false; }
+}
+// ===== ⑩-c 歌词 PNG 渲染（整行图：逐字 fillText + 像素间距 + 不透明裁剪 → PNG 字节）=====
+// 每字独立 measureText（全角/半角变宽），间距 = settings.gap 像素；白字透明底。
+// 裁剪后 canvas 尺寸 = 行像素宽 × 行像素高；粒子数 = 不透明像素总数（模组逐像素 spawn）。
+// canvas 上限守护 2000×1000（超限拒绝该行 → null + error）。
+function lyricWrapChars(text, maxChars) {
+  const n = Math.max(1, Math.round(Number(maxChars) || 8));
+  const s = String(text || '').replace(/\s+/g, ' ').trim();
+  if (s === '') return [];
+  const out = [];
+  for (let i = 0; i < s.length; i += n) out.push(s.slice(i, i + n));
+  return out;
+}
+const LYRIC_CANVAS_MAX_W = 2000, LYRIC_CANVAS_MAX_H = 1000;
+function lyricBase64ToBytes(b64) {
+  const A = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  const clean = String(b64).replace(/=+$/, '');
+  const out = new Uint8Array(Math.floor(clean.length * 3 / 4));
+  let o = 0;
+  for (let i = 0; i < clean.length; i += 4) {
+    const c1 = A.indexOf(clean[i]), c2 = A.indexOf(clean[i + 1]);
+    const c3 = A.indexOf(clean[i + 2]), c4 = A.indexOf(clean[i + 3]);
+    out[o++] = (c1 << 2) | (c2 >> 4);
+    if (i + 2 < clean.length) out[o++] = ((c2 & 15) << 4) | (c3 >> 2);
+    if (i + 3 < clean.length) out[o++] = ((c3 & 3) << 6) | c4;
+  }
+  return out.subarray(0, o);
+}
+function renderLyricLine(text, settings, fontFamily) {
+  const s = String(text || '').trim();
+  if (s === '') return { ok: false, error: '空文本' };
+  const size = Math.max(8, Math.round(Number(settings.size) || 32));
+  const gap = Math.max(0, Math.round(Number(settings.gap) || 0));
+  const fam = String(fontFamily || 'cursive');
+  const ctx0 = document.createElement('canvas').getContext('2d');
+  if (!ctx0) return { ok: false, error: 'canvas 不可用' };
+  ctx0.font = `${size}px ${fam}`;
+  const widths = [...s].map(ch => Math.max(1, Math.ceil(ctx0.measureText(ch).width)));
+  const w = widths.reduce((a, b) => a + b, 0) + gap * (s.length - 1);
+  const h = Math.ceil(size * 1.3);
+  if (w > LYRIC_CANVAS_MAX_W || h > LYRIC_CANVAS_MAX_H) {
+    return { ok: false, error: `行宽 ${w}px 超上限 ${LYRIC_CANVAS_MAX_W}px（缩短文本或减小字号）` };
+  }
+  const cv = document.createElement('canvas');
+  cv.width = w; cv.height = h;
+  const ctx = cv.getContext('2d');
+  if (!ctx) return { ok: false, error: 'canvas 不可用' };
+  ctx.font = `${size}px ${fam}`;
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle = '#fff';
+  const baseline = Math.ceil(size * 0.85);
+  let x = 0;
+  for (let i = 0; i < s.length; i++) {
+    ctx.fillText(s[i], x, baseline);
+    x += widths[i] + gap;
+  }
+  const img = ctx.getImageData(0, 0, w, h).data;
+  let minX = w, minY = h, maxX = -1, maxY = -1, pixels = 0;
+  for (let py = 0; py < h; py++) {
+    for (let px = 0; px < w; px++) {
+      if (img[(py * w + px) * 4 + 3] === 0) continue;
+      pixels++;
+      if (px < minX) minX = px;
+      if (px > maxX) maxX = px;
+      if (py < minY) minY = py;
+      if (py > maxY) maxY = py;
+    }
+  }
+  if (pixels === 0) return { ok: false, error: '渲染结果为空（字体缺失？）' };
+  const cw = maxX - minX + 1, ch = maxY - minY + 1;
+  let out = cv;
+  if (cw < w || ch < h) {
+    out = document.createElement('canvas');
+    out.width = cw; out.height = ch;
+    out.getContext('2d').drawImage(cv, minX, minY, cw, ch, 0, 0, cw, ch);
+  }
+  const b64 = String(out.toDataURL('image/png')).split(',')[1] || '';
+  if (!b64) return { ok: false, error: 'toDataURL 失败' };
+  return { ok: true, pngBytes: lyricBase64ToBytes(b64), widthPx: cw, heightPx: ch, pixels };
+}
+// 歌词 image 命令字面（18 token，模组 ImageCommand 逐字段核验 2026-10-06）：
+//   particleex image <粒子> <X> <Y> <Z> <path> 0.03125 0 <rotate> 0 0 10 0 0 0 <age> null 1 null
+//   scaling 固定 1/32 = 1 格/32px；dpb 10 = 粒子间隔 0.1 格；静止；group null（age 到期自动消失，无 remove 行）。
+const LYRIC_SCALING = 0.03125; // 1/32
+function sfxLyricImageCmd(particle, X, Y, Z, fileName, rotate, age) {
+  return `particleex image ${particle} ${sfxNum(X)} ${sfxNum(Y)} ${sfxNum(Z)} ${fileName} ${LYRIC_SCALING} 0 ${Number(rotate) || 0} 0 0 10 0 0 0 ${Math.max(0, Math.round(Number(age) || 0))} null 1 null`;
+}
+// 歌词行几何（居中堆叠）：一行 = 1 张 PNG（1 格/32px）；句内多行以 pos 为中心、行距 = size/32×1.2 格。
+// 返回该句每一行 { fileName, X, Y, Z, age, widthPx }（供命令生成 + PNG 导出清单）。
+function lyricLineGeoms(sentence, rowMeta, li, settings) {
+  const p = normLyricSettings(settings);
+  const { x: px, y: py, z: pz } = p.pos;
+  const lineH = p.size / 32 * 1.2;
+  const totalH = (rowMeta.length - 1) * lineH;
+  const rows = [];
+  for (let r = 0; r < rowMeta.length; r++) {
+    const rm = rowMeta[r];
+    const X = px - rm.widthPx / 32 / 2;   // 行水平居中
+    const Y = py + (totalH / 2 - r * lineH); // 行垂直居中堆叠（首行最高）
+    rows.push({
+      fileName: `lyric/s${String(li).padStart(4, '0')}_l${r}.png`,
+      X, Y, Z: pz, age: sentence.age, widthPx: rm.widthPx, pixels: rm.pixels || 0,
+    });
+  }
+  return rows;
+}
 //   偏移 = 粒子中心坐标 − CB 坐标（布局坐标，CB 恒在轨道 0 主位底座）。
 const sfxParticleCmd = (dx, dy, dz) => sfxParticleCmdFromParts(dx, dy, dz, SFX_PARTICLE_FIELDS);
 // 车道级模板版：p = normSfxParams 结果（缺省 = SFX_PARTICLE_FIELDS）；
@@ -1143,7 +1463,7 @@ const DEFAULT_RAIL_LIGHT = 'minecraft:ochre_froglight';
 //   （绑定+独立混合，每音符一行，各带各自计算的相对偏移，见 sfxParticleCmd）。
 // 类型选型按参考车道（用户 2026-09-04 定）：refLanes[l].type 决定该车道全部成员的粒子类型
 //   （绑定集合/独立行均按成员实际所在参考车道取类型）；refLanes 为 null 时回退按声道 refLayers 取类型（旧行为）。
-function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, refLanes = null, refLayersRef = null) {
+function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, refLanes = null, refLayersRef = null, lyricOpts = null) {
   const refLayers = refLayersRef;
   const customMap = settings.customInstrumentMap;
   const soundMap = (settings && settings.soundIdMap instanceof Map) ? settings.soundIdMap : null;
@@ -1246,6 +1566,7 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
     commandBlocks: 0, sfxNotes: 0, playsoundNotes: 0,
     sfxBoundNotes: 0, sfxStandaloneNotes: 0, sfxConnectLines: 0, sfxVanishNotes: 0, sfxBackgroundNotes: 0,
     sfxDiscarded: 0, sfxEmptyTicks: 0,
+    lyricSentences: 0, lyricLines: 0, lyricParticles: 0, lyricPngs: 0,
     discardedDetails: [],
   };
   // 节奏参考声道双类型（用户批准设计 v2）；类型选型按参考车道（用户 2026-09-04 定）：
@@ -1466,6 +1787,43 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
       if (any) sfxBackgroundTicks.add(t);   // 仅当该小节 tick 实际产了背景行才支撑 CB
     }
   }
+
+  // --- 粒子歌词（第 9 参 lyricOpts；缺省/空 → 零产出、零回归；须在放置循环前：isSfxTick 读 sfxLyricTicks）---
+  // 每句：起始 tick 一组 image 命令进 sfxTickLines（函数管线 <t>.mcfunction 承载，
+  //   与触发型/连接型行同机制）；age = (end−start)×2 游戏 tick 到期自动消失（模组 age>0 →
+  //   setMaxAge，句末清场**不需要 group remove**）。sfxLyricTicks 并入 isSfxTick → 起始 tick
+  //   轨道 0 恒有 CB（空 tick 回退机制照常：有行 ⇔ 有 CB）。
+  // 行几何：每行 1 张 PNG（1 格/32px，裁剪后像素尺寸）；句内多行以 pos 为中心居中堆叠
+  //   （行距 = size/32×1.2 格，首行最高）；行水平居中于 pos.x。
+  const lyricOptsN = (() => {
+    if (!lyricOpts || typeof lyricOpts !== 'object' || !Array.isArray(lyricOpts.sentences)
+      || lyricOpts.sentences.length === 0) return null;
+    const S = Math.max(0, Math.round(song && song.songLength || 0));
+    const ps = normLyricSettings(lyricOpts.settings);
+    const out = [];
+    for (let i = 0; i < lyricOpts.sentences.length; i++) {
+      const snt = lyricOpts.sentences[i] || {};
+      const txt = String(snt.text || '').trim();
+      const st = Math.round(Number(snt.start));
+      const en = Math.round(Number(snt.end));
+      if (!txt || !Number.isFinite(st) || !Number.isFinite(en) || en <= st) {
+        stats.discardedDetails.push(`歌词第 ${i + 1} 句无效（文本空或时间非法）：跳过`);
+        continue;
+      }
+      const start = Math.max(0, st);
+      let end = Math.min(en, S > 0 ? S : en);
+      if (end <= start) end = start + 1;
+      const rows = lyricLineGeoms({ age: (end - start) * 2 },
+        (lyricOpts.rowMeta && lyricOpts.rowMeta[i]) || [], i, ps);
+      if (rows.length === 0) continue;
+      out.push({ start, end, age: (end - start) * 2, rows });
+    }
+    return out.length > 0 ? { ps, out } : null;
+  })();
+  const sfxLyricTicks = new Set();
+  if (lyricOptsN) {
+    for (const snt of lyricOptsN.out) sfxLyricTicks.add(snt.start);
+  }
   for (let t = 0; t < nTicks; t++) {
     const d = delays[t];
     const cells = 2; // 主链恒 1 档：每 NBS tick 恒 2 格（中继器格 + 主位传导格）
@@ -1550,7 +1908,7 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
           // 轨道 0 且该 tick 有任意参考音符（绑定∪独立）或消失型生成行（t−N 支撑）：主位底座由雪块替换为命令方块
           //   （上方红石粉激活，红石粉置于机制正上方会将其激活——wiki Redstone power；轨道 0 无音符故主位恒为粉，
           //   信号到达本格的 tick 即音符盒发声的同 tick）。<t>.mcfunction 行在放置循环内汇总。
-          const isSfxTick = c.isDefaultRail && (sfxEntries.has(t) || sfxVanishTicks.has(t) || sfxBackgroundTicks.has(t));
+          const isSfxTick = c.isDefaultRail && (sfxEntries.has(t) || sfxVanishTicks.has(t) || sfxBackgroundTicks.has(t) || sfxLyricTicks.has(t));
           W(xCur + 1, yb, zc, isSfxTick ? SFX_CB_STATE : 'minecraft:snow_block');
           stats.wires++;
           if (isSfxTick) {
@@ -1756,7 +2114,26 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
       }
     }
   }
-  // 空 tick 回退：该 tick 有参考音符（或背景/消失型生成 tick）但无任何粒子行（如单线式声道未分配车道）
+
+  // --- 粒子歌词行（2026-10-06）：每句起始 tick 一组 image 命令（18 token，group null；
+  //   age = (end−start)×2 游戏 tick 到期模组端自动消失 → 句末无 remove 行）。
+  //   行序：绑定行 → 独立行 → 歌词行（各机制段各自 push，歌词恒为末段）；
+  //   放置循环已按 sfxLyricTicks 支撑起始 tick 的轨道 0 CB（回退机制：有行 ⇔ 有 CB）。---
+  if (lyricOptsN) {
+    for (const snt of lyricOptsN.out) {
+      if (!sfxTickLines.has(snt.start)) sfxTickLines.set(snt.start, []);
+      const lines = sfxTickLines.get(snt.start);
+      for (const row of snt.rows) {
+        lines.push(sfxLyricImageCmd(lyricOptsN.ps.particle, row.X, row.Y, row.Z, row.fileName, lyricOptsN.ps.rotate, row.age));
+        stats.lyricParticles += (row.pixels || 0);
+      }
+      stats.lyricLines += snt.rows.length;
+      stats.lyricPngs += snt.rows.length;
+    }
+    stats.lyricSentences = lyricOptsN.out.length;
+  }
+
+  // 空 tick 回退：该 tick 有参考音符（或背景/消失型/歌词生成 tick）但无任何粒子行（如单线式声道未分配车道）
   //   → 无 function 文件可写，底座还原雪块、TE 移除、CB 计数回退（避免产物出现指向不存在 function 的空命令方块）
   const rollbackEmptySfxTick = (t) => {
     if (sfxTickLines.has(t)) return;
@@ -1772,6 +2149,7 @@ function buildLayout(song, groups, groupStarts, delays, settings, defaultStart, 
   };
   for (const t of sfxEntries.keys()) rollbackEmptySfxTick(t);
   for (const t of sfxBackgroundTicks) rollbackEmptySfxTick(t);   // 背景 tick 无粒子行（车道取消勾选/模板清空）→ 同样回退
+  for (const t of sfxLyricTicks) rollbackEmptySfxTick(t);        // 歌词起始 tick 理论上恒有行（行在回退前已写入），防御性回退
   stats.sfxNotes = stats.sfxBoundNotes + stats.sfxStandaloneNotes;
   // 逐 tick 粒子命令行（tick 升序）：与轨道 0 CB 一一对应（有行 ⇔ 有 CB；空 tick 已回退）
   const sfxTickList = [...sfxTickLines.entries()].sort((a, b) => a[0] - b[0])
@@ -1863,6 +2241,58 @@ function buildSfxFunctions(song, refLayers, sfxTickList = null) {
   return out;
 }
 
+// ===== 歌词 PNG 渲染编排（UI 层，generate 调；buildLayout 前执行，保持生成同步不阻塞）=====
+// 每句：lyricWrapChars 分行 → 每行 renderLyricLine（裁剪 PNG 字节）；
+//   rowMeta[i] = 该句各行 { widthPx, pixels }（buildLayout 第 9 参 lyricOpts.rowMeta 消费，行几何同源）；
+//   lyricPngs：Map('lyric/s0000_l0.png' → PNG 字节)，文件名规则与 lyricLineGeoms 完全一致
+//   （同一 li/r → 同一 fileName，命令与字库一一对应）。
+// 无效句（空文本/时间非法/行渲染失败）：进 result.warnings 跳过，不阻断生成。
+function buildLyricPngs() {
+  const res = { rowMeta: [], lyricPngs: new Map(), warnings: [] };
+  const sents = Array.isArray(AppState.lyrics) ? AppState.lyrics : [];
+  if (sents.length === 0) return res;
+  const S = Math.max(0, Math.round(AppState.song ? AppState.song.songLength : 0));
+  const ps = normLyricSettings((AppState.settings || {}).lyric);
+  const fam = lyricFontFamily();
+  const ready = lyricFontReady();
+  const fontNote = (!ready && ps.font === 'lxgw') ? '（CDN 字体未就绪，已用回退字体链）'
+    : (!ready && ps.font === 'upload') ? '（上传字体未就绪，已用回退字体链）' : '';
+  for (let i = 0; i < sents.length; i++) {
+    const snt = sents[i] || {};
+    const txt = String(snt.text || '').trim();
+    const st = Math.round(Number(snt.start));
+    const en = Math.round(Number(snt.end));
+    if (!txt || !Number.isFinite(st) || !Number.isFinite(en) || en <= st) {
+      res.warnings.push(`歌词第 ${i + 1} 句无效（文本空或时间非法），已跳过`);
+      continue;
+    }
+    const start = Math.max(0, st);
+    const end = Math.min(en, S > 0 ? S : en);
+    if (end <= start) {
+      res.warnings.push(`歌词第 ${i + 1} 句时间超出歌曲范围，已跳过`);
+      continue;
+    }
+    const rows = lyricWrapChars(txt, ps.maxChars);
+    const meta = [];
+    for (let r = 0; r < rows.length; r++) {
+      const rendered = renderLyricLine(rows[r], ps, fam);
+      if (!rendered.ok) {
+        res.warnings.push(`歌词第 ${i + 1} 句第 ${r + 1} 行渲染失败：${rendered.error}`);
+        continue;
+      }
+      res.lyricPngs.set(`lyric/s${String(i).padStart(4, '0')}_l${r}.png`, rendered.pngBytes);
+      meta.push({ widthPx: rendered.widthPx, pixels: rendered.pixels });
+    }
+    if (meta.length === 0) {
+      res.warnings.push(`歌词第 ${i + 1} 句全部行渲染失败，已跳过`);
+      continue;
+    }
+    res.rowMeta[i] = meta;
+  }
+  if (res.warnings.length === 0 && res.lyricPngs.size > 0 && fontNote !== '') res.warnings.push(fontNote);
+  return res;
+}
+
 // 零依赖 zip 写入器（STORE 方式，CRC32）
 const ZIP_CRC_TABLE = (() => {
   const t = new Uint32Array(256);
@@ -1927,16 +2357,24 @@ function buildZip(files) {
 
 // 完整粒子数据包：pack.mcmeta + data/<ns>/<dir>/<tick>.mcfunction（按目标版本目录名）
 // sfxTickList：buildLayout 返回的逐 tick 粒子行（与产物 CB 严格一致）；缺省时退化为 buildSfxFunctions 旧行为
-function buildSfxDatapackZip(song, refLayers, targetMc, sfxTickList = null) {
+// lyricPngs（2026-10-06）：Map(文件名 'lyric/s0001_l0.png' → PNG Uint8Array)——歌词字库随包导出，
+//   用户解压到游戏目录 .minecraft/particleImages/（模组 ImageUtil 客户端本地读图，与资源包无关）
+function buildSfxDatapackZip(song, refLayers, targetMc, sfxTickList = null, lyricPngs = null) {
   const pf = sfxPackFormat(targetMc);
   const files = [{ name: 'pack.mcmeta', data: new TextEncoder().encode(buildSfxPackMcmeta(targetMc, song && song.songName)) }];
   for (const { tick, lines } of buildSfxFunctions(song, refLayers, sfxTickList)) {
     files.push({ name: `data/${SFX_NAMESPACE}/${pf.dir}/${tick}.mcfunction`, data: new TextEncoder().encode(lines.join('\n') + '\n') });
   }
+  if (lyricPngs instanceof Map) {
+    // name 已含 'lyric/' 前缀（与 lyricLineGeoms 的 fileName 同规则），直接拼 namespace 前缀
+    for (const [name, data] of [...lyricPngs.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
+      files.push({ name: `data/${SFX_NAMESPACE}/${name}`, data: data });
+    }
+  }
   // zip 中央目录条目数是 u16（PKZIP 规范），>65535 会回绕为 0 产出坏 zip；
-  // 本包每 tick 一个 .mcfunction（+1 个 pack.mcmeta），参考声道音符 tick 数达上限即拒绝
+  // 本包每 tick 一个 .mcfunction（+1 个 pack.mcmeta + 歌词 PNG），达上限即拒绝
   if (files.length > 0xFFFF) {
-    throw new Error(`粒子数据包条目数 ${files.length} 超过 zip u16 上限 65535（参考声道去重 tick 数 ${files.length - 1} 过多），请减少参考声道或缩短歌曲`);
+    throw new Error(`粒子数据包条目数 ${files.length} 超过 zip u16 上限 65535（function ${files.length - 1 - (lyricPngs instanceof Map ? lyricPngs.size : 0)} + 歌词 PNG ${lyricPngs instanceof Map ? lyricPngs.size : 0} 过多），请减少参考声道/歌词或缩短歌曲`);
   }
   return { bytes: buildZip(files), fileCount: files.length };
 }
@@ -2244,6 +2682,9 @@ const AppState = {
   // 与车道池的拖拽分配不同；允许与车道池成员重叠（同一声道在普通车道放真实盒 + 参考车道提供粒子参考）。
   // 单线式粒子只锚定参考车道内该声道的虚拟盒位（buildLayout refMode 虚拟绑定行段）。
   refLanes: [],
+  // 粒子歌词（2026-10-06）：[{start, end, text}]，tick 整数（UI 显示换算秒）；
+  //   LRC/纯文本导入后逐句可编辑。每句起始 tick 一组 particleex image 命令（逐行 PNG）。
+  lyrics: [],
   // 粒子特效模块：勾选表里哪些参考车道行处于「展开模板参数编辑」状态（li → true，仅 UI 状态、不持久化）
   sfxLanesOpen: new Set(),
   lane0: { start: { dz: 0, dy: 0 } }, // 默认轨道 0（顶层雪块导轨 + 每 32 格赭黄蛙灯；
@@ -2253,10 +2694,11 @@ const AppState = {
     customInstrumentMap: new Map(),
     soundIdMap: new Map(),      // 自定义乐器 → 资源包声音 ID（namespace:ID，可选；配置后该乐器音符盒静音代位，真实音色由 playsound 按 tick 触发）
     sfxPitchStep: 1,     // MIDI式参考：音高 → Z 偏移步长（格/半音），默认 1（用户定：以音高 12 为中点线性）
+    lyric: { ...LYRIC_DEFAULTS, pos: { ...LYRIC_DEFAULTS.pos } }, // 粒子歌词设置（字体/字号/位置等）
   },
   result: null,          // 生成结果 { grid, palette, size, ... }
   litematicBytes: null,
-  sfxZipBytes: null,     // 节奏参考粒子数据包 zip（有参考声道时生成；无参考为 null）
+  sfxZipBytes: null,     // 节奏参考粒子数据包 zip（有参考声道或歌词时生成；两者皆无为 null）
 };
 
 const $ = (id) => document.getElementById(id);
@@ -2461,6 +2903,8 @@ function onSongLoaded(song, bytes) {
   renderSettings();
   $('settings-section').hidden = false;
   $('layout-section').hidden = false;
+  renderLyricSection(); // 粒子歌词（2026-10-06）：导入区/句列表/设置/字体/位置窗口
+  $('lyric-section').hidden = false;
   $('generate-section').hidden = false;
   // 清空旧结果（含预览画布离屏图，避免新文件生成前残留旧图）
   AppState.result = null;
@@ -2514,11 +2958,24 @@ function saveStateNow() {
         effects: Array.isArray(l.effects) ? [...l.effects] : undefined, // 缺省 = 全选（不写该键，保持旧载荷形状）
         sfxParams: sfxParamsPayload(l) // 车道级特效模板（触发 5 字段 + 连接/背景文本；空 = 不写该键）
       })),
+      // 歌词：可选（旧存档无此字段 = 无歌词）；每句 {start, end, text}，tick 整数
+      lyrics: Array.isArray(AppState.lyrics)
+        ? AppState.lyrics.map(s => ({ start: Number(s && s.start), end: Number(s && s.end), text: String(s && s.text || '') }))
+        : [],
       settings: {
         targetVersion: AppState.settings.targetVersion,
         customInstrumentMap: [...AppState.settings.customInstrumentMap.entries()],
         soundIdMap: [...AppState.settings.soundIdMap.entries()],
         sfxPitchStep: AppState.settings.sfxPitchStep,
+        lyric: {
+          particle: AppState.settings.lyric.particle,
+          size: AppState.settings.lyric.size,
+          gap: AppState.settings.lyric.gap,
+          maxChars: AppState.settings.lyric.maxChars,
+          rotate: AppState.settings.lyric.rotate,
+          pos: { ...AppState.settings.lyric.pos },
+          font: AppState.settings.lyric.font,
+        },
       },
     };
     localStorage.setItem(stateKey(AppState.song), JSON.stringify(payload));
@@ -2587,6 +3044,14 @@ function loadSavedState(song) {
         }
       }
     }
+    // lyrics：可选（旧存档无此字段 = 无歌词）；数组，每句 {start, end: 有限数, text: 字符串}
+    if (s.lyrics !== undefined) {
+      if (!Array.isArray(s.lyrics)) return null;
+      for (const snt of s.lyrics) {
+        if (!snt || typeof snt !== 'object' || !Number.isFinite(Number(snt.start))
+          || !Number.isFinite(Number(snt.end)) || typeof snt.text !== 'string') return null;
+      }
+    }
     return s;
   } catch (e) { return null; }
 }
@@ -2607,6 +3072,10 @@ function applySavedState(song, saved) {
       start: (saved.v === 1 && (l.type || 'independent') === 'independent') ? { dz: 0, dy: 0 } : { dz: l.start.dz, dy: l.start.dy },
       effects: Array.isArray(l.effects) ? l.effects : undefined, // 缺省 = 全选（buildLayout 按 undefined 处理）
       sfxParams: (typeof l.sfxParams === 'object' && l.sfxParams !== null) ? { ...l.sfxParams } : undefined }));
+  // 歌词（可选）：tick 整数原样恢复
+  AppState.lyrics = (Array.isArray(saved.lyrics) ? saved.lyrics : []).map(snt => ({
+    start: Math.round(Number(snt.start)), end: Math.round(Number(snt.end)), text: String(snt.text || ''),
+  }));
   // 车道级类型迁移（类型选型按参考车道存储）：车道显式含单线式成员 → 该声道 refLayers 类型跟随车道
   for (const l of AppState.refLanes) {
     for (const t of l.tracks) {
@@ -2627,6 +3096,8 @@ function applySavedState(song, saved) {
         st.soundIdMap.filter(([k, v]) => Number.isInteger(k) && sfxNormSoundId(v)));
     }
     if (Number.isFinite(st.sfxPitchStep)) AppState.settings.sfxPitchStep = st.sfxPitchStep;
+    // 歌词设置（可选，旧存档无此字段 = 缺省）：normLyricSettings 逐字段校验兜底
+    if (st.lyric && typeof st.lyric === 'object') AppState.settings.lyric = normLyricSettings(st.lyric);
   }
   return true;
 }
@@ -4010,14 +4481,24 @@ class LayoutEditor {
   //   main 窗口：lane（普通车道）+ ref-bg = **单线式**参考车道（可拖 = 虚拟盒位锚点，
   //   拖了直接改变其绑定粒子行偏移，2026-09-07 用户要求恢复可拖）；
   //   ref 窗口：ref = **MIDI式**参考车道（可拖 = 粒子中心基准）
-  //   ref（main 窗口里的 MIDI式）/ ref-bg（ref 窗口里的单线式）为各自窗口的不可拖背景
-  dragKinds() { return this.mode === 'ref' ? new Set(['ref']) : new Set(['lane', 'ref-bg']); }
+  //   ref（main 窗口里的 MIDI式）/ ref-bg（ref 窗口里的单线式）为各自窗口的不可拖背景；
+  //   lyric 窗口（2026-10-06）：lyric = 歌词显示中心点（可拖 = settings.lyric.pos 的 Y/Z）
+  dragKinds() { return this.mode === 'ref' ? new Set(['ref']) : this.mode === 'lyric' ? new Set(['lyric']) : new Set(['lane', 'ref-bg']); }
   // 布局标记（含 kind 标签）。main = [轨道0, 车道1..n, MIDI式参考（背景）, 单线式参考（可拖）]；
   //   ref  = [MIDI式参考 I1..（可拖=粒子中心基准）, 单线式参考 B1..（背景）, 车道1..n, 轨道0]（车道/轨道0 背景不可拖）
   //   缺 start 的车道按 (0,0) 兜底显示（UI 路径 syncLaneStarts/syncRefLaneStarts 恒补 start，
   //   此处仅为直接改状态的外部调用/测试不致崩溃）
   starts() {
     const s0 = () => ({ dz: 0, dy: 0 });
+    if (this.mode === 'lyric') {
+      // 歌词中心点（可拖 = settings.lyric.pos 的 Y/Z，X 在输入框改）；轨道 0 + 主链 = 背景参照
+      const p = (AppState.settings && AppState.settings.lyric && AppState.settings.lyric.pos) || LYRIC_DEFAULTS.pos;
+      return [
+        { start: { dz: p.z, dy: p.y }, kind: 'lyric' },
+        { start: AppState.lane0 ? AppState.lane0.start : { dz: 0, dy: 0 }, kind: 'lane0' },
+        ...AppState.lanes.map(l => ({ start: l.start || s0(), kind: 'lane' })),
+      ];
+    }
     if (this.mode === 'ref') {
       const refLanes = AppState.refLanes || [];
       return [
@@ -4043,8 +4524,9 @@ class LayoutEditor {
   idxKind(i) {
     const k = this.kindOf(i);
     if (k === 'lane0') return { kind: 'lane0' };
+    if (k === 'lyric') return { kind: 'lyric' };
     if (k === 'lane') return { kind: 'lane', j: this.mode === 'ref'
-      ? i - (AppState.refLanes || []).length : i - 1 };
+      ? i - (AppState.refLanes || []).length : this.mode === 'lyric' ? i - 2 : i - 1 };
     if (k === 'ref' || k === 'ref-bg') {
       const it = this.starts()[i];
       return { kind: k, j: (it && it.laneIdx !== undefined) ? it.laneIdx : i };
@@ -4114,6 +4596,18 @@ class LayoutEditor {
           scheduleStateSave();
           return;
         }
+        // lyric 窗口：歌词中心点 → settings.lyric.pos（Y/Z，X 在输入框改；输入框变化走其监听）
+        if (sel.kind === 'lyric' && AppState.settings && AppState.settings.lyric) {
+          const w = this.s2w(e.offsetX, e.offsetY);
+          const z = Math.round(w.z);
+          const y = Math.round(w.y);
+          const pos = AppState.settings.lyric.pos;
+          pos.y = y; pos.z = z;
+          this.draw(); this.updateInfo();
+          if (this.mode === 'lyric' && $('lyricPosX') && Number.isFinite(pos.x)) $('lyricPosX').value = pos.x;
+          scheduleStateSave();
+          return;
+        }
       }
       if (this.panning) {
         this.panX += dx; this.panY += dy;
@@ -4150,12 +4644,27 @@ class LayoutEditor {
       if (!this.starts()[this.selected]) { this.selected = -1; return; } // 越界守护（与 pointermove 同类）
       if (!this.draggable(this.selected)) return; // 背景标记（轨道 0 / 非本窗口的 kind）不响应方向键
       const sel = this.idxKind(this.selected);
+      const step = e.shiftKey ? 5 : 1;
+      let moved = false;
+      if (sel.kind === 'lyric' && AppState.settings && AppState.settings.lyric) {
+        // lyric 窗口：方向键移动歌词中心点（Y/Z，X 在输入框改）
+        const pos = AppState.settings.lyric.pos;
+        if (e.key === 'ArrowLeft') { pos.z -= step; moved = true; }
+        if (e.key === 'ArrowRight') { pos.z += step; moved = true; }
+        if (e.key === 'ArrowDown') { pos.y -= step; moved = true; }
+        if (e.key === 'ArrowUp') { pos.y += step; moved = true; }
+        if (moved) {
+          e.preventDefault();
+          this.draw(); this.updateInfo();
+          if (Number.isFinite(pos.x)) $('lyricPosX').value = pos.x;
+          scheduleStateSave();
+        }
+        return;
+      }
       const lane = sel.kind === 'lane' ? AppState.lanes[sel.j]
         : (sel.kind === 'ref' || sel.kind === 'ref-bg') ? AppState.refLanes[sel.j] : null;
       if (!lane) return;
-      const step = e.shiftKey ? 5 : 1;
       const s = lane.start;
-      let moved = false;
       if (e.key === 'ArrowLeft') { s.dz -= step; moved = true; }
       if (e.key === 'ArrowRight') { s.dz += step; moved = true; }
       if (e.key === 'ArrowDown') { s.dy -= step; moved = true; }
@@ -4186,6 +4695,7 @@ class LayoutEditor {
   nameOf(i) {
     const k = this.kindOf(i);
     if (k === 'lane0') return '轨道 0';
+    if (k === 'lyric') return '歌词中心';
     if (k === 'lane') {
       const j = this.mode === 'ref' ? i - (AppState.refLanes || []).length : i - 1;
       return `车道 ${j + 1}`;
@@ -4205,8 +4715,8 @@ class LayoutEditor {
   validate() {
     const warnings = [], errors = [];
     const items = this.starts();
-    const checkIdx = this.mode === 'ref' ? [] :
-      items.map((it, i) => ({ it, i })).filter(x => x.it.kind !== 'ref' && x.it.kind !== 'ref-bg');
+    const checkIdx = (this.mode === 'ref' || this.mode === 'lyric') ? [] :
+      items.map((it, i) => ({ it, i })).filter(x => x.it.kind !== 'ref' && x.it.kind !== 'ref-bg' && x.it.kind !== 'lyric');
     for (let a = 0; a < checkIdx.length; a++) {
       for (let b = a + 1; b < checkIdx.length; b++) {
         const i = checkIdx[a].i, j = checkIdx[b].i;
@@ -4271,11 +4781,11 @@ class LayoutEditor {
     ctx.font = 'bold 13px sans-serif';
     ctx.fillText('Z →', W - 36, H - 8);
     ctx.fillText('Y ↑', 6, 16);
-    // 校验冲突标记（仅 main 窗口：ref 窗口全部标记为虚拟几何，重叠=粒子叠放/槽位参照，无冲突语义）
+    // 校验冲突标记（仅 main 窗口：ref/lyric 窗口全部标记为虚拟几何，重叠=粒子叠放/槽位参照，无冲突语义）
     const { warnings, errors } = this.validate();
     const errorPairs = new Set(), warnPairs = new Set();
     const items = this.starts();
-    if (this.mode !== 'ref') {
+    if (this.mode !== 'ref' && this.mode !== 'lyric') {
       for (let i = 0; i < items.length; i++) {
         for (let j = i + 1; j < items.length; j++) {
           const a = items[i].start, b = items[j].start;
@@ -4295,6 +4805,7 @@ class LayoutEditor {
       // 颜色：轨道 0 琥珀；参考车道（MIDI式可拖/单线式背景）紫；音轨车道按主导乐器色（main 窗口）/ 灰（ref 窗口背景）
       let fill;
       if (isRail0) fill = '#d9a441';
+      else if (k === 'lyric') fill = '#5cc8ff';
       else if (k === 'ref' || k === 'ref-bg') fill = '#a06cd5';
       else fill = (this.mode === 'ref') ? '#5a6472' : this.groupColor(this.idxKind(i).j);
       ctx.globalAlpha = isBg ? 0.42 : 1;
@@ -4303,21 +4814,22 @@ class LayoutEditor {
       ctx.globalAlpha = 1;
       if (errorPairs.has(i)) { ctx.strokeStyle = '#e05c5c'; }
       else if (warnPairs.has(i)) { ctx.strokeStyle = '#e0b15c'; }
-      else { ctx.strokeStyle = i === this.selected ? '#ffffff' : (isRail0 ? '#d9a441' : ((k === 'ref' || k === 'ref-bg') ? '#a06cd5' : '#3a4150')); }
+      else { ctx.strokeStyle = i === this.selected ? '#ffffff' : (isRail0 ? '#d9a441' : (k === 'lyric' ? '#5cc8ff' : ((k === 'ref' || k === 'ref-bg') ? '#a06cd5' : '#3a4150'))); }
       ctx.lineWidth = i === this.selected ? 2.5 : 1.5;
-      // 轨道 0 虚线；参考车道（MIDI式/单线式）点划线（区别于音轨车道的实线描边）
+      // 轨道 0 虚线；参考车道（MIDI式/单线式）点划线（区别于音轨车道的实线描边）；lyric 中心点虚线
       if (isRail0) ctx.setLineDash([3, 2]);
       else if (k === 'ref' || k === 'ref-bg') ctx.setLineDash([6, 2, 2, 2]);
+      else if (k === 'lyric') ctx.setLineDash([4, 2]);
       ctx.strokeRect(p.x - half, p.y - half, half * 2, half * 2);
       ctx.setLineDash([]);
       ctx.fillStyle = '#0b0d10';
       ctx.font = `bold ${Math.min(12, Math.max(8, this.zoom * 0.45))}px sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      // 轨道 0 = 「0」，音轨车道编号（ref 窗口 L 前缀 + 序号），参考车道 R 前缀
-      //   （ref 窗口用 laneIdx 序号 = 参考车道池真实下标，MIDI式在前排序后 i ≠ 下标）
+      // 轨道 0 = 「0」，音轨车道编号（ref 窗口 L 前缀 + 序号），参考车道 R 前缀；lyric 中心 = 「词」
       let label;
       if (isRail0) label = '0';
+      else if (k === 'lyric') label = '词';
       else if (k === 'ref' || k === 'ref-bg') label = (this.mode === 'ref') ? String((it.laneIdx !== undefined ? it.laneIdx : i) + 1) : 'R' + (this.idxKind(i).j + 1);
       else label = (this.mode === 'ref') ? 'L' + (this.idxKind(i).j + 1) : String(i);
       ctx.fillText(label, p.x, p.y);
@@ -4331,7 +4843,9 @@ class LayoutEditor {
     const nLane = AppState.lanes.length;
     let txt = this.mode === 'ref'
       ? `${nRef} 条参考车道（紫：MIDI式可拖 = 粒子中心基准，单线式为虚拟盒位背景、不可拖）+ ${nLane} 条普通车道 / 轨道 0（灰背景，仅作参照、不可拖）`
-      : `轨道 0 + ${nLane} 条车道（可拖）` + (nRef > 0 ? ` + ${nRef} 条参考车道（紫：单线式可拖 = 虚拟盒位锚点，MIDI式为背景、不可拖）` : '');
+      : this.mode === 'lyric'
+        ? `「词」= 歌词显示中心点（青、可拖）；轨道 0 与 ${nLane} 条主链为空间参照、不可拖`
+        : `轨道 0 + ${nLane} 条车道（可拖）` + (nRef > 0 ? ` + ${nRef} 条参考车道（紫：单线式可拖 = 虚拟盒位锚点，MIDI式为背景、不可拖）` : '');
     if (this.selected >= 0 && this.starts()[this.selected]) {
       const s = this.startOf(this.selected);
       txt += ` ｜ 选中${this.nameOf(this.selected)}：Z=${s.dz} Y=${s.dy}`;
@@ -4510,7 +5024,8 @@ function hexToRgb(hex) {
 let topPreview = null, frontPreview = null, sidePreview = null;
 let layoutEditor = null;
 let refLayoutEditor = null;
-let activeLayoutEditor = null; // 最近一次交互的编辑器（方向键只作用于它，避免双窗口同时移动）
+let lyricLayoutEditor = null; // 歌词位置独立窗口（2026-10-06，mode='lyric'）
+let activeLayoutEditor = null; // 最近一次交互的编辑器（方向键只作用于它，避免多窗口同时移动）
 
 function renderLayoutEditor() {
   if (!layoutEditor) layoutEditor = new LayoutEditor($('layoutCanvas'), 'main', $('layoutInfo'));
@@ -4518,6 +5033,9 @@ function renderLayoutEditor() {
   // 参考车道独立窗口（2026-09-07）：参考车道可拖、普通车道半透明背景不可拖
   if (!refLayoutEditor) refLayoutEditor = new LayoutEditor($('refLaneCanvas'), 'ref', $('refLayoutInfo'));
   refLayoutEditor.refresh();
+  // 歌词位置独立窗口（2026-10-06）：「词」= settings.lyric.pos 的 Y/Z 可拖
+  if (!lyricLayoutEditor) lyricLayoutEditor = new LayoutEditor($('lyricCanvas'), 'lyric', $('lyricLayoutInfo'));
+  lyricLayoutEditor.refresh();
 }
 
 function renderPreviews() {
@@ -4756,6 +5274,12 @@ window.__NBS2SCHEMATIC = {
   SFX_CONNECT_DEFAULTS, SFX_CONNECT_POINT_GAP, SFX_CONNECT_MIN_LEN, SFX_CONNECT_NEAR_DT, normConnectParams, sfxNum, sfxConnectCmd, sfxChordPairs,
   SFX_CONNECT_STYLES, sfxArcCmd, sfxArcLen, sfxConnectPacing,
   sfxNormSoundId, sfxPlaysoundCmd,
+  LYRIC_DEFAULTS, normLyricSettings, lyricParse, lyricCheck,
+  LyricFont, lyricFontFamily, lyricFontReady, lyricFontEnsureLoad, lyricFontUpload,
+  LYRIC_FONT_CDN, LYRIC_FONT_FAMILY_LXGW, LYRIC_FONT_FAMILY_SYSTEM, LYRIC_FONT_FAMILY_UPLOAD,
+  lyricWrapChars, renderLyricLine, lyricBase64ToBytes, LYRIC_CANVAS_MAX_W, LYRIC_CANVAS_MAX_H,
+  lyricLineGeoms, sfxLyricImageCmd, LYRIC_SCALING,
+  buildLyricPngs,
   SFX_VANISH_DEFAULTS, SFX_VANISH_PROTO, sfxVanishCmd, normVanishParams,
   SFX_EFFECT_TYPES, renderSfxEffectList, renderSfxEffectLanes, onSfxEffectToggle,
   buildSfxPackMcmeta, buildSfxFunctions, buildZip, zipCrc32, buildSfxDatapackZip,
@@ -4808,13 +5332,24 @@ async function generate() {
       $('genStatus').textContent = '';
       return;
     }
+    // 粒子歌词：先渲染全部行 PNG（裁剪后像素尺寸 + 字节），行几何与命令在 buildLayout 内同源生成
+    const lyricPng = buildLyricPngs();
+    for (const w of lyricPng.warnings) {
+      const d = document.createElement('div'); d.className = 'w'; d.textContent = '⚠ ' + w;
+      $('warnings').appendChild(d);
+    }
     const result = buildLayout(song,
       lanes.map(l => ({ layers: l.tracks })), lanes.map(l => l.start),
       delays, AppState.settings, AppState.lane0.start,
       refLanes.map(l => ({ tracks: [...l.tracks], type: l.type || 'independent', start: { ...l.start },
         effects: Array.isArray(l.effects) ? [...l.effects] : undefined,
         sfxParams: (typeof l.sfxParams === 'object' && l.sfxParams !== null) ? { ...l.sfxParams } : undefined })),
-      AppState.refLayers);
+      AppState.refLayers,
+      lyricPng.lyricPngs.size > 0 ? {
+        sentences: AppState.lyrics,
+        settings: (AppState.settings || {}).lyric,
+        rowMeta: lyricPng.rowMeta,
+      } : null);
     const palette = buildPalette(result.grid);
     const packed = packBlockStates(result.grid.data, palette.length);
     let totalBlocks = 0;
@@ -4862,12 +5397,13 @@ async function generate() {
 
     AppState.result = { result, palette, packed, size, totalBlocks, nbtBytes, lanes };
     AppState.litematicBytes = gz;
-    // 节奏参考粒子数据包：有参考声道时生成完整数据包 zip（命名空间 nbs2sfx）；
+    // 节奏参考粒子数据包：有参考声道**或有歌词**时生成完整数据包 zip（命名空间 nbs2sfx）；
     // 逐 tick 粒子行取 result.sfxTickList（与产物命令方块严格一致：单线式按轨道排布偏移、MIDI式按音高偏移）
     AppState.sfxZipBytes = null;
-    // 2026-09-29 playsound 改命令方块直写后，zip 只承载粒子 function 行（有参考声道才生成）
-    if (AppState.refLayers.size > 0) {
-      const { bytes } = buildSfxDatapackZip(song, AppState.refLayers, AppState.settings.targetVersion, result.sfxTickList);
+    // 2026-09-29 playsound 改命令方块直写后，zip 只承载粒子 function 行；
+    // 2026-10-06 歌词随包导出：纯歌词歌（无参考声道）也产 zip（pack.mcmeta + 歌词 function + PNG）
+    if (AppState.refLayers.size > 0 || lyricPng.lyricPngs.size > 0) {
+      const { bytes } = buildSfxDatapackZip(song, AppState.refLayers, AppState.settings.targetVersion, result.sfxTickList, lyricPng.lyricPngs.size > 0 ? lyricPng.lyricPngs : null);
       AppState.sfxZipBytes = bytes;
       $('sfxZipBtn').hidden = false;
     } else {
@@ -4875,7 +5411,8 @@ async function generate() {
     }
     $('downloadBtn').hidden = false;
     $('debugBtn').hidden = false;
-    $('genStatus').textContent = `完成（NBT ${(nbtBytes.length / 1024).toFixed(1)} KB → gzip ${(gz.length / 1024).toFixed(1)} KB，自检通过）`;
+    $('genStatus').textContent = `完成（NBT ${(nbtBytes.length / 1024).toFixed(1)} KB → gzip ${(gz.length / 1024).toFixed(1)} KB，自检通过）`
+      + (result.stats.lyricSentences > 0 ? ` ｜ 歌词 ${result.stats.lyricSentences} 句 · ${result.stats.lyricParticles.toLocaleString()} 粒子 · PNG ${result.stats.lyricPngs}（部署：.minecraft/particleImages/lyric/）` : '');
     renderStats();
     renderPreviews();
   } catch (err) {
@@ -4905,6 +5442,7 @@ function renderStats() {
       + (stats.sfxVanishNotes ? ` · 消失型 ${stats.sfxVanishNotes}` : '')
       + (stats.sfxBackgroundNotes ? ` · 背景型 ${stats.sfxBackgroundNotes}` : '')]] : []),
     ...(stats.playsoundNotes > 0 ? [['playsound 代位', `${stats.playsoundNotes}（资源包声音，音符盒静音代位）`]] : []),
+    ...(stats.lyricSentences > 0 ? [['粒子歌词', `歌词 ${stats.lyricSentences} 句 · ${stats.lyricParticles.toLocaleString()} 粒子 · PNG ${stats.lyricPngs}（部署：数据包 zip 内 data/nbs2sfx/lyric/ → 游戏目录 .minecraft/particleImages/lyric/）`]] : []),
   ];
   $('statsPanel').innerHTML = cards.map(([k, v]) =>
     `<div class="stat-card"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
@@ -5353,6 +5891,163 @@ $('presetRadialBtn').addEventListener('click', () => {
 });
 $('fitLayoutBtn').addEventListener('click', () => layoutEditor && layoutEditor.fitView());
 $('fitRefLayoutBtn').addEventListener('click', () => refLayoutEditor && refLayoutEditor.fitView());
+$('fitLyricLayoutBtn').addEventListener('click', () => lyricLayoutEditor && lyricLayoutEditor.fitView());
+
+/* ===== ⑩-d 歌词 UI（2026-10-06：导入/句列表/设置/字体/位置窗口）===== */
+function tick2secStr(t) {
+  const T = AppState.song ? AppState.song.tempo : 0;
+  if (!T) return '-';
+  return (Number(t) / T).toFixed(2) + 's';
+}
+function renderLyricSection() {
+  // 句列表（每句一行：start/end 输入（秒，步进 1/tempo）+ 文本 + ✕）
+  const list = $('lyricList');
+  list.innerHTML = '';
+  (AppState.lyrics || []).forEach((snt, i) => {
+    const row = document.createElement('div');
+    row.className = 'lyric-sent';
+    const mk = (val) => {
+      const inp = document.createElement('input');
+      inp.type = 'number';
+      inp.min = '0';
+      inp.step = '1';
+      inp.value = Number(val) || 0;
+      return inp;
+    };
+    const inS = mk(snt.start), inE = mk(snt.end);
+    inS.title = '起始 tick（' + tick2secStr(snt.start) + '）'; inE.title = '结束 tick（' + tick2secStr(snt.end) + '）';
+    inS.style.width = inE.style.width = '90px';
+    const inT = document.createElement('input');
+    inT.type = 'text'; inT.value = snt.text; inT.placeholder = '歌词文本'; inT.style.flex = '1';
+    const btn = document.createElement('button');
+    btn.textContent = '✕'; btn.title = '删除该句';
+    const commit = () => {
+      const arr = AppState.lyrics;
+      if (!arr[i]) return;
+      arr[i] = { start: Math.max(0, Math.round(Number(inS.value) || 0)),
+        end: Math.max(0, Math.round(Number(inE.value) || 0)), text: inT.value.trim() };
+      scheduleStateSave(); renderLyricSection();
+    };
+    [inS, inE, inT].forEach(el => { el.addEventListener('change', commit); });
+    btn.addEventListener('click', () => {
+      AppState.lyrics.splice(i, 1);
+      scheduleStateSave(); renderLyricSection();
+    });
+    row.append(inS, inE, inT, btn);
+    list.appendChild(row);
+  });
+  $('lyricCount').textContent = (AppState.lyrics || []).length > 0 ? `${AppState.lyrics.length} 句` : '（未导入）';
+  // 句列表校验（重叠/超曲长/非法 → hint 提示，不阻断）
+  const chk = lyricCheck(AppState.lyrics || [], AppState.song ? AppState.song.songLength : 0);
+  const chkEl = $('lyricCheck');
+  chkEl.textContent = chk.length > 0 ? chk.join('；') : '';
+  chkEl.style.color = chk.length > 0 ? '#e0b15c' : '';
+  // 设置区回填（控件恒在 DOM，只同步 value）
+  const st = (AppState.settings && AppState.settings.lyric) || LYRIC_DEFAULTS;
+  $('lyricParticle').value = st.particle;
+  $('lyricSize').value = String(st.size);
+  $('lyricGap').value = String(st.gap);
+  $('lyricMaxChars').value = String(st.maxChars);
+  $('lyricRotate').value = String(st.rotate);
+  $('lyricFont').value = st.font;
+  const px = $('lyricPosX');
+  if (px) px.value = Number(st.pos.x) || 0;
+  // 字体状态 + 样例预览（当前所选字体渲染「我的世界」）
+  const sEl = $('lyricFontSample');
+  if (sEl) { sEl.textContent = '我的世界'; sEl.style.fontFamily = lyricFontFamily(); }
+  const fEl = $('lyricFontStatus');
+  if (st.font === 'lxgw') {
+    fEl.textContent = LyricFont.state === 'ok' ? 'LXGW 文楷已加载'
+      : LyricFont.state === 'fallback' ? '⚠ CDN 字体加载失败，生成时回退系统楷体'
+        : '加载中…（5s 超时回退系统楷体）';
+  } else if (st.font === 'upload') {
+    fEl.textContent = LyricFont.uploaded ? `已加载：${LyricFont.uploadName || '本地字体'}` : '⚠ 未上传（生成时回退系统楷体；刷新后需重传）';
+  } else {
+    fEl.textContent = '系统楷体（KaiTi/STKaiti）';
+  }
+}
+$('lyricFileBtn').addEventListener('click', () => $('lyricFileInput').click());
+$('lyricFileInput').addEventListener('change', (e) => {
+  const f = e.target.files[0];
+  e.target.value = ''; // 允许重选同名文件
+  if (!f) return;
+  const reader = new FileReader();
+  reader.onerror = () => showError('歌词文件读取失败');
+  reader.onload = () => {
+    try {
+      $('lyricText').value = String(reader.result || '');
+      if (!AppState.song) { showError('请先加载 NBS 文件再导入歌词'); return; }
+      renderLyricImport();
+    } catch (err) { showError(err.message || String(err)); }
+  };
+  reader.readAsText(f);
+});
+// 解析 textarea → AppState.lyrics（LRC 或纯文本；tempo 缺省 1）
+function renderLyricImport() {
+  if (!AppState.song) return;
+  const r = lyricParse($('lyricText').value, AppState.song.tempo, AppState.song.songLength);
+  AppState.lyrics = r.lines;
+  scheduleStateSave();
+  renderLyricSection();
+  for (const w of r.warnings) {
+    const d = document.createElement('div'); d.className = 'w'; d.textContent = '⚠ ' + w;
+    $('warnings').appendChild(d);
+  }
+}
+$('lyricParseBtn').addEventListener('click', () => { renderLyricImport(); renderLayoutEditor(); });
+$('lyricAddBtn').addEventListener('click', () => {
+  const T = AppState.song ? AppState.song.tempo : 1;
+  const S = AppState.song ? AppState.song.songLength : 0;
+  const last = (AppState.lyrics || [])[AppState.lyrics.length - 1];
+  const start = last && last.end ? last.end : 0;
+  AppState.lyrics.push({ start, end: Math.min(S > 0 ? S : start + 20, Math.max(start + 20, start + 1)), text: '新歌词' });
+  scheduleStateSave();
+  renderLyricSection();
+});
+// 设置区控件 → settings.lyric（change 即时生效 + 持久化；字体切换触发后台加载）
+function lyricSettingsCommit() {
+  const st = (AppState.settings && AppState.settings.lyric) || { ...LYRIC_DEFAULTS, pos: { ...LYRIC_DEFAULTS.pos } };
+  st.particle = $('lyricParticle').value.trim() || LYRIC_DEFAULTS.particle;
+  st.size = Number($('lyricSize').value) || LYRIC_DEFAULTS.size;
+  st.gap = Number($('lyricGap').value);
+  st.maxChars = Number($('lyricMaxChars').value);
+  st.rotate = Number($('lyricRotate').value);
+  st.font = $('lyricFont').value;
+  const nx = Number($('lyricPosX').value);
+  if (Number.isFinite(nx)) st.pos = { ...st.pos, x: nx };
+  AppState.settings.lyric = normLyricSettings(st);
+  if (st.font === 'lxgw') lyricFontEnsureLoad();
+  scheduleStateSave();
+  renderLyricSection();
+  if (lyricLayoutEditor) lyricLayoutEditor.refresh();
+}
+['lyricParticle', 'lyricSize', 'lyricGap', 'lyricMaxChars', 'lyricRotate', 'lyricFont', 'lyricPosX'].forEach(id => {
+  const el = $(id);
+  if (el) el.addEventListener('change', lyricSettingsCommit);
+});
+$('lyricFontUploadBtn').addEventListener('click', () => $('lyricFontFileInput').click());
+$('lyricFontFileInput').addEventListener('change', (e) => {
+  const f = e.target.files[0];
+  e.target.value = '';
+  if (!f) return;
+  const reader = new FileReader();
+  reader.onerror = () => showError('字体文件读取失败');
+  reader.onload = () => {
+    if (!lyricFontUpload(reader.result, f.name)) { showError('字体加载失败（格式不支持或文件损坏）'); return; }
+    renderLyricSection();
+  };
+  reader.readAsArrayBuffer(f);
+});
+// 歌词字体：CDN LXGW 后台预加载（script 在 body 末尾，DOM 就绪；失败静默回退，UI 状态由 renderLyricSection 反映）
+(function initLyricFont() {
+  try {
+    if (!('fonts' in document) || document.querySelector('link[data-lyric-font]')) { lyricFontEnsureLoad(); return; }
+    const link = document.createElement('link');
+    link.rel = 'stylesheet'; link.href = LYRIC_FONT_CDN; link.setAttribute('data-lyric-font', '1');
+    document.head.appendChild(link);
+  } catch (e) { /* head 不存在（测试桩）→ 仅 fonts.load 尝试 */ }
+  lyricFontEnsureLoad();
+})();
 </script>
 </body>
 </html>
