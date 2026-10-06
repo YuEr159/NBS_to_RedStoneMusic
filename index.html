@@ -189,7 +189,7 @@ input[type="number"] { width: 70px; }
       <span class="sidebar-title">音轨池侧栏</span>
     </div>
     <section id="layer-section" hidden>
-      <h2>音轨池（勾选参与转换的 NBS 音轨；可拖到右侧车道池或节奏型参考车道池分配）</h2>
+      <h2>音轨池（勾选参与转换；可拖到右侧车道池或参考车道池分配）</h2>
       <div class="toolbar">
         <button id="selectAllBtn">全选</button>
         <button id="selectNoneBtn">全不选</button>
@@ -219,7 +219,7 @@ input[type="number"] { width: 70px; }
   </section>
 
   <section id="group-section" hidden>
-    <h2>车道池（每条车道 = 一条中继器链 + 3 个音符盒位；音轨数量不限，同 tick 超过 3 位会被丢弃，见卡片上的冲突提示）</h2>
+    <h2>车道池（每条车道 = 一条中继器链 + 3 个音符盒位，同 tick 超 3 位会被丢弃）</h2>
     <div class="toolbar">
       <button id="addLaneBtn">＋ 新增车道</button>
       <button id="autoGroupBtn">自动分配（每 3 音轨一车道）</button>
@@ -249,14 +249,14 @@ input[type="number"] { width: 70px; }
   </section>
 
   <section id="refLane-section" hidden>
-    <h2>节奏型参考车道池（纯节奏/音高参考，不生成任何物理结构；成员在左侧音轨池勾选「节奏参考」，或直接拖入下方卡片）</h2>
+    <h2>节奏型参考车道池（纯节奏/音高参考，不生成物理结构；成员勾选「节奏参考」或直接拖入卡片）</h2>
     <div class="toolbar">
       <button id="addRefLaneBtn">＋ 新增参考车道</button>
       <span class="hint" id="refGroupCount"></span>
       <span class="hint">勾选音轨池的「节奏参考」→ 默认并入第一条参考车道、放不下自动新建；也可把左侧音轨池的音轨直接拖入卡片（拖入即登记为节奏参考并入该车道，允许重复拖入）；参考车道**不生成任何方块**，只作为粒子特效的节奏/音高参考——想让参考声道同时在普通轨道发声 = 勾选其行内「发声」（建一条普通车道）或把音轨拖入「车道池」卡片；每条参考车道可选类型（单线式/MIDI式，作用于该车道全部成员）——单线式粒子锚定本车道虚拟盒位（起点可在上方「普通车道起点布局」窗口直接拖）、MIDI式锚定轨道 0 CB + 本车道起点基准（本分区下方独立窗口可拖，缺省 (0,0)）再按音高偏移；粒子恒产生（与「发声」无关）；想关闭本车道粒子 = 在下方「粒子特效总览」模块取消该车道的「触发型」勾选</span>
     </div>
     <div id="refLaneList"></div>
-    <h3>参考车道起点布局（Y-Z 截面，独立窗口；MIDI式参考车道可拖 = 粒子中心基准，单线式为虚拟盒位背景、不可移动——单线式起点在上方音轨布局窗口拖）</h3>
+    <h3>参考车道起点布局（Y-Z 截面；MIDI 式可拖 = 粒子中心基准，单线式在上方布局窗口拖）</h3>
     <div class="layout-tools">
       <button id="fitRefLayoutBtn">缩放到全部</button>
       <span class="hint">拖拽移动 MIDI式参考车道（其起点 = 粒子中心基准，缺省 (0,0) = 轨道 0 CB 位置）；单线式参考车道（紫、半透明）显示虚拟盒位几何、在本窗口不可拖（到音轨布局窗口拖）；普通车道（灰）与轨道 0 仅作空间参照、不可移动；参考车道不参与物理碰撞校验（MIDI式中心重叠 = 粒子有意叠放），可与普通车道任意并排</span>
@@ -266,13 +266,13 @@ input[type="number"] { width: 70px; }
   </section>
 
   <section id="sfxEffect-section" hidden>
-    <h2>粒子特效总览（共 4 类：触发型 / 连接型 / 背景型 / 消失型；下方可按参考车道勾选涉及的特效）</h2>
+    <h2>粒子特效总览（触发型 / 连接型 / 背景型 / 消失型，可按参考车道勾选）</h2>
     <div id="sfxEffectList"></div>
     <div id="sfxEffectLanes"></div>
   </section>
 
   <section id="lyric-section" hidden>
-    <h2>粒子歌词（LRC/纯文本导入 → 逐句 particleex image 粒子显示；字库 PNG 随数据包 zip 导出，部署到 .minecraft/particleImages/lyric/）</h2>
+    <h2>粒子歌词（LRC/纯文本导入，逐句粒子显示；PNG 随数据包 zip 导出）</h2>
     <div class="toolbar">
       <button id="lyricFileBtn">选择 LRC/文本文本</button>
       <input type="file" id="lyricFileInput" accept=".lrc,.txt" hidden>
