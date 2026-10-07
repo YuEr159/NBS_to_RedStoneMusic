@@ -2844,24 +2844,25 @@ try {
   } else console.log('PASS P10 ringPreset 非零 c0 偏移：圆心平移到 (5,−3)');
 }
 
-// ---------- L 矿车监听系统（2026-10-07） ----------
-// L1 buildListenerFunctions 纯函数：2 个 mcfunction、命令文本逐条、Java 语法要点（mount / execute as·at·run / distance=..N / ~ ~ ~）
-// L2 e2e：settings.listener.enabled → 2 个 CB 位置/Command/auto + geometry.listener + TE 所在格方块
-// L3 零回归：未启用时 0 监听 CB、listener=null、网格尺寸不变
-// L4 数据包 zip：listenerEnabled → 2 个 mcfunction 条目（1.21.11 function/ 与 1.19.4 functions/ 双目录名）+ 文件内容
-// 激活格语义并入 L2（激活格 = t=0 主位音符盒，红石块运行时替换它）；CB 格占用守卫（cellFree）由只写空气格逻辑保证
+// ---------- L 矿车监听系统（2026-10-07，v3 让位设计） ----------
+// L1 buildListenerFunctions 纯函数（缺省 geom）：2 个 mcfunction、命令文本逐条、Java 语法要点（mount / execute as·at·run / distance=..N / ~ ~ ~）
+// L2 e2e：settings.listener.enabled → 2 CB（链头上方 yb+3/yb+4）位置/Command/auto + geometry.listener（含 geom 偏移自洽）
+//   + 让位几何（链 +Z 平移：行走行布局 z=0 恒空气、主链最低盒位列 z≥1）+ 主链结构位置
+// L3 零回归：未启用时 0 监听 CB、listener=null、网格尺寸不变（sy/sz 差 2 = 让位 + CB 两层）
+// L4 数据包 zip：listenerEnabled → 2 个 mcfunction 条目（1.21.11 function/ 与 1.19.4 functions/ 双目录名）+ 按布局 geom 的内容
+// 激活格 = 方案 A（用户定）：setblock 红石块于链头输入侧 (−1, yb+1, zc) = t=−1 区域（网格外）；CB 格占用守卫（cellFree）由只写空气格逻辑保证
 {
   const api = context.window.__NBS2SCHEMATIC;
   const { buildListenerFunctions, LISTENER_TAG, SFX_NAMESPACE, buildSfxDatapackZip, SFX_CB_STATE } = api;
-  // L1 纯函数断言
+  // L1 纯函数断言（缺省 geom：按默认布局 yb=0/zc=2/zOffset=1 → 启动 CB 网格 (0,3,3) 推导）
   const fns = buildListenerFunctions();
   const expStart = [
-    'summon minecraft:minecart ~1 ~1 ~-2',
+    'summon minecraft:minecart ~-3 ~-3',
     `tag @e[type=minecraft:minecart,distance=..8] add ${LISTENER_TAG}`,
     `execute as @e[type=minecraft:minecart,tag=${LISTENER_TAG}] at @s run tp @s ~ ~ ~ -90 0`,
     `ride @p mount @e[type=minecraft:minecart,tag=${LISTENER_TAG}]`,
     'effect @p minecraft:slow_falling 999999 0 true',
-    'setblock ~ ~1 ~-1 minecraft:redstone_block',
+    'setblock ~-1 ~-2 ~ minecraft:redstone_block',
   ];
   const expFollow = [
     `execute as @e[type=minecraft:minecart,tag=${LISTENER_TAG}] at @s run tp @s ^1 ^0 ^0`,
@@ -2873,7 +2874,7 @@ try {
     && fns[1].name === nameFollow && JSON.stringify(fns[1].lines) === JSON.stringify(expFollow);
   if (!l1ok) {
     console.log('FAIL L1 buildListenerFunctions：' + JSON.stringify(fns)); ok = false;
-  } else console.log('PASS L1 buildListenerFunctions 纯函数：2 文件 7 命令逐条一致（ride mount / execute as·at·run / distance=..N / setblock 主位激活）');
+  } else console.log('PASS L1 buildListenerFunctions 纯函数：2 文件 7 命令逐条一致（ride mount / execute as·at·run / distance=..N / setblock 输入侧激活（t=−1 区域））');
 
   // L2/L3 e2e：同一 NBS，listener 开/关
   const nbs = makeNbs({ tempoTps: 20, songLength: 10, noteSpecs: [
@@ -2888,11 +2889,13 @@ try {
   const rOff = runE2E(tmpFile, { lane0: { dz: 0, dy: 0 }, settings: sOff });
   const rOn = runE2E(tmpFile, { lane0: { dz: 0, dy: 0 }, settings: sOn });
   try {
-    // L2 启用：2 CB（启动 impulse auto=false + 跟随 repeating auto=true），位置 = 轨道 0 链头 (0, yb, zc) 的
-    //   底座层 z+2 与正上方；Command = function nbs2sfx:listener_start / listener_follow；geometry.listener 齐备
+    // L2 启用：2 CB（启动 impulse auto=false + 跟随 repeating auto=true），位置 = 轨道 0 链头中继器
+    //   上方 2 格 (0, yb+3, zc) 与正上方 1 格（避开顶层导轨 yb+2）；Command = function nbs2sfx:listener_start / listener_follow；
+    //   geometry.listener 齐备；让位几何：行走行（网格 z=zOffset，布局原点行）沿 +X 恒空气、主链最低盒位列 z≥1；
+    //   geom 偏移与网格坐标自洽（summon 目标 = 网格 (0,yOffset,zOffset) = 布局原点，setblock 目标 = 链头输入侧）
     const rail = rOn.result.chains.find(c => c.isDefaultRail);
     const gOff = rOn.result.geometry;
-    const startExp = { x: 0, y: rail.yb + gOff.yOffset, z: rail.zc + 2 + gOff.zOffset };
+    const startExp = { x: 0, y: rail.yb + 3 + gOff.yOffset, z: rail.zc + gOff.zOffset };
     const tEs = rOn.result.tileEntities.filter(te => te.id === 'minecraft:command_block');
     const teStart = tEs.find(te => te.Command === `function ${SFX_NAMESPACE}:listener_start`);
     const teFollow = tEs.find(te => te.Command === `function ${SFX_NAMESPACE}:listener_follow`);
@@ -2910,43 +2913,65 @@ try {
       const cellOk = cbId === cellAt(teStart) && cbId === cellAt(teFollow);
       const geoOk = geo && geo.start.x === teStart.x && geo.start.y === teStart.y && geo.start.z === teStart.z
         && geo.follow.y === teFollow.y && geo.start.placed === true && geo.follow.placed === true;
-      // 激活格（链头东侧 (0, yb+1, zc+1)）：空气（t=0 链头后无传导段）或 t=0 主位音符盒——均为红石导体，
-      //   红石块强充能向 -X 传导激活链头中继器，属设计语义
-      const noteCell = rOn.result.grid.data[((rail.yb + 1 + gOff.yOffset) * rOn.result.grid.sz + (rail.zc + 1 + gOff.zOffset)) * rOn.result.grid.sx];
-      const noteState = rOn.palette ? null : rOn.result.grid.stateIds.get('minecraft:note_block[instrument=0,note=12,powered=false]');
-      const noteOk = noteCell === 0 || noteCell === noteState;
-      if (!(posOk && autoOk && stateOk && cellOk && geoOk && noteOk)) {
-        console.log(`FAIL L2 监听 CB：pos=${posOk} auto=${autoOk} state=${stateOk} cell=${cellOk} geo=${geoOk} note=${noteOk}；start=${JSON.stringify(teStart)} follow=${JSON.stringify(teFollow)} geo=${JSON.stringify(geo)}`); ok = false;
-      } else console.log('PASS L2 listener 启用：2 CB（启动 底座层/z+2 + 跟随正上方）、Command/auto/state/所在格/geometry 全对；激活格（空气或 t=0 主位音符盒，均为导体）');
+      // geom 偏移自洽：summon = 启动 CB + (0,yOffset,zOffset) = 网格 (0,yOffset,zOffset)（布局原点）；
+      //   setblock y = 链头中继器层 yb+1（红石块强充能输入端）
+      const geomOk = geo && geo.geom
+        && geo.geom.summonDy + teStart.y === gOff.yOffset
+        && geo.geom.summonDz + teStart.z === gOff.zOffset
+        && geo.geom.setblockDy + teStart.y === rail.yb + 1 + gOff.yOffset;
+      // 让位几何（方案 A，2026-10-07 用户定：主链让位、矿车在布局原点行走）：
+      //   ① 行走行（网格 z=zOffset，布局原点行 z=0）沿 +X 恒空气（矿车沿 +X 不碰撞）；
+      //   ② 主链最低盒位列（第 3 位 zc−1）网格 z ≥ zOffset+1（平移 shift = max(0, 2−minZc)）；
+      //   ③ 主链结构位置正确：底座雪块/链头中继器在 (0, yb, yb+1, zc+zOffset)、顶层导轨雪块在 (1, yb+2, zc+zOffset)
+      const gr = rOn.result.grid;
+      const mainZ = rail.zc + gOff.zOffset;              // 主位（底座/信号/导轨同列）
+      const minBoxZ = rail.zc - 1 + gOff.zOffset;        // 第 3 盒位（主链最低 z）
+      const baseY = rail.yb + gOff.yOffset, sigY = rail.yb + 1 + gOff.yOffset, railY = rail.yb + 2 + gOff.yOffset;
+      let walkOk = true;
+      if (minBoxZ < gOff.zOffset + 1) {
+        console.log(`FAIL L2 让位：主链最低盒位列 z=${minBoxZ} < ${gOff.zOffset + 1}（应 +Z 平移让位）`); ok = false; walkOk = false;
+      }
+      for (let x = 0; x < gr.sx; x++) {
+        if (gr.data[gr.idx(x, 0, gOff.zOffset)] !== 0) { console.log(`FAIL L2 行走行：x=${x} z=${gOff.zOffset}（布局 z=0）非空气（矿车将碰撞）`); ok = false; walkOk = false; break; }
+      }
+      const mainOk = gr.data[gr.idx(0, baseY, mainZ)] !== 0   // t=0 雪块底座
+        && gr.data[gr.idx(0, sigY, mainZ)] !== 0              // 链头中继器
+        && gr.data[gr.idx(1, railY, mainZ)] !== 0;            // 顶层导轨雪块（x=1，避开 x%32 蛙灯相位）
+      if (!(posOk && autoOk && stateOk && cellOk && geoOk && geomOk && walkOk && mainOk)) {
+        console.log(`FAIL L2 监听 CB：pos=${posOk} auto=${autoOk} state=${stateOk} cell=${cellOk} geo=${geoOk} geom=${geomOk} walk=${walkOk} main=${mainOk}；start=${JSON.stringify(teStart)} follow=${JSON.stringify(teFollow)} geo=${JSON.stringify(geo)}`); ok = false;
+      } else console.log('PASS L2 listener 启用：2 CB（链头上方 yb+3/yb+4）、Command/auto/state/所在格/geometry 全对；geom 偏移自洽；行走行（布局 z=0）恒空气、主链最低盒位列 z≥1（矿车不碰撞）');
     }
-    // L3 零回归：未启用 → 0 命令方块、listener=null、网格尺寸与总方块数一致
+    // L3 零回归：未启用 → 0 命令方块、listener=null、网格尺寸比启用时 y/z 向各小 2（+Z 让位平移 2 行 + CB 两层）
     if (rOff.result.tileEntities.length !== 0) {
       console.log(`FAIL L3 零回归：未启用时 TE=${rOff.result.tileEntities.length} ≠ 0`); ok = false;
-    } else if (rOn.result.grid.sx !== rOff.result.grid.sx || rOn.result.grid.sy !== rOff.result.grid.sy || rOn.result.grid.sz !== rOff.result.grid.sz) {
-      console.log('FAIL L3 网格尺寸：启用/未启用不一致（listener 只加 CB 不扩网格）'); ok = false;
+    } else if (rOn.result.grid.sx !== rOff.result.grid.sx || rOn.result.grid.sy !== rOff.result.grid.sy + 2
+      || rOn.result.grid.sz !== rOff.result.grid.sz + 2) {
+      console.log(`FAIL L3 网格尺寸：on sy=${rOn.result.grid.sy}/sz=${rOn.result.grid.sz} off sy=${rOff.result.grid.sy}/sz=${rOff.result.grid.sz}（期望 on = off + 2：链 +Z 让位 + CB 两层）`); ok = false;
     } else if (!(rOff.result.geometry.listener === null && rOn.result.geometry.listener !== null)) {
       console.log('FAIL L3 geometry.listener：off 应为 null，on 应非 null'); ok = false;
     } else if (rOn.result.stats.commandBlocks !== 2 || rOff.result.stats.commandBlocks !== 0) {
       console.log(`FAIL L3 stats.commandBlocks：on=${rOn.result.stats.commandBlocks} off=${rOff.result.stats.commandBlocks}（期望 2/0）`); ok = false;
-    } else console.log('PASS L3 零回归护栏：未启用 0 CB/0 TE/listener=null、网格尺寸与启用时一致');
-    // L4 数据包：listenerEnabled → 2 个 mcfunction 条目（目录名随目标版本），文件内容 = buildListenerFunctions 逐字
-    const zipOn = buildSfxDatapackZip(rOn.song, new Map(), '1.21.11', rOn.result.sfxTickList, null, true);
+    } else console.log('PASS L3 零回归护栏：未启用 0 CB/0 TE/listener=null、无 +Z 让位（sy/sz 差 2）');
+    // L4 数据包：listenerEnabled → 2 个 mcfunction 条目（目录名随目标版本），文件内容 = 按 geometry.listener.geom
+    //   生成的 listener_start 逐字（summon/setblock 偏移随布局：本场景 geom = {summonDy:−3, summonDz:−2, setblockDy:−2}）
+    const zipOn = buildSfxDatapackZip(rOn.song, new Map(), '1.21.11', rOn.result.sfxTickList, null, true, rOn.result.geometry.listener.geom);
     if (zipOn.fileCount !== 3) {
       console.log(`FAIL L4 zip 条目 ${zipOn.fileCount} ≠ 3（1 mcmeta + 2 listener function）`); ok = false;
     } else {
       const txt = new TextDecoder().decode(zipOn.bytes);
-      const startTxt = expStart.join('\n') + '\n';
+      const geomStart = buildListenerFunctions('function', rOn.result.geometry.listener.geom)[0].lines;
+      const startTxt = geomStart.join('\n') + '\n';
       const followTxt = expFollow.join('\n') + '\n';
       const hasBoth = txt.includes('function/listener_start.mcfunction') && txt.includes('function/listener_follow.mcfunction');
       const contentOk = txt.includes(startTxt) && txt.includes(followTxt);
       // 1.19.4 旧目录名 functions/
-      const zipOld = buildSfxDatapackZip(rOn.song, new Map(), '1.19.4', rOn.result.sfxTickList, null, true);
+      const zipOld = buildSfxDatapackZip(rOn.song, new Map(), '1.19.4', rOn.result.sfxTickList, null, true, rOn.result.geometry.listener.geom);
       const txtOld = new TextDecoder().decode(zipOld.bytes);
       const oldDirOk = txtOld.includes(`data/${SFX_NAMESPACE}/functions/listener_start.mcfunction`)
         && !txtOld.includes(`data/${SFX_NAMESPACE}/function/listener_start.mcfunction`);
       if (!(hasBoth && contentOk && zipOld.fileCount === 3 && oldDirOk)) {
-        console.log(`FAIL L4 zip：hasBoth=${hasBoth} contentOk=${contentOk} oldDir=${oldDirOk}`); ok = false;
-      } else console.log('PASS L4 数据包 zip：listener 启用 → 2 mcfunction（1.21.11 function/ 与 1.19.4 functions/ 双目录名），内容与纯函数逐字一致');
+        console.log(`FAIL L4 zip：hasBoth=${hasBoth} contentOk=${contentOk} oldDir=${oldDirOk}；start=${JSON.stringify(geomStart)}`); ok = false;
+      } else console.log('PASS L4 数据包 zip：listener 启用 → 2 mcfunction（1.21.11 function/ 与 1.19.4 functions/ 双目录名），内容与按布局 geom 生成逐字一致');
       // L4b 未启用 → 无 listener 条目
       const zipOff = buildSfxDatapackZip(rOn.song, new Map(), '1.21.11', rOn.result.sfxTickList, null, false);
       const txtOff = new TextDecoder().decode(zipOff.bytes);

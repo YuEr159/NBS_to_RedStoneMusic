@@ -378,7 +378,7 @@ input[type="number"] { width: 70px; }
     </div>
     <div class="setting-row">
       <label><input type="checkbox" id="listenerEnabled"> 矿车监听系统</label>
-      <span class="hint">启用后 .litematic 含 2 个命令方块（链头西侧）+ 数据包 2 function；启动 CB 点击后玩家自动坐上矿车、沿主链同步前进（需安装数据包 + 命令方块权限）</span>
+      <span class="hint">启用后 .litematic 含 2 个命令方块（链头上方 yb+3）+ 数据包 2 function；所有链向 +Z 平移让位（矿车在布局原点 (0,0) 沿主链方向同速行走，不碰撞）；启动 CB 点击后玩家自动坐上矿车（需安装数据包 + 命令方块权限）</span>
     </div>
   </section>
 
@@ -535,29 +535,41 @@ const INSTRUMENT_NAMES_CN = [
 // 固定命名空间 nbs2sfx；命令方块 Command = function nbs2sfx:<tick>（0-based NBS tick）；
 // function 文件 <tick>.mcfunction，同一 tick 多个参考音符 → 文件内每音符一行。
 const SFX_NAMESPACE = 'nbs2sfx';
-// 矿车监听系统（2026-10-07）：玩家坐矿车沿主链 +X 每游戏 tick 前进 1 格，与音符盒发声同步。
-//   2 个 CB（启动 impulse + 跟随 repeating）+ 数据包 2 function（listener_start/listener_follow）。
-//   矿车召唤在链头正上方（音乐坐标原点 t=0 主链第 2 行），ride mount 强制最近玩家上车。
-//   命令事实（Java 1.19.4+ wiki + jar 查证）：ride mount（非 Bedrock start_riding，需权限级 2 = 命令方块级）、
-//   execute as/at/run、distance=..N（非 r=N）、~ ~ ~（空格分隔，~~~ 不合法）、tp ^1 ^0 ^0 局部坐标。
+// 矿车监听系统（2026-10-07 用户定稿）：玩家坐矿车沿 +X 每游戏 tick 前进 1 格，与主链同速。
+//   监听启用时所有链整体向 +Z 平移让位（最低盒位列 ≥1），矿车在布局原点 (0,0,0) 沿 +X 行走
+//   （行走行 z=0 恒空气，不碰撞）；主链在更远的 z 一行，「放在更低的位置」。
+//   2 个 CB（启动 impulse + 跟随 repeating，链头中继器上方两层 (0,yb+3,zc)/(0,yb+4,zc)，
+//   避开顶层导轨 yb+2）+ 数据包 2 function；summon/setblock 相对启动 CB 的偏移由
+//   buildLayout 按实际布局（含负起点平移与让位平移）算出，经 geom 传入 buildListenerFunctions。
+//   激活链头 = 方案 A（用户定）：setblock 红石块于链头输入侧 (−1, yb+1, zc) = t=−1 区域（网格外）。
+//   命令事实（Java 1.19.4+ wiki + jar 查证）：ride mount（非 Bedrock start_riding）、
+//   execute as/at/run、distance=..N、~ ~ ~（空格分隔，~~~ 不合法）、tp ^1 ^0 ^0 局部坐标。
 //   slow_falling 只能加给 living entity（矿车不是 → 摔落伤害转给乘客，故加在玩家身上防摔）。
 const LISTENER_TAG = 'nbs2sfx_listener';
 // 生成 2 个 .mcfunction 文件（纯函数，供 buildSfxDatapackZip 与 validate.mjs 单测）；
-// dir = 目标版本数据包目录名（≥1.21 为 function、之前为 functions，见 SFX_PACKFORMAT）
-function buildListenerFunctions(dir = 'function') {
+// dir = 目标版本数据包目录名（≥1.21 为 function、之前为 functions，见 SFX_PACKFORMAT）；
+// geom = { summonDy, summonDz, setblockDy }（相对启动 CB 的整数偏移，缺省按默认布局
+//   yb=0/zc=2/zOffset=1 → 启动 CB 网格 (0,3,3) 推导：summonDy=−3、summonDz=−3、setblockDy=−2）：
+//   summon  矿车 → 网格 (0,0,0) = 布局原点（行走行，格底所在地面支撑）
+//   setblock 红石块 → 链头输入侧 (−1, yb+1, zc)（t=−1 区域，网格外；强充能链头中继器输入端）
+function buildListenerFunctions(dir = 'function', geom = null) {
+  const summonDy = (geom && Number.isFinite(geom.summonDy)) ? geom.summonDy : -3;
+  const summonDz = (geom && Number.isFinite(geom.summonDz)) ? geom.summonDz : -3;
+  const setblockDy = (geom && Number.isFinite(geom.setblockDy)) ? geom.setblockDy : -2;
   return [
     { name: `data/${SFX_NAMESPACE}/${dir}/listener_start.mcfunction`,
       lines: [
-        `summon minecraft:minecart ~1 ~1 ~-2`,
+        // 矿车召唤于网格 (0,0,0) = 布局原点（x=0 链头列、底行走行 z=0）；
+        //   让位后行走行恒空气，矿车落在格底所在地面（放置时格底贴地即可），沿 +X 不碰撞
+        `summon minecraft:minecart ~${summonDy} ~${summonDz}`,
         `tag @e[type=minecraft:minecart,distance=..8] add ${LISTENER_TAG}`,
         `execute as @e[type=minecraft:minecart,tag=${LISTENER_TAG}] at @s run tp @s ~ ~ ~ -90 0`,
         `ride @p mount @e[type=minecraft:minecart,tag=${LISTENER_TAG}]`,
         // 抗坠落：slow_falling 加给玩家（矿车非 living entity，效果不生效；矿车摔落伤害转给乘客）
         `effect @p minecraft:slow_falling 999999 0 true`,
-        // 激活链头：红石块放链头东侧 (0,yb+1,zc+1)（链头中继器正东侧 1 格；该格为空气或 t=0 主位音符盒，
-        // 均为红石导体）→ 强充能向 -X 传导激活链头中继器；
-        // 不能放链头格本身（会替换掉链头中继器），也不能放输入侧（x=-1 网格外，用户手铺总线）
-        `setblock ~ ~1 ~-1 minecraft:redstone_block`,
+        // 激活链头（方案 A，2026-10-07 用户定）：红石块放链头输入侧 (−1, yb+1, zc) = t=−1 区域（网格外）
+        //   红石块强充能链头中继器输入端 → 主链启动
+        `setblock ~-1 ~${setblockDy} ~ minecraft:redstone_block`,
       ] },
     { name: `data/${SFX_NAMESPACE}/${dir}/listener_follow.mcfunction`,
       lines: [
@@ -1601,6 +1613,19 @@ function buildLayout(song, groups, groupStarts, nTicks, settings, defaultStart, 
   // W 内嵌两个偏移；TE 坐标 = 网格坐标；单线式粒子偏移是虚拟参考车道与轨道 0 的坐标差，平移对其无影响。
   // 2026-09-07 参考车道虚拟化：参考车道不生成任何物理结构 → 尺寸/平移只由真实链（轨道 0 + 音轨车道）决定，
   //   参考车道的虚拟起点即使超出网格范围也不影响产物（它只是粒子锚点几何，不占格）。
+  // 矿车监听让位（2026-10-07 用户定 · 方案 A）：矿车在布局 (0,0,0) 沿 +X 行走（每 tick tp ^1 推进），
+  //   行走行 z=0 须恒空气 → 所有真实链整体向 +Z 平移 shift = max(0, 2−minZc)（最低盒位列 minZc−1 ≥ 1），
+  //   链间相对间距不变（原有 3 格间距保持，不引入新碰撞）。
+  //   minZc ≥ 2 的布局（用户已把整布局拖离原点）shift=0 零改动；未启用时零改动（gen-example 回归保护）。
+  //   须在尺寸计算前生效（zcList/zMax/zOffset 按让位后取值）。参考车道纯虚拟不占格，不参与让位。
+  const listenerActive = !!(settings && settings.listener && settings.listener.enabled) && !!defaultStart;
+  if (listenerActive) {
+    const minZc = Math.min(...chains.filter(c => !c.isRefLane).map(c => c.zc));
+    const shift = Math.max(0, 2 - minZc);
+    for (const c of chains) {
+      if (!c.isRefLane) c.zc += shift;
+    }
+  }
   const realChains = chains.filter(c => !c.isRefLane);
   const zcList = realChains.map(c => c.zc);
   const ybList = realChains.map(c => c.yb);
@@ -1609,8 +1634,9 @@ function buildLayout(song, groups, groupStarts, nTicks, settings, defaultStart, 
   const maxYb = Math.max(...ybList);
   const yOffset = -Math.min(0, ...ybList);
   const sx = xMax;
-  // 默认轨道 0 顶层导轨在 yb+2、音符盒在 yb+1 → 网格 y 最大用到 maxYb+2+yOffset → 总高 +3
-  const sy = maxYb + yOffset + 3;
+  // 默认轨道 0 顶层导轨在 yb+2、音符盒在 yb+1 → 网格 y 最大用到 maxYb+2+yOffset → 总高 +3；
+  //   监听启用时启动/跟随 CB 在 yb+3、yb+4（链头正上方两层，避开顶层导轨）→ 再 +2
+  const sy = maxYb + yOffset + 3 + (listenerActive ? 2 : 0);
   // 第 3 音符盒在 zc−1、第 2 音符盒在 zc+1 → 网格 z 用到 [minZc−1, zMax+1]+zOffset
   //   zOffset = 1−min(0,minZc) 保证下界 ≥0；sz 保证上界 zMax+1+zOffset 在界内
   const sz = zMax + zOffset + 2;
@@ -2242,19 +2268,20 @@ function buildLayout(song, groups, groupStarts, nTicks, settings, defaultStart, 
   }
 
   // 矿车监听系统（2026-10-07，settings.listener.enabled 时启用）：
-  //   2 个命令方块放在链头西侧（布局 X=0 列，网格 x=0；主链占 x≥1，互不冲突）：
-  //   · 启动 CB（impulse，auto=false）：轨道 0 底座层，Z 向偏移 +2（避开主位/第2位盒位）
+  //   2 个命令方块放在链头正上方（网格 x=0、轨道 0 的 zc 列，避开顶层导轨 yb+2）：
+  //   · 启动 CB（impulse，auto=false）：链头中继器上方 2 格 (0, yb+3, zc)
   //   · 跟随 CB（repeating，auto=true）：启动 CB 正上方 1 格，每游戏 tick 执行 function 推进矿车
-  //   启动命令（listener_start）相对启动 CB 解析：summon 矿车于 (0,yb+1,zc) = 链头正上方（音乐坐标原点 t=0 主链第 2 行）、
-  //   ride mount 玩家上车、slow_falling 抗坠落、setblock 红石块于 (0,yb+1,zc+1) = 链头东侧主位音符盒（~ ~1 ~-1）
-  //   强充能导体向 -X 传导激活链头中继器（链头输入侧 x=-1 在网格外由用户手铺总线，不可由函数激活）。跟随命令（listener_follow）每 tick tp ^1 ^0 ^0
-  //   = 1 格/游戏 tick，与主链同速（1 档中继器 2 格/2 tick）。
-  //   只写空气格守卫（与 placePlaysoundCb 同模式）：被占用时跳过 + 警告（理论上链头西侧恒空）。
+  //   启动命令（listener_start）相对启动 CB 解析（Y 偏移由 listenerGeom 按实际布局算出）：
+  //   summon 矿车于布局原点 (0, 0, 0)（行走行 z=0，矿车落下后由启动 CB 顶面/下方结构支撑，
+  //   每 tick 由跟随函数 tp 钉 Y 免重力）、ride mount 玩家上车、slow_falling 抗坠落、
+  //   setblock 红石块于链头输入侧 (−1, yb+1, zc)（t=−1 区域，网格外；强充能链头中继器输入端 → 主链启动）。
+  //   跟随命令（listener_follow）每 tick tp ^1 ^0 ^0 = 1 格/游戏 tick，与主链同速（1 档中继器 2 格/2 tick）。
+  //   只写空气格守卫：被占用时跳过 + 警告（链头正上方理论上恒空）。
   let listenerInfo = null;
   if (settings && settings.listener && settings.listener.enabled) {
     const rail = chains.find(c => c.isDefaultRail);
     if (rail) {
-      const startGy = rail.yb + yOffset, startGz = rail.zc + 2 + zOffset;
+      const startGy = rail.yb + 3 + yOffset, startGz = rail.zc + zOffset;
       const followGy = startGy + 1;
       const cellFree = (y, z) => grid.inBounds(0, y, z) && grid.data[grid.idx(0, y, z)] === 0;
       const okStart = cellFree(startGy, startGz);
@@ -2275,12 +2302,21 @@ function buildLayout(song, groups, groupStarts, nTicks, settings, defaultStart, 
           Command: `function ${SFX_NAMESPACE}:listener_follow`, auto: true, state: SFX_CB_STATE,
         });
       }
+      // listenerGeom：function 内 ~ 相对启动 CB 的偏移（随布局 yb/zc 与 yOffset/zOffset 变化，负起点平移后仍正确）：
+      //   summon 目标 = 网格 (0, yOffset, zOffset)（布局原点 (0,0,0) 行走行）
+      //     → summonDy = yOffset − startGy、summonDz = zOffset − startGz；
+      //   setblock 目标 = 链头输入侧 (−1, yb+1, zc) → 相对启动 CB x=−1（命令固定）、setblockDy = −2、z 同列
       listenerInfo = {
         start: { x: 0, y: startGy, z: startGz, placed: okStart },
         follow: { x: 0, y: followGy, z: startGz, placed: okFollow },
+        geom: {
+          summonDy: yOffset - startGy,
+          summonDz: zOffset - startGz,
+          setblockDy: (rail.yb + 1 + yOffset) - startGy,
+        },
       };
-      if (!okStart) stats.discardedDetails.push('矿车监听：启动 CB 格被占用，未放置（检查布局）');
-      if (!okFollow) stats.discardedDetails.push('矿车监听：跟随 CB 格被占用，未放置（检查布局）');
+      if (!okStart) stats.discardedDetails.push('矿车监听：启动 CB 格（链头上方 yb+3）被占用，未放置（检查布局）');
+      if (!okFollow) stats.discardedDetails.push('矿车监听：跟随 CB 格（启动 CB 正上方）被占用，未放置（检查布局）');
     } else {
       stats.discardedDetails.push('矿车监听：无默认轨道 0，未放置命令方块');
     }
@@ -2468,15 +2504,16 @@ function buildZip(files) {
 // sfxTickList：buildLayout 返回的逐 tick 粒子行（与产物 CB 严格一致）；缺省时退化为 buildSfxFunctions 旧行为
 // lyricPngs（2026-10-06）：Map(文件名 'lyric/s0001_l0.png' → PNG Uint8Array)——歌词字库随包导出，
 //   用户解压到游戏目录 .minecraft/particleImages/（模组 ImageUtil 客户端本地读图，与资源包无关）
-function buildSfxDatapackZip(song, refLayers, targetMc, sfxTickList = null, lyricPngs = null, listenerEnabled = false) {
+function buildSfxDatapackZip(song, refLayers, targetMc, sfxTickList = null, lyricPngs = null, listenerEnabled = false, listenerGeom = null) {
   const pf = sfxPackFormat(targetMc);
   const files = [{ name: 'pack.mcmeta', data: new TextEncoder().encode(buildSfxPackMcmeta(targetMc, song && song.songName)) }];
   for (const { tick, lines } of buildSfxFunctions(song, refLayers, sfxTickList)) {
     files.push({ name: `data/${SFX_NAMESPACE}/${pf.dir}/${tick}.mcfunction`, data: new TextEncoder().encode(lines.join('\n') + '\n') });
   }
-  // 矿车监听系统：2 个 function（listener_start/listener_follow），与产物 2 个 CB 的 Command 一一对应
+  // 矿车监听系统：2 个 function（listener_start/listener_follow），与产物 2 个 CB 的 Command 一一对应；
+  // listenerGeom = buildLayout 按实际布局算出的 Y 偏移（summonDy/setblockDy，相对启动 CB），缺省按默认布局推导
   if (listenerEnabled) {
-    for (const f of buildListenerFunctions(pf.dir)) {
+    for (const f of buildListenerFunctions(pf.dir, listenerGeom)) {
       files.push({ name: f.name, data: new TextEncoder().encode(f.lines.join('\n') + '\n') });
     }
   }
@@ -5603,7 +5640,7 @@ async function generate() {
     setStage('数据包打包中…', 90, 100, 0);
     const listenerOn = !!(AppState.settings.listener && AppState.settings.listener.enabled);
     if (AppState.refLayers.size > 0 || lyricPng.lyricPngs.size > 0 || listenerOn) {
-      const { bytes } = buildSfxDatapackZip(song, AppState.refLayers, AppState.settings.targetVersion, result.sfxTickList, lyricPng.lyricPngs.size > 0 ? lyricPng.lyricPngs : null, listenerOn);
+      const { bytes } = buildSfxDatapackZip(song, AppState.refLayers, AppState.settings.targetVersion, result.sfxTickList, lyricPng.lyricPngs.size > 0 ? lyricPng.lyricPngs : null, listenerOn, result.geometry.listener ? result.geometry.listener.geom : null);
       AppState.sfxZipBytes = bytes;
       $('sfxZipBtn').hidden = false;
     } else {
