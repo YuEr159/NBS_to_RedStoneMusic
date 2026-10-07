@@ -247,6 +247,12 @@ input[type="number"] { width: 70px; }
         <option value="panning">按声像（panning）</option>
         <option value="volume">按音量（velocity）</option>
       </select>
+      <button id="presetRingBtn">预置：圆环</button>
+      <select id="ringRadius" class="hint" title="圆环半径（格）：可听范围 48 格，16/32/48 对应满/半/静音边界">
+        <option value="16">半径 16 格（满音量边界）</option>
+        <option value="32">半径 32 格（1/4 音量）</option>
+        <option value="48">半径 48 格（静音边界）</option>
+      </select>
       <label class="hint">网格/放射行距(格) <input type="number" id="gridHeight" min="3" max="30" value="5"></label>
       <button id="fitLayoutBtn">缩放到全部</button>
       <span class="hint">点击标记选中；拖拽移动；选中后可用方向键微调（Shift=大步）；预置模板只重排普通车道</span>
@@ -369,6 +375,10 @@ input[type="number"] { width: 70px; }
       <label>MIDI式参考 · 音高 Z 步长（格/半音）</label>
       <input type="number" id="sfxPitchStep" min="0" max="8" step="0.1" value="1">
       <span class="hint">MIDI式参考声道：粒子中心 Z 偏移 =（音高 − 12）× 步长；音高 12 居中，默认 1；支持小数（步进 0.1，依赖 particleex 坐标段接受小数）</span>
+    </div>
+    <div class="setting-row">
+      <label><input type="checkbox" id="listenerEnabled"> 矿车监听系统</label>
+      <span class="hint">启用后 .litematic 含 2 个命令方块（链头西侧）+ 数据包 2 function；启动 CB 点击后玩家自动坐上矿车、沿主链同步前进（需安装数据包 + 命令方块权限）</span>
     </div>
   </section>
 
@@ -525,6 +535,36 @@ const INSTRUMENT_NAMES_CN = [
 // 固定命名空间 nbs2sfx；命令方块 Command = function nbs2sfx:<tick>（0-based NBS tick）；
 // function 文件 <tick>.mcfunction，同一 tick 多个参考音符 → 文件内每音符一行。
 const SFX_NAMESPACE = 'nbs2sfx';
+// 矿车监听系统（2026-10-07）：玩家坐矿车沿主链 +X 每游戏 tick 前进 1 格，与音符盒发声同步。
+//   2 个 CB（启动 impulse + 跟随 repeating）+ 数据包 2 function（listener_start/listener_follow）。
+//   矿车召唤在链头正上方（音乐坐标原点 t=0 主链第 2 行），ride mount 强制最近玩家上车。
+//   命令事实（Java 1.19.4+ wiki + jar 查证）：ride mount（非 Bedrock start_riding，需权限级 2 = 命令方块级）、
+//   execute as/at/run、distance=..N（非 r=N）、~ ~ ~（空格分隔，~~~ 不合法）、tp ^1 ^0 ^0 局部坐标。
+//   slow_falling 只能加给 living entity（矿车不是 → 摔落伤害转给乘客，故加在玩家身上防摔）。
+const LISTENER_TAG = 'nbs2sfx_listener';
+// 生成 2 个 .mcfunction 文件（纯函数，供 buildSfxDatapackZip 与 validate.mjs 单测）；
+// dir = 目标版本数据包目录名（≥1.21 为 function、之前为 functions，见 SFX_PACKFORMAT）
+function buildListenerFunctions(dir = 'function') {
+  return [
+    { name: `data/${SFX_NAMESPACE}/${dir}/listener_start.mcfunction`,
+      lines: [
+        `summon minecraft:minecart ~1 ~1 ~-2`,
+        `tag @e[type=minecraft:minecart,distance=..8] add ${LISTENER_TAG}`,
+        `execute as @e[type=minecraft:minecart,tag=${LISTENER_TAG}] at @s run tp @s ~ ~ ~ -90 0`,
+        `ride @p mount @e[type=minecraft:minecart,tag=${LISTENER_TAG}]`,
+        // 抗坠落：slow_falling 加给玩家（矿车非 living entity，效果不生效；矿车摔落伤害转给乘客）
+        `effect @p minecraft:slow_falling 999999 0 true`,
+        // 激活链头：红石块放链头东侧 (0,yb+1,zc+1)（链头中继器正东侧 1 格；该格为空气或 t=0 主位音符盒，
+        // 均为红石导体）→ 强充能向 -X 传导激活链头中继器；
+        // 不能放链头格本身（会替换掉链头中继器），也不能放输入侧（x=-1 网格外，用户手铺总线）
+        `setblock ~ ~1 ~-1 minecraft:redstone_block`,
+      ] },
+    { name: `data/${SFX_NAMESPACE}/${dir}/listener_follow.mcfunction`,
+      lines: [
+        `execute as @e[type=minecraft:minecart,tag=${LISTENER_TAG}] at @s run tp @s ^1 ^0 ^0`,
+      ] },
+  ];
+}
 // ===== ③ 背景型（2026-09-10 实现：按乐曲小节间隔周期性激活，与具体音符无关，铺底氛围）=====
 // NBS 格式：1 拍 = 18.125 tick（格式常数，与 tempo 无关）。
 // 小节长（tick）= 拍号 × 18.125 四舍五入（4/4 = 72.5 → 73；3/4 = 54.375 → 54）；
@@ -2201,6 +2241,51 @@ function buildLayout(song, groups, groupStarts, nTicks, settings, defaultStart, 
     }
   }
 
+  // 矿车监听系统（2026-10-07，settings.listener.enabled 时启用）：
+  //   2 个命令方块放在链头西侧（布局 X=0 列，网格 x=0；主链占 x≥1，互不冲突）：
+  //   · 启动 CB（impulse，auto=false）：轨道 0 底座层，Z 向偏移 +2（避开主位/第2位盒位）
+  //   · 跟随 CB（repeating，auto=true）：启动 CB 正上方 1 格，每游戏 tick 执行 function 推进矿车
+  //   启动命令（listener_start）相对启动 CB 解析：summon 矿车于 (0,yb+1,zc) = 链头正上方（音乐坐标原点 t=0 主链第 2 行）、
+  //   ride mount 玩家上车、slow_falling 抗坠落、setblock 红石块于 (0,yb+1,zc+1) = 链头东侧主位音符盒（~ ~1 ~-1）
+  //   强充能导体向 -X 传导激活链头中继器（链头输入侧 x=-1 在网格外由用户手铺总线，不可由函数激活）。跟随命令（listener_follow）每 tick tp ^1 ^0 ^0
+  //   = 1 格/游戏 tick，与主链同速（1 档中继器 2 格/2 tick）。
+  //   只写空气格守卫（与 placePlaysoundCb 同模式）：被占用时跳过 + 警告（理论上链头西侧恒空）。
+  let listenerInfo = null;
+  if (settings && settings.listener && settings.listener.enabled) {
+    const rail = chains.find(c => c.isDefaultRail);
+    if (rail) {
+      const startGy = rail.yb + yOffset, startGz = rail.zc + 2 + zOffset;
+      const followGy = startGy + 1;
+      const cellFree = (y, z) => grid.inBounds(0, y, z) && grid.data[grid.idx(0, y, z)] === 0;
+      const okStart = cellFree(startGy, startGz);
+      const okFollow = cellFree(followGy, startGz);
+      if (okStart) grid.set(0, startGy, startGz, SFX_CB_STATE);
+      if (okFollow) grid.set(0, followGy, startGz, SFX_CB_STATE);
+      if (okStart) {
+        stats.commandBlocks++;
+        tileEntities.push({
+          id: 'minecraft:command_block', x: 0, y: startGy, z: startGz,
+          Command: `function ${SFX_NAMESPACE}:listener_start`, auto: false, state: SFX_CB_STATE,
+        });
+      }
+      if (okFollow) {
+        stats.commandBlocks++;
+        tileEntities.push({
+          id: 'minecraft:command_block', x: 0, y: followGy, z: startGz,
+          Command: `function ${SFX_NAMESPACE}:listener_follow`, auto: true, state: SFX_CB_STATE,
+        });
+      }
+      listenerInfo = {
+        start: { x: 0, y: startGy, z: startGz, placed: okStart },
+        follow: { x: 0, y: followGy, z: startGz, placed: okFollow },
+      };
+      if (!okStart) stats.discardedDetails.push('矿车监听：启动 CB 格被占用，未放置（检查布局）');
+      if (!okFollow) stats.discardedDetails.push('矿车监听：跟随 CB 格被占用，未放置（检查布局）');
+    } else {
+      stats.discardedDetails.push('矿车监听：无默认轨道 0，未放置命令方块');
+    }
+  }
+
   // 跟随装置（命令方块 + 坐骑猪）、触发区（总线/tap/启动开关）均已按用户要求移除：
   // 产物只含各轨道主体（节奏参考触发命令方块除外，见每 tick 段循环），播放时用户手动铺总线
   // 接各链头（链头输入端为 X=0 中继器的 -X 侧）；播放跟随方式见面板「跟随播放」手动指引。
@@ -2213,6 +2298,7 @@ function buildLayout(song, groups, groupStarts, nTicks, settings, defaultStart, 
       // 默认轨道 0（粒子触发链）：顶层导轨所在层与起点
       defaultRail: chains.find(c => c.isDefaultRail) || null,
       defaultRailSpacing: DEFAULT_RAIL_SPACING,
+      listener: listenerInfo, // 矿车监听系统 CB 位置（settings.listener.enabled 时非 null）
     },
   };
 }
@@ -2382,11 +2468,17 @@ function buildZip(files) {
 // sfxTickList：buildLayout 返回的逐 tick 粒子行（与产物 CB 严格一致）；缺省时退化为 buildSfxFunctions 旧行为
 // lyricPngs（2026-10-06）：Map(文件名 'lyric/s0001_l0.png' → PNG Uint8Array)——歌词字库随包导出，
 //   用户解压到游戏目录 .minecraft/particleImages/（模组 ImageUtil 客户端本地读图，与资源包无关）
-function buildSfxDatapackZip(song, refLayers, targetMc, sfxTickList = null, lyricPngs = null) {
+function buildSfxDatapackZip(song, refLayers, targetMc, sfxTickList = null, lyricPngs = null, listenerEnabled = false) {
   const pf = sfxPackFormat(targetMc);
   const files = [{ name: 'pack.mcmeta', data: new TextEncoder().encode(buildSfxPackMcmeta(targetMc, song && song.songName)) }];
   for (const { tick, lines } of buildSfxFunctions(song, refLayers, sfxTickList)) {
     files.push({ name: `data/${SFX_NAMESPACE}/${pf.dir}/${tick}.mcfunction`, data: new TextEncoder().encode(lines.join('\n') + '\n') });
+  }
+  // 矿车监听系统：2 个 function（listener_start/listener_follow），与产物 2 个 CB 的 Command 一一对应
+  if (listenerEnabled) {
+    for (const f of buildListenerFunctions(pf.dir)) {
+      files.push({ name: f.name, data: new TextEncoder().encode(f.lines.join('\n') + '\n') });
+    }
   }
   if (lyricPngs instanceof Map) {
     // name 已含 'lyric/' 前缀（与 lyricLineGeoms 的 fileName 同规则），直接拼 namespace 前缀
@@ -2718,6 +2810,7 @@ const AppState = {
     soundIdMap: new Map(),      // 自定义乐器 → 资源包声音 ID（namespace:ID，可选；配置后该乐器音符盒静音代位，真实音色由 playsound 按 tick 触发）
     sfxPitchStep: 1,     // MIDI式参考：音高 → Z 偏移步长（格/半音），默认 1（用户定：以音高 12 为中点线性）
     lyric: { ...LYRIC_DEFAULTS, pos: { ...LYRIC_DEFAULTS.pos } }, // 粒子歌词设置（字体/字号/位置等）
+    listener: { enabled: false }, // 矿车监听系统（2026-10-07）：启用后 .litematic 含 2 个 CB + 数据包 2 function
   },
   result: null,          // 生成结果 { grid, palette, size, ... }
   litematicBytes: null,
@@ -2990,6 +3083,8 @@ function saveStateNow() {
         customInstrumentMap: [...AppState.settings.customInstrumentMap.entries()],
         soundIdMap: [...AppState.settings.soundIdMap.entries()],
         sfxPitchStep: AppState.settings.sfxPitchStep,
+        // 矿车监听系统：可选（旧存档无此字段 = 未启用）
+        listener: { enabled: !!(AppState.settings.listener && AppState.settings.listener.enabled) },
         lyric: {
           particle: AppState.settings.lyric.particle,
           size: AppState.settings.lyric.size,
@@ -3119,6 +3214,10 @@ function applySavedState(song, saved) {
         st.soundIdMap.filter(([k, v]) => Number.isInteger(k) && sfxNormSoundId(v)));
     }
     if (Number.isFinite(st.sfxPitchStep)) AppState.settings.sfxPitchStep = st.sfxPitchStep;
+    // 矿车监听系统（可选，旧存档无此字段 = 未启用）：boolean 值
+    if (st.listener && typeof st.listener === 'object') {
+      AppState.settings.listener = { enabled: !!st.listener.enabled };
+    }
     // 歌词设置（可选，旧存档无此字段 = 缺省）：normLyricSettings 逐字段校验兜底
     if (st.lyric && typeof st.lyric === 'object') AppState.settings.lyric = normLyricSettings(st.lyric);
   }
@@ -4438,6 +4537,11 @@ function renderSettings() {
   if (stepIn && document.activeElement !== stepIn) {
     stepIn.value = String(AppState.settings.sfxPitchStep);
   }
+  // 矿车监听系统开关
+  const lisCk = $('listenerEnabled');
+  if (lisCk && document.activeElement !== lisCk) {
+    lisCk.checked = !!(AppState.settings.listener && AppState.settings.listener.enabled);
+  }
   // 自定义乐器映射
   const customRow = $('customInstRow');
   const selects = $('customInstSelects');
@@ -4799,6 +4903,25 @@ class LayoutEditor {
     const pAxZ = this.w2s(0, 0);
     ctx.beginPath(); ctx.moveTo(pAxZ.x, 0); ctx.lineTo(pAxZ.x, H); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(0, pAxZ.y); ctx.lineTo(W, pAxZ.y); ctx.stroke();
+    // 可听范围参考圈（仅 main 窗口）：以原点 (0,0) 为圆心画 16/32/48 格半径，
+    // 对应音符盒 48 格线性衰减的满音量边界/1/4 音量/静音边界
+    if (this.mode === 'main') {
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 4]);
+      for (const R of [16, 32, 48]) {
+        ctx.strokeStyle = `rgba(120, 180, 255, ${R === 16 ? 0.28 : R === 32 ? 0.20 : 0.14})`;
+        ctx.beginPath();
+        ctx.arc(pAxZ.x, pAxZ.y, R * this.zoom, 0, 2 * Math.PI);
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+      ctx.lineWidth = 2;
+      ctx.fillStyle = 'rgba(120, 180, 255, 0.35)';
+      ctx.font = '11px sans-serif';
+      ctx.fillText('48', pAxZ.x + 48 * this.zoom + 3, pAxZ.y - 3);
+      ctx.fillText('32', pAxZ.x + 32 * this.zoom + 3, pAxZ.y - 3);
+      ctx.fillText('16', pAxZ.x + 16 * this.zoom + 3, pAxZ.y - 3);
+    }
     // 轴标签（加大加粗）
     ctx.fillStyle = '#8a94a6';
     ctx.font = 'bold 13px sans-serif';
@@ -5307,13 +5430,14 @@ window.__NBS2SCHEMATIC = {
   SFX_CONNECT_DEFAULTS, SFX_CONNECT_POINT_GAP, SFX_CONNECT_MIN_LEN, SFX_CONNECT_NEAR_DT, normConnectParams, sfxNum, sfxConnectCmd, sfxChordPairs,
   SFX_CONNECT_STYLES, sfxArcCmd, sfxArcLen, sfxConnectPacing,
   sfxNormSoundId, sfxPlaysoundCmd,
+  LISTENER_TAG, buildListenerFunctions,
   LYRIC_DEFAULTS, normLyricSettings, lyricParse, lyricCheck,
   LyricFont, lyricFontFamily, lyricFontReady, lyricFontEnsureLoad, lyricFontUpload,
   LYRIC_FONT_CDN, LYRIC_FONT_FAMILY_LXGW, LYRIC_FONT_FAMILY_SYSTEM, LYRIC_FONT_FAMILY_UPLOAD,
   lyricWrapChars, renderLyricLine, lyricBase64ToBytes, LYRIC_CANVAS_MAX_W, LYRIC_CANVAS_MAX_H,
   lyricLineGeoms, sfxLyricImageCmd, LYRIC_SCALING,
   buildLyricPngs,
-  lanePanStats, panPreset,
+  lanePanStats, panPreset, ringPreset,
   SFX_VANISH_DEFAULTS, SFX_VANISH_PROTO, sfxVanishCmd, normVanishParams,
   SFX_EFFECT_TYPES, renderSfxEffectList, renderSfxEffectLanes, onSfxEffectToggle,
   buildSfxPackMcmeta, buildSfxFunctions, buildZip, zipCrc32, buildSfxDatapackZip,
@@ -5477,8 +5601,9 @@ async function generate() {
     // 2026-09-29 playsound 改命令方块直写后，zip 只承载粒子 function 行；
     // 2026-10-06 歌词随包导出：纯歌词歌（无参考声道）也产 zip（pack.mcmeta + 歌词 function + PNG）
     setStage('数据包打包中…', 90, 100, 0);
-    if (AppState.refLayers.size > 0 || lyricPng.lyricPngs.size > 0) {
-      const { bytes } = buildSfxDatapackZip(song, AppState.refLayers, AppState.settings.targetVersion, result.sfxTickList, lyricPng.lyricPngs.size > 0 ? lyricPng.lyricPngs : null);
+    const listenerOn = !!(AppState.settings.listener && AppState.settings.listener.enabled);
+    if (AppState.refLayers.size > 0 || lyricPng.lyricPngs.size > 0 || listenerOn) {
+      const { bytes } = buildSfxDatapackZip(song, AppState.refLayers, AppState.settings.targetVersion, result.sfxTickList, lyricPng.lyricPngs.size > 0 ? lyricPng.lyricPngs : null, listenerOn);
       AppState.sfxZipBytes = bytes;
       $('sfxZipBtn').hidden = false;
     } else {
@@ -5916,6 +6041,11 @@ $('sfxPitchStep').addEventListener('change', (e) => {
   AppState.settings.sfxPitchStep = v;
   scheduleStateSave();
 });
+// 矿车监听系统开关（2026-10-07）：改 settings.listener.enabled + 防抖落盘；生成时读取
+$('listenerEnabled').addEventListener('change', (e) => {
+  AppState.settings.listener = { enabled: !!e.target.checked };
+  scheduleStateSave();
+});
 
 $('generateBtn').addEventListener('click', generate);
 $('downloadBtn').addEventListener('click', downloadLitematic);
@@ -6000,6 +6130,43 @@ function panPreset(mode, stats, nLanes, c0) {
 }
 // rank 交替槽位：偶 rank +Z 侧 / 奇 rank −Z 侧，槽位 1,2,3…（单行/网格/声像 volume 中心放置共用）
 const altSlot = (rank) => ({ side: rank % 2 === 0 ? 1 : -1, slot: Math.floor(rank / 2) + 1 });
+// 圆环预置：n 条车道沿正交传播链平面（Y-Z 截面）半径 R 的圆均匀排列，圆心 = 轨道 0 起点 c0；
+// θk = 2πk/n（k=0 朝 +Z，逆时针）。取整后若与已有起点过近（|Δz|<3 且 |Δy|<3）则沿径向外推
+// 至满足，互异槽位保证不触 validate 的「过近」警告。纯几何，与歌曲内容无关。
+function ringPreset(radius, nLanes, c0) {
+  const pos = new Array(nLanes);
+  const taken = []; // 已放置点（含圆心），外推时避开
+  for (let k = 0; k < nLanes; k++) {
+    const th = (2 * Math.PI * k) / nLanes;
+    let dz = c0.dz + Math.round(radius * Math.cos(th));
+    let dy = c0.dy + Math.round(radius * Math.sin(th));
+    const clash = (p) => Math.abs(p.dz - dz) < 3 && Math.abs(p.dy - dy) < 3;
+    if (k > 0) {
+      // 径向逐格外推：直到与所有已放置点（含圆心）都不过近
+      for (let step = 1; clash(c0) || taken.some(clash); step++) {
+        const r2 = radius + step;
+        dz = c0.dz + Math.round(r2 * Math.cos(th));
+        dy = c0.dy + Math.round(r2 * Math.sin(th));
+      }
+    } else if (radius < 3) {
+      // 圆心被轨道 0 占用时第一点外推（R=16/32/48 不会走到这里，仅防手动改小）
+      for (let step = 3; clash(c0); step++) {
+        dz = c0.dz + Math.round(step * Math.cos(th));
+        dy = c0.dy + Math.round(step * Math.sin(th));
+      }
+    }
+    taken.push({ dz, dy });
+    pos[k] = { dz, dy };
+  }
+  return pos;
+}
+$('presetRingBtn').addEventListener('click', () => {
+  const n = AppState.lanes.length;
+  if (n === 0) return;
+  const r = parseInt($('ringRadius').value, 10) || 16;
+  const pos = ringPreset(r, n, (AppState.lane0 && AppState.lane0.start) || { dz: 0, dy: 0 });
+  presetAllLanes((c0, k) => pos[k]);
+});
 $('presetPanBtn').addEventListener('click', () => {
   const song = AppState.song;
   if (!song || !song.layers) return;

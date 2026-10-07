@@ -20,6 +20,7 @@ function makeCtx() {
   return {
     fillStyle: '', strokeStyle: '', lineWidth: 1, font: '', textAlign: '', textBaseline: '',
     clearRect() {}, fillRect() {}, beginPath() {}, moveTo() {}, lineTo() {}, stroke() {},
+    arc() {},
     fillText() {}, strokeRect() {}, putImageData() {}, drawImage() {}, setLineDash() {},
     createImageData(w, h) { return { data: new Uint8ClampedArray(w * h * 4), width: w, height: h }; },
     measureText() { return { width: 8 }; },
@@ -1742,6 +1743,26 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
       '预置声像：参考车道保持不动 (7,2)（预置只重排普通车道）');
     st2.song = origSong; // 还原
   }
+  // 4d) 预置：圆环（2026-10-07，48 格可听范围参考）：4 条车道半径 16 → 十字形 (±16,0)/(0,±16)
+  {
+    st2.lanes = [{ tracks: [i0] }, { tracks: [i0] }, { tracks: [i0] }, { tracks: [i0] }];
+    st2.lane0.start = { dz: 0, dy: 0 };
+    const radSel = context.document.getElementById('ringRadius');
+    radSel.value = '16';
+    elements.get('presetRingBtn').dispatch('click', {});
+    check(st2.lanes[0].start.dz === 16 && st2.lanes[0].start.dy === 0
+      && st2.lanes[1].start.dz === 0 && st2.lanes[1].start.dy === 16
+      && st2.lanes[2].start.dz === -16 && st2.lanes[2].start.dy === 0
+      && st2.lanes[3].start.dz === 0 && st2.lanes[3].start.dy === -16,
+      '预置圆环·R16：四车道正交十字 (16,0)/(0,16)/(−16,0)/(0,−16)');
+    // 圆环只重排普通车道，参考车道不动
+    st2.refLanes = [{ tracks: [i0], start: { dz: 4, dy: 4 } }];
+    elements.get('presetRingBtn').dispatch('click', {});
+    check(st2.refLanes[0].start.dz === 4 && st2.refLanes[0].start.dy === 4,
+      '预置圆环：参考车道保持不动 (4,4)');
+    const { errors: ringErrs } = ed.validate();
+    check(ringErrs.length === 0, '预置圆环后布局无重叠错误');
+  }
   st2.lanes = [{ tracks: [i0], start: { dz: 3, dy: 0 } }]; st2.refLanes = [{ tracks: [i0] }];
   st2.lane0.start = { dz: 0, dy: 0 };
   context.window.__NBS2SCHEMATIC.syncRefLaneStarts(); // 预置还原的新车道补起点（供后续持久化断言）
@@ -1778,6 +1799,32 @@ const v5Buf = makeNbs({ tempoTps: 10, songLength: 4, noteSpecs: [
 context.onSongLoaded(context.parseNBS(new Uint8Array(v5Buf)), null);
 infoHtml = elements.get('songInfo').innerHTML;
 check(!infoHtml.includes('小号'), 'v5 歌曲：ID 16 是自定义乐器而非内置小号，不触发小号提示');
+
+// ---------- L 矿车监听系统 UI（2026-10-07） ----------
+{
+  const st = context.window.__NBS2SCHEMATIC.state;
+  const cb = elements.get('listenerEnabled');
+  check(!!cb, 'L listenerEnabled 复选框存在');
+  // 勾选 → settings
+  cb.checked = true; cb.dispatch('change', { target: cb });
+  check(st.settings.listener && st.settings.listener.enabled === true, 'L 勾选 → settings.listener.enabled=true');
+  // 生成 → 2 个监听 CB（启动 impulse + 跟随 repeating）
+  await context.generate();
+  const r0 = st.result.result;
+  const cbs = r0.tileEntities.filter(te => te.Command && te.Command.startsWith('function nbs2sfx:listener_'));
+  check(cbs.length === 2, `L 生成含 2 个监听 CB（实际 ${cbs.length}）`);
+  const hasStart = cbs.some(te => te.Command === 'function nbs2sfx:listener_start' && te.auto === false);
+  const hasFollow = cbs.some(te => te.Command === 'function nbs2sfx:listener_follow' && te.auto === true);
+  check(hasStart && hasFollow, 'L 启动 CB auto=false / 跟随 CB auto=true');
+  check(!!r0.geometry.listener && r0.geometry.listener.start.placed === true && r0.geometry.listener.follow.placed === true,
+    'L geometry.listener 两 CB placed=true');
+  // 取消勾选 → 零回归（0 监听 CB、listener=null）
+  cb.checked = false; cb.dispatch('change', { target: cb });
+  await context.generate();
+  const r1 = st.result.result;
+  const cbs2 = r1.tileEntities.filter(te => te.Command && te.Command.startsWith('function nbs2sfx:listener_'));
+  check(cbs2.length === 0 && r1.geometry.listener === null, 'L 取消勾选 → 0 监听 CB / listener=null（零回归）');
+}
 
 console.log(`汇总：共 ${passed + failed} 项 — ${passed} PASS / ${failed} FAIL`);
 process.exit(failed ? 1 : 0);

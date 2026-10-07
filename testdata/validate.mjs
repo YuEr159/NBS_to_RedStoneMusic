@@ -63,7 +63,7 @@ vm.runInContext(html.match(/<script>([\s\S]*)<\/script>/)[1], context);
 
 const { parseNBS, computeDelays, buildLayout, buildPalette, packBlockStates, buildLitematic, noteFromKey,
   mergeSuggestions, packLanesNoConflict, laneConflictStats, TARGET_VERSIONS, targetEntry, DEFAULT_TARGET_MC,
-  lanePanStats, panPreset } =
+  lanePanStats, panPreset, ringPreset } =
   context.window.__NBS2SCHEMATIC;
 
 // ---------- NBT 解码器（大端） ----------
@@ -2806,6 +2806,157 @@ try {
   if (!same || !mono) {
     console.log(`FAIL P6 buildLayout 第 10 参：产物一致=${same}、progress 单调且末值 1=${mono}（${fracs.length} 采样）`); ok = false;
   } else console.log('PASS P6 buildLayout 第 10 参 progress：产物逐位一致、fraction 单调递增末值 1');
+  // ringPreset：半径 16 四车道 = 十字（0/90/180/270 度）
+  const r1 = ringPreset(16, 4, { dz: 0, dy: 0 });
+  if (!(r1[0].dz === 16 && r1[0].dy === 0
+    && r1[1].dz === 0 && r1[1].dy === 16
+    && r1[2].dz === -16 && r1[2].dy === 0
+    && r1[3].dz === 0 && r1[3].dy === -16)) {
+    console.log('FAIL P7 ringPreset(16,4) 期望十字形，实际', JSON.stringify(r1)); ok = false;
+  } else console.log('PASS P7 ringPreset(16,4)：四车道正交十字（±16 Z / ±16 Y）');
+  // 八车道八方形（对角线 11.31→11）
+  const r2 = ringPreset(16, 8, { dz: 0, dy: 0 });
+  if (!(r2[0].dz === 16 && r2[0].dy === 0
+    && r2[1].dz === 11 && r2[1].dy === 11
+    && r2[2].dz === 0 && r2[2].dy === 16
+    && r2[3].dz === -11 && r2[3].dy === 11
+    && r2[4].dz === -16 && r2[4].dy === 0
+    && r2[5].dz === -11 && r2[5].dy === -11
+    && r2[6].dz === 0 && r2[6].dy === -16
+    && r2[7].dz === 11 && r2[7].dy === -11)) {
+    console.log('FAIL P8 ringPreset(16,8) 八方形，实际', JSON.stringify(r2)); ok = false;
+  } else console.log('PASS P8 ringPreset(16,8)：八车道八方（对角线 11,11）');
+  // 外推：R=2 < 3，第一点圆心冲突被外推到 3，其余同理
+  const r3 = ringPreset(2, 4, { dz: 0, dy: 0 });
+  if (!(r3[0].dz === 3 && r3[0].dy === 0
+    && r3[1].dz === 0 && r3[1].dy === 3
+    && r3[2].dz === -3 && r3[2].dy === 0
+    && r3[3].dz === 0 && r3[3].dy === -3)) {
+    console.log('FAIL P9 ringPreset(2,4) 外推期望 (±3,0)/(0,±3)，实际', JSON.stringify(r3)); ok = false;
+  } else console.log('PASS P9 ringPreset(2,4)：R<3 触发径向外推至 |d|≥3');
+  // 非零 c0 偏移
+  const r4 = ringPreset(16, 4, { dz: 5, dy: -3 });
+  if (!(r4[0].dz === 21 && r4[0].dy === -3
+    && r4[1].dz === 5 && r4[1].dy === 13
+    && r4[2].dz === -11 && r4[2].dy === -3
+    && r4[3].dz === 5 && r4[3].dy === -19)) {
+    console.log('FAIL P10 ringPreset 偏移 c0=(5,−3)，实际', JSON.stringify(r4)); ok = false;
+  } else console.log('PASS P10 ringPreset 非零 c0 偏移：圆心平移到 (5,−3)');
+}
+
+// ---------- L 矿车监听系统（2026-10-07） ----------
+// L1 buildListenerFunctions 纯函数：2 个 mcfunction、命令文本逐条、Java 语法要点（mount / execute as·at·run / distance=..N / ~ ~ ~）
+// L2 e2e：settings.listener.enabled → 2 个 CB 位置/Command/auto + geometry.listener + TE 所在格方块
+// L3 零回归：未启用时 0 监听 CB、listener=null、网格尺寸不变
+// L4 数据包 zip：listenerEnabled → 2 个 mcfunction 条目（1.21.11 function/ 与 1.19.4 functions/ 双目录名）+ 文件内容
+// 激活格语义并入 L2（激活格 = t=0 主位音符盒，红石块运行时替换它）；CB 格占用守卫（cellFree）由只写空气格逻辑保证
+{
+  const api = context.window.__NBS2SCHEMATIC;
+  const { buildListenerFunctions, LISTENER_TAG, SFX_NAMESPACE, buildSfxDatapackZip, SFX_CB_STATE } = api;
+  // L1 纯函数断言
+  const fns = buildListenerFunctions();
+  const expStart = [
+    'summon minecraft:minecart ~1 ~1 ~-2',
+    `tag @e[type=minecraft:minecart,distance=..8] add ${LISTENER_TAG}`,
+    `execute as @e[type=minecraft:minecart,tag=${LISTENER_TAG}] at @s run tp @s ~ ~ ~ -90 0`,
+    `ride @p mount @e[type=minecraft:minecart,tag=${LISTENER_TAG}]`,
+    'effect @p minecraft:slow_falling 999999 0 true',
+    'setblock ~ ~1 ~-1 minecraft:redstone_block',
+  ];
+  const expFollow = [
+    `execute as @e[type=minecraft:minecart,tag=${LISTENER_TAG}] at @s run tp @s ^1 ^0 ^0`,
+  ];
+  const nameStart = `data/${SFX_NAMESPACE}/function/listener_start.mcfunction`;
+  const nameFollow = `data/${SFX_NAMESPACE}/function/listener_follow.mcfunction`;
+  const l1ok = fns.length === 2
+    && fns[0].name === nameStart && JSON.stringify(fns[0].lines) === JSON.stringify(expStart)
+    && fns[1].name === nameFollow && JSON.stringify(fns[1].lines) === JSON.stringify(expFollow);
+  if (!l1ok) {
+    console.log('FAIL L1 buildListenerFunctions：' + JSON.stringify(fns)); ok = false;
+  } else console.log('PASS L1 buildListenerFunctions 纯函数：2 文件 7 命令逐条一致（ride mount / execute as·at·run / distance=..N / setblock 主位激活）');
+
+  // L2/L3 e2e：同一 NBS，listener 开/关
+  const nbs = makeNbs({ tempoTps: 20, songLength: 10, noteSpecs: [
+    { tick: 0, layer: 0, instrument: 0, key: 45 },
+    { tick: 2, layer: 0, instrument: 0, key: 47 },
+    { tick: 4, layer: 0, instrument: 1, key: 49 },
+  ]});
+  const tmpFile = 'synth_l.nbs';
+  writeFileSync(path.join(__dirname, tmpFile), nbs);
+  const sOff = { buttonType: 'minecraft:oak_button', customInstrumentMap: new Map() };
+  const sOn = { ...sOff, listener: { enabled: true } };
+  const rOff = runE2E(tmpFile, { lane0: { dz: 0, dy: 0 }, settings: sOff });
+  const rOn = runE2E(tmpFile, { lane0: { dz: 0, dy: 0 }, settings: sOn });
+  try {
+    // L2 启用：2 CB（启动 impulse auto=false + 跟随 repeating auto=true），位置 = 轨道 0 链头 (0, yb, zc) 的
+    //   底座层 z+2 与正上方；Command = function nbs2sfx:listener_start / listener_follow；geometry.listener 齐备
+    const rail = rOn.result.chains.find(c => c.isDefaultRail);
+    const gOff = rOn.result.geometry;
+    const startExp = { x: 0, y: rail.yb + gOff.yOffset, z: rail.zc + 2 + gOff.zOffset };
+    const tEs = rOn.result.tileEntities.filter(te => te.id === 'minecraft:command_block');
+    const teStart = tEs.find(te => te.Command === `function ${SFX_NAMESPACE}:listener_start`);
+    const teFollow = tEs.find(te => te.Command === `function ${SFX_NAMESPACE}:listener_follow`);
+    const geo = gOff.listener;
+    if (!teStart || !teFollow) {
+      console.log(`FAIL L2 未找到监听 CB：${JSON.stringify(tEs)}`); ok = false;
+    } else {
+      const posOk = teStart.x === startExp.x && teStart.y === startExp.y && teStart.z === startExp.z
+        && teFollow.x === teStart.x && teFollow.y === teStart.y + 1 && teFollow.z === teStart.z;
+      const autoOk = teStart.auto === false && teFollow.auto === true;
+      const stateOk = teStart.state === SFX_CB_STATE && teFollow.state === SFX_CB_STATE;
+      // 网格内 CB 所在格方块 = 命令方块状态
+      const cellAt = (te) => rOn.result.grid.data[(te.y * rOn.result.grid.sz + te.z) * rOn.result.grid.sx + te.x];
+      const cbId = rOn.result.grid.stateIds.get(SFX_CB_STATE);
+      const cellOk = cbId === cellAt(teStart) && cbId === cellAt(teFollow);
+      const geoOk = geo && geo.start.x === teStart.x && geo.start.y === teStart.y && geo.start.z === teStart.z
+        && geo.follow.y === teFollow.y && geo.start.placed === true && geo.follow.placed === true;
+      // 激活格（链头东侧 (0, yb+1, zc+1)）：空气（t=0 链头后无传导段）或 t=0 主位音符盒——均为红石导体，
+      //   红石块强充能向 -X 传导激活链头中继器，属设计语义
+      const noteCell = rOn.result.grid.data[((rail.yb + 1 + gOff.yOffset) * rOn.result.grid.sz + (rail.zc + 1 + gOff.zOffset)) * rOn.result.grid.sx];
+      const noteState = rOn.palette ? null : rOn.result.grid.stateIds.get('minecraft:note_block[instrument=0,note=12,powered=false]');
+      const noteOk = noteCell === 0 || noteCell === noteState;
+      if (!(posOk && autoOk && stateOk && cellOk && geoOk && noteOk)) {
+        console.log(`FAIL L2 监听 CB：pos=${posOk} auto=${autoOk} state=${stateOk} cell=${cellOk} geo=${geoOk} note=${noteOk}；start=${JSON.stringify(teStart)} follow=${JSON.stringify(teFollow)} geo=${JSON.stringify(geo)}`); ok = false;
+      } else console.log('PASS L2 listener 启用：2 CB（启动 底座层/z+2 + 跟随正上方）、Command/auto/state/所在格/geometry 全对；激活格（空气或 t=0 主位音符盒，均为导体）');
+    }
+    // L3 零回归：未启用 → 0 命令方块、listener=null、网格尺寸与总方块数一致
+    if (rOff.result.tileEntities.length !== 0) {
+      console.log(`FAIL L3 零回归：未启用时 TE=${rOff.result.tileEntities.length} ≠ 0`); ok = false;
+    } else if (rOn.result.grid.sx !== rOff.result.grid.sx || rOn.result.grid.sy !== rOff.result.grid.sy || rOn.result.grid.sz !== rOff.result.grid.sz) {
+      console.log('FAIL L3 网格尺寸：启用/未启用不一致（listener 只加 CB 不扩网格）'); ok = false;
+    } else if (!(rOff.result.geometry.listener === null && rOn.result.geometry.listener !== null)) {
+      console.log('FAIL L3 geometry.listener：off 应为 null，on 应非 null'); ok = false;
+    } else if (rOn.result.stats.commandBlocks !== 2 || rOff.result.stats.commandBlocks !== 0) {
+      console.log(`FAIL L3 stats.commandBlocks：on=${rOn.result.stats.commandBlocks} off=${rOff.result.stats.commandBlocks}（期望 2/0）`); ok = false;
+    } else console.log('PASS L3 零回归护栏：未启用 0 CB/0 TE/listener=null、网格尺寸与启用时一致');
+    // L4 数据包：listenerEnabled → 2 个 mcfunction 条目（目录名随目标版本），文件内容 = buildListenerFunctions 逐字
+    const zipOn = buildSfxDatapackZip(rOn.song, new Map(), '1.21.11', rOn.result.sfxTickList, null, true);
+    if (zipOn.fileCount !== 3) {
+      console.log(`FAIL L4 zip 条目 ${zipOn.fileCount} ≠ 3（1 mcmeta + 2 listener function）`); ok = false;
+    } else {
+      const txt = new TextDecoder().decode(zipOn.bytes);
+      const startTxt = expStart.join('\n') + '\n';
+      const followTxt = expFollow.join('\n') + '\n';
+      const hasBoth = txt.includes('function/listener_start.mcfunction') && txt.includes('function/listener_follow.mcfunction');
+      const contentOk = txt.includes(startTxt) && txt.includes(followTxt);
+      // 1.19.4 旧目录名 functions/
+      const zipOld = buildSfxDatapackZip(rOn.song, new Map(), '1.19.4', rOn.result.sfxTickList, null, true);
+      const txtOld = new TextDecoder().decode(zipOld.bytes);
+      const oldDirOk = txtOld.includes(`data/${SFX_NAMESPACE}/functions/listener_start.mcfunction`)
+        && !txtOld.includes(`data/${SFX_NAMESPACE}/function/listener_start.mcfunction`);
+      if (!(hasBoth && contentOk && zipOld.fileCount === 3 && oldDirOk)) {
+        console.log(`FAIL L4 zip：hasBoth=${hasBoth} contentOk=${contentOk} oldDir=${oldDirOk}`); ok = false;
+      } else console.log('PASS L4 数据包 zip：listener 启用 → 2 mcfunction（1.21.11 function/ 与 1.19.4 functions/ 双目录名），内容与纯函数逐字一致');
+      // L4b 未启用 → 无 listener 条目
+      const zipOff = buildSfxDatapackZip(rOn.song, new Map(), '1.21.11', rOn.result.sfxTickList, null, false);
+      const txtOff = new TextDecoder().decode(zipOff.bytes);
+      if (zipOff.fileCount !== 1 || txtOff.includes('listener_')) {
+        console.log(`FAIL L4b 未启用 zip：条目=${zipOff.fileCount} 含listener=${txtOff.includes('listener_')}`); ok = false;
+      } else console.log('PASS L4b 未启用零回归：zip 仅 pack.mcmeta、无 listener 条目');
+    }
+  } finally {
+    try { rmSync(path.join(__dirname, tmpFile)); } catch {}
+  }
 }
 
 console.log(`汇总：共 ${passedCnt + failedCnt} 项 — ${passedCnt} PASS / ${failedCnt} FAIL`);
