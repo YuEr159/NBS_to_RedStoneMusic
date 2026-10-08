@@ -1638,6 +1638,34 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
     } catch (err) { guardOk = false; guardErr = err; }
     check(guardOk, '越界守护：拖拽中车道被删，pointermove 不抛 TypeError（' + (guardErr ? guardErr.message : '无异常') + '）');
     cvMain.dispatch('pointerup', { pointerId: 2 });
+    // 3e) 轨道 0 可拖（2026-10-08）：pointerdown 命中轨道 0 标记（main 窗口下标 0）→ pointermove 落到 (14,2)
+    const l0p0 = ed.w2s(st.lane0.start.dz, st.lane0.start.dy);
+    cvMain.dispatch('pointerdown', { pointerId: 3, offsetX: l0p0.x, offsetY: l0p0.y });
+    check(ed.dragIndex === 0 && ed.selected === 0, '轨道 0 拖拽：pointerdown 命中轨道 0 标记（dragIndex=0）');
+    const l0Target = { dz: 14, dy: 2 };
+    const l0p1 = ed.w2s(l0Target.dz, l0Target.dy);
+    cvMain.dispatch('pointermove', { pointerId: 3, offsetX: l0p1.x, offsetY: l0p1.y });
+    check(st.lane0.start.dz === l0Target.dz && st.lane0.start.dy === l0Target.dy,
+      '轨道 0 拖拽：pointermove 后 lane0.start 精确移动（实际 ' + JSON.stringify(st.lane0.start) + '）');
+    cvMain.dispatch('pointerup', { pointerId: 3 });
+    // 3e-2) 过近校验：轨道 0 与其他车道起点 3 格内 → 琥珀警告、不阻止（errors 不含该对）
+    {
+      const nearIdx = st.lanes.findIndex(l => l.start && Math.abs(l.start.dz - st.lane0.start.dz) < 3 && Math.abs(l.start.dy - st.lane0.start.dy) < 3);
+      if (nearIdx > -1) {
+        const { warnings: ws, errors: es } = ed.validate();
+        check(ws.some(m => m.includes('轨道 0') && m.includes('车道')) && !es.some(m => m.includes('轨道 0')),
+          '轨道 0 与车道过近 → 警告不阻止（' + JSON.stringify({ warn: ws.length, err: es.length }) + '）');
+      } else {
+        // 无天然近邻 → 构造一对再校验
+        const saved = st.lanes[0].start;
+        st.lanes[0].start = { dz: st.lane0.start.dz + 1, dy: st.lane0.start.dy + 1 };
+        const { warnings: ws, errors: es } = ed.validate();
+        check(ws.some(m => m.includes('轨道 0') && m.includes('车道')) && !es.some(m => m.includes('轨道 0')),
+          '轨道 0 与车道过近（构造）→ 警告不阻止');
+        st.lanes[0].start = saved;
+      }
+    }
+    st.lane0.start = { dz: 0, dy: 0 }; // 复原（后文预置测试依赖原点中心）
     st.lanes.pop(); // 恢复（车道池回到 R2 的空态）
     check(st.lanes.length === 0, '拖拽序列：状态复原（车道池回空，不污染后续断言）');
   }
@@ -1681,12 +1709,13 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
   check(ikRef0.kind === 'ref' && ikRef0.j === 0
     && ikBg.kind === 'ref-bg' && ikBg.j === bgIt.laneIdx,
     'idxKind：ref 窗口 ref/ref-bg 标记经 laneIdx 映射到 refLanes 真实下标（MIDI式在前排序后 i ≠ 下标）');
-  check(edRef.draggable(st.refLanes.length) === false && edRef.draggable(edRef.starts().length - 1) === false,
-    'ref 窗口：普通车道与轨道 0 为不可拖背景');
-  check(ed.draggable(0) === false && ed.draggable(1) === true
+  check(edRef.draggable(st.refLanes.length) === false
+    && edRef.draggable(edRef.starts().length - 1) === true,
+    'ref 窗口：普通车道不可拖背景、轨道 0 可拖（2026-10-08）');
+  check(ed.draggable(0) === true && ed.draggable(1) === true
     && ed.draggable(idxBoundMain) === true
     && (idxIndepMain > -1 ? ed.draggable(idxIndepMain) === false : true),
-    'main 窗口：轨道 0 不可拖、音轨车道可拖、单线式参考车道可拖（虚拟盒位锚点）、MIDI式为不可拖背景（中心基准在 ref 窗口拖）');
+    'main 窗口：轨道 0 可拖（2026-10-08）、音轨车道可拖、单线式参考车道可拖（虚拟盒位锚点）、MIDI式为不可拖背景（中心基准在 ref 窗口拖）');
   const refStart2 = st.refLanes[0].start;
   const laneStartX = st.lanes[0].start;
   refStart2.dz = laneStartX.dz; refStart2.dy = laneStartX.dy; // MIDI式中心与音轨车道物理同位

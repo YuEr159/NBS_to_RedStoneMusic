@@ -273,7 +273,7 @@ input[type="number"] { width: 70px; }
     <h3>参考车道起点布局（Y-Z 截面；MIDI 式可拖 = 粒子中心基准，单线式在上方布局窗口拖）</h3>
     <div class="layout-tools">
       <button id="fitRefLayoutBtn">缩放到全部</button>
-      <span class="hint">拖拽移动 MIDI式参考车道（其起点 = 粒子中心基准，缺省 (0,0) = 轨道 0 CB 位置）；单线式参考车道（紫、半透明）显示虚拟盒位几何、在本窗口不可拖（到音轨布局窗口拖）；普通车道（灰）与轨道 0 仅作空间参照、不可移动；参考车道不参与物理碰撞校验（MIDI式中心重叠 = 粒子有意叠放），可与普通车道任意并排</span>
+      <span class="hint">拖拽移动 MIDI式参考车道（其起点 = 粒子中心基准，缺省 (0,0) = 轨道 0 CB 位置）；单线式参考车道（紫、半透明）显示虚拟盒位几何、在本窗口不可拖（到音轨布局窗口拖）；普通车道（灰）仅作空间参照、不可移动；轨道 0 可拖；参考车道不参与物理碰撞校验（MIDI式中心重叠 = 粒子有意叠放），可与普通车道任意并排</span>
     </div>
     <canvas id="refLaneCanvas" width="640" height="420"></canvas>
     <div class="layout-info" id="refLayoutInfo"></div>
@@ -351,7 +351,7 @@ input[type="number"] { width: 70px; }
       <input type="number" id="lyricPosX" min="-256" max="256" step="1" value="0" style="width:80px">
       <span class="hint">歌词中心点 (x, y, z) 缺省 (0, 3, 0)；y/z 在下方「歌词位置」窗口拖拽</span>
     </div>
-    <h3>歌词位置（Y-Z 截面，独立窗口；「词」= 歌词显示中心点，可拖；轨道 0 与主链仅作参照、不可拖）</h3>
+    <h3>歌词位置（Y-Z 截面，独立窗口；「词」= 歌词显示中心点，可拖；轨道 0 可拖，主链仅作参照）</h3>
     <div class="layout-tools">
       <button id="fitLyricLayoutBtn">缩放到全部</button>
       <span class="hint">拖拽移动歌词中心点（缺省 (0,3,0)）；方向键微调（Shift=大步）</span>
@@ -4641,15 +4641,16 @@ class LayoutEditor {
     this.fitted = false;
     this.bindEvents();
   }
-  // 该窗口「可拖拽」的种类集合。
+  // 该窗口「可拖拽」的种类集合（2026-10-08 起轨道 0 起点三窗口均可拖——用户确认：
+  //   main + ref + lyric 都可拖；矿车监听行走行留在布局原点 (0,0) 不跟随）
   //   main 窗口：lane（普通车道）+ ref-bg = **单线式**参考车道（可拖 = 虚拟盒位锚点，
   //   拖了直接改变其绑定粒子行偏移，2026-09-07 用户要求恢复可拖）；
   //   ref 窗口：ref = **MIDI式**参考车道（可拖 = 粒子中心基准）
   //   ref（main 窗口里的 MIDI式）/ ref-bg（ref 窗口里的单线式）为各自窗口的不可拖背景；
   //   lyric 窗口（2026-10-06）：lyric = 歌词显示中心点（可拖 = settings.lyric.pos 的 Y/Z）
-  dragKinds() { return this.mode === 'ref' ? new Set(['ref']) : this.mode === 'lyric' ? new Set(['lyric']) : new Set(['lane', 'ref-bg']); }
+  dragKinds() { return this.mode === 'ref' ? new Set(['ref', 'lane0']) : this.mode === 'lyric' ? new Set(['lyric', 'lane0']) : new Set(['lane', 'ref-bg', 'lane0']); }
   // 布局标记（含 kind 标签）。main = [轨道0, 车道1..n, MIDI式参考（背景）, 单线式参考（可拖）]；
-  //   ref  = [MIDI式参考 I1..（可拖=粒子中心基准）, 单线式参考 B1..（背景）, 车道1..n, 轨道0]（车道/轨道0 背景不可拖）
+  //   ref  = [MIDI式参考 I1..（可拖=粒子中心基准）, 单线式参考 B1..（背景）, 车道1..n, 轨道0]（车道背景不可拖，轨道 0 可拖）
   //   缺 start 的车道按 (0,0) 兜底显示（UI 路径 syncLaneStarts/syncRefLaneStarts 恒补 start，
   //   此处仅为直接改状态的外部调用/测试不致崩溃）
   starts() {
@@ -4711,13 +4712,13 @@ class LayoutEditor {
       ? AppState.song.layers[g.tracks[0]].notes.values().next().value.instrument : 0;
     return inst < 16 ? NOTE_BLOCK_COLORS[inst] : '#8b94a3';
   }
-  // 该下标标记是否可拖拽（轨道 0 恒不可拖；kind 是否在本窗口 dragKinds 内）
+  // 该下标标记是否可拖拽（轨道 0 三窗口均可拖（2026-10-08）；kind 是否在本窗口 dragKinds 内）
   draggable(i) {
     return this.dragKinds().has(this.kindOf(i));
   }
   bindEvents() {
     const cv = this.canvas;
-    // 布局下标 → 所属数组；可拖性由 draggable() 判定（轨道 0 恒不可拖；窗口 mode 决定 lane/ref 谁可拖）
+    // 布局下标 → 所属数组；可拖性由 draggable() 判定（轨道 0 可拖；窗口 mode 决定 lane/ref 谁可拖）
     cv.addEventListener('pointerdown', (e) => {
       cv.setPointerCapture(e.pointerId);
       activeLayoutEditor = this; // 方向键只作用于最近交互的窗口
@@ -4742,6 +4743,16 @@ class LayoutEditor {
       const it = this.dragIndex >= 0 ? this.starts()[this.dragIndex] : undefined;
       if (it && this.draggable(this.dragIndex)) {
         const sel = this.idxKind(this.dragIndex);
+        if (sel.kind === 'lane0') {
+          // 轨道 0 起点（2026-10-08 起可拖，三窗口通用；行走行不受影响）
+          if (AppState.lane0) {
+            const w = this.s2w(e.offsetX, e.offsetY);
+            AppState.lane0.start = { dz: Math.round(w.z), dy: Math.round(w.y) };
+            this.draw(); this.updateInfo();
+            scheduleStateSave();
+            return;
+          }
+        }
         if (sel.kind === 'lane' && AppState.lanes[sel.j]) {
           const w = this.s2w(e.offsetX, e.offsetY);
           const z = Math.round(w.z);   // 允许负坐标（网格生成时整体平移保证非负）
@@ -4826,7 +4837,8 @@ class LayoutEditor {
         return;
       }
       const lane = sel.kind === 'lane' ? AppState.lanes[sel.j]
-        : (sel.kind === 'ref' || sel.kind === 'ref-bg') ? AppState.refLanes[sel.j] : null;
+        : (sel.kind === 'ref' || sel.kind === 'ref-bg') ? AppState.refLanes[sel.j]
+        : (sel.kind === 'lane0') ? AppState.lane0 : null;
       if (!lane) return;
       const s = lane.start;
       if (e.key === 'ArrowLeft') { s.dz -= step; moved = true; }
@@ -4873,8 +4885,9 @@ class LayoutEditor {
     return `#${i}`;
   }
   // 参与碰撞校验的下标对（2026-09-07 参考车道虚拟化：参考车道是虚拟几何、不参与物理碰撞）
-  //   main 窗口：轨道 0 + 普通车道两两校验（MIDI式参考车道 = 不可拖背景、不参与；
-  //     单线式参考车道可拖但属虚拟锚点 → 也不参与碰撞，其起点与普通车道同位是合法的）；
+  //   main 窗口：轨道 0 + 普通车道两两校验（过近 = 琥珀警告但不阻止——2026-10-08 用户确认；
+  //     MIDI式参考车道 = 不可拖背景、不参与；单线式参考车道可拖但属虚拟锚点 → 也不参与碰撞，
+  //     其起点与普通车道同位是合法的）；
   //   ref 窗口：恒不校验——参考车道标记全是虚拟几何，MIDI式中心 (0,0) 默认互相重叠 = 粒子有意叠放
   validate() {
     const warnings = [], errors = [];
@@ -4940,24 +4953,25 @@ class LayoutEditor {
     const pAxZ = this.w2s(0, 0);
     ctx.beginPath(); ctx.moveTo(pAxZ.x, 0); ctx.lineTo(pAxZ.x, H); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(0, pAxZ.y); ctx.lineTo(W, pAxZ.y); ctx.stroke();
-    // 可听范围参考圈（仅 main 窗口）：以原点 (0,0) 为圆心画 16/32/48 格半径，
-    // 对应音符盒 48 格线性衰减的满音量边界/1/4 音量/静音边界
+    // 可听范围参考圈（仅 main 窗口）：以原点 (0,0) 为圆心画 12/24/36/48 格半径，
+    // 对应音符盒 48 格线性衰减的 75%/50%/25%/0% 音量边界；颜色同坐标轴（#4a5568）、透明度 70%（用户要求）
     if (this.mode === 'main') {
       ctx.lineWidth = 1;
       ctx.setLineDash([4, 4]);
-      for (const R of [16, 32, 48]) {
-        ctx.strokeStyle = `rgba(120, 180, 255, ${R === 16 ? 0.28 : R === 32 ? 0.20 : 0.14})`;
+      ctx.strokeStyle = 'rgba(74, 85, 104, 0.7)';
+      for (const R of [12, 24, 36, 48]) {
         ctx.beginPath();
         ctx.arc(pAxZ.x, pAxZ.y, R * this.zoom, 0, 2 * Math.PI);
         ctx.stroke();
       }
       ctx.setLineDash([]);
       ctx.lineWidth = 2;
-      ctx.fillStyle = 'rgba(120, 180, 255, 0.35)';
+      ctx.fillStyle = 'rgba(74, 85, 104, 0.85)';
       ctx.font = '11px sans-serif';
       ctx.fillText('48', pAxZ.x + 48 * this.zoom + 3, pAxZ.y - 3);
-      ctx.fillText('32', pAxZ.x + 32 * this.zoom + 3, pAxZ.y - 3);
-      ctx.fillText('16', pAxZ.x + 16 * this.zoom + 3, pAxZ.y - 3);
+      ctx.fillText('36', pAxZ.x + 36 * this.zoom + 3, pAxZ.y - 3);
+      ctx.fillText('24', pAxZ.x + 24 * this.zoom + 3, pAxZ.y - 3);
+      ctx.fillText('12', pAxZ.x + 12 * this.zoom + 3, pAxZ.y - 3);
     }
     // 轴标签（加大加粗）
     ctx.fillStyle = '#8a94a6';
@@ -5024,10 +5038,10 @@ class LayoutEditor {
     const nRef = this.refStartsCount();
     const nLane = AppState.lanes.length;
     let txt = this.mode === 'ref'
-      ? `${nRef} 条参考车道（紫：MIDI式可拖 = 粒子中心基准，单线式为虚拟盒位背景、不可拖）+ ${nLane} 条普通车道 / 轨道 0（灰背景，仅作参照、不可拖）`
+      ? `${nRef} 条参考车道（紫：MIDI式可拖 = 粒子中心基准，单线式为虚拟盒位背景、不可拖）+ ${nLane} 条普通车道（灰背景，不可拖）/ 轨道 0（可拖）`
       : this.mode === 'lyric'
-        ? `「词」= 歌词显示中心点（青、可拖）；轨道 0 与 ${nLane} 条主链为空间参照、不可拖`
-        : `轨道 0 + ${nLane} 条车道（可拖）` + (nRef > 0 ? ` + ${nRef} 条参考车道（紫：单线式可拖 = 虚拟盒位锚点，MIDI式为背景、不可拖）` : '');
+        ? `「词」= 歌词显示中心点（青、可拖）；${nLane} 条主链为空间参照、不可拖；轨道 0 可拖`
+        : `轨道 0 + ${nLane} 条车道（均可拖）` + (nRef > 0 ? ` + ${nRef} 条参考车道（紫：单线式可拖 = 虚拟盒位锚点，MIDI式为背景、不可拖）` : '');
     if (this.selected >= 0 && this.starts()[this.selected]) {
       const s = this.startOf(this.selected);
       txt += ` ｜ 选中${this.nameOf(this.selected)}：Z=${s.dz} Y=${s.dy}`;
@@ -5454,6 +5468,7 @@ window.__NBS2SCHEMATIC = {
   get state() { return AppState; },
   get layoutEditor() { return layoutEditor; },
   get refLayoutEditor() { return refLayoutEditor; },
+  get lyricLayoutEditor() { return lyricLayoutEditor; },
   get topPreview() { return topPreview; },
   get frontPreview() { return frontPreview; },
   get sidePreview() { return sidePreview; },

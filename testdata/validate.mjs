@@ -2850,6 +2850,7 @@ try {
 //   + 让位几何（链 +Z 平移：行走行布局 z=0 恒空气、主链最低盒位列 z≥1）+ 主链结构位置
 // L3 零回归：未启用时 0 监听 CB、listener=null、网格尺寸不变（sy/sz 差 2 = 让位 + CB 两层）
 // L4 数据包 zip：listenerEnabled → 2 个 mcfunction 条目（1.21.11 function/ 与 1.19.4 functions/ 双目录名）+ 按布局 geom 的内容
+// L5 轨道 0 非原点（2026-10-08 可拖）：lane0=(0,4) 时监听让位仍保行走行空气、CB/geom 随 zc 平移；未监听无让位
 // 激活格 = 方案 A（用户定）：setblock 红石块于链头输入侧 (−1, yb+1, zc) = t=−1 区域（网格外）；CB 格占用守卫（cellFree）由只写空气格逻辑保证
 {
   const api = context.window.__NBS2SCHEMATIC;
@@ -2979,6 +2980,29 @@ try {
         console.log(`FAIL L4b 未启用 zip：条目=${zipOff.fileCount} 含listener=${txtOff.includes('listener_')}`); ok = false;
       } else console.log('PASS L4b 未启用零回归：zip 仅 pack.mcmeta、无 listener 条目');
     }
+    // L5 轨道 0 非原点（2026-10-08 可拖）：lane0=(0,4)（dz=0、dy=4 → 主链抬高 4 格、zc=0）
+    //   → 监听让位照旧 shift=2（minZc=0）：主链 zc=2；CB 随 yb/zc 平移至 (0,7,3)（默认布局为 (0,3,3)）；
+    //   geom 按实际布局算出（summonDy=−7、summonDz=−2、setblockDy=−2）；行走行（布局 z=0）恒空气
+    const rOn2 = runE2E(tmpFile, { lane0: { dz: 0, dy: 4 }, settings: sOn });
+    const rOff2 = runE2E(tmpFile, { lane0: { dz: 0, dy: 4 }, settings: sOff });
+    const rail2 = rOn2.result.chains.find(c => c.isDefaultRail);
+    const g2 = rOn2.result.geometry, gr2 = rOn2.result.grid;
+    const teStart2 = rOn2.result.tileEntities.find(te => te.Command === `function ${SFX_NAMESPACE}:listener_start`);
+    const geom2 = g2.listener && g2.listener.geom;
+    const walk2Ok = rail2.zc === 2 && rail2.yb === 4
+      && teStart2 && teStart2.x === 0 && teStart2.y === 7 && teStart2.z === 3   // 抬高 4 + 让位 2：CB 网格 (0,7,3)
+      && geom2 && geom2.summonDy === -7 && geom2.summonDz === -2 && geom2.setblockDy === -2
+      && geom2.summonDy + teStart2.y === g2.yOffset
+      && geom2.summonDz + teStart2.z === g2.zOffset
+      && geom2.setblockDy + teStart2.y === rail2.yb + 1 + g2.yOffset
+      && rOff2.result.geometry.listener === null && rOff2.result.chains.find(c => c.isDefaultRail).zc === 0;
+    let walkRow2Ok = true;
+    for (let x = 0; x < gr2.sx; x++) {
+      if (gr2.data[gr2.idx(x, 0, g2.zOffset)] !== 0) { console.log(`FAIL L5 行走行：x=${x} z=${g2.zOffset}（布局 z=0）非空气`); ok = false; walkRow2Ok = false; break; }
+    }
+    if (!(walk2Ok && walkRow2Ok)) {
+      console.log(`FAIL L5 轨道 0 非原点 (0,4)+监听：zc=${rail2 && rail2.zc} yb=${rail2 && rail2.yb} cb=${JSON.stringify(teStart2)} geom=${JSON.stringify(geom2)}`); ok = false;
+    } else console.log('PASS L5 轨道 0 非原点 (0,4)：让位照旧（zc 0→2）、CB 随布局平移 (0,7,3)、geom 自洽（−7/−2/−2）、行走行恒空气；未监听时零让位（zc=0、listener=null）');
   } finally {
     try { rmSync(path.join(__dirname, tmpFile)); } catch {}
   }
