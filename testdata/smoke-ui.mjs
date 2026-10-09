@@ -388,6 +388,8 @@ context.duplicateLane(0);
 const st6 = context.window.__NBS2SCHEMATIC.state;
 check(st6.lanes.length === 6 && st6.lanes[0].tracks.join(',') === st6.lanes[1].tracks.join(','),
   '车道复制：新车道紧邻原车道且音轨相同');
+check(st6.lanes[1].start.dz === -3 && st6.lanes[1].start.dy === 0,
+  `车道复制：起点优先取关于 y 轴对称的镜像位（(3,0) → (−3,0)，实际 ${st6.lanes[1].start.dz},${st6.lanes[1].start.dy}）`);
 await context.generate();
 const dupWf = context.window.__NBS2SCHEMATIC.state.result;
 const lane0Notes = st6.lanes[0].tracks.reduce((s, t) => s + wfx.layers[t].notes.size, 0);
@@ -425,6 +427,16 @@ context.duplicateLane(0);
 check(st7.lanes.length === lenBefore + 1, '车道复制：车道数 +1');
 const starts = st7.lanes.map(l => `${l.start.dz},${l.start.dy}`);
 check(new Set(starts).size === starts.length, `车道复制：新起点与既有起点无重叠（${st7.lanes[1].start.dz},${st7.lanes[1].start.dy}）`);
+check(st7.lanes[1].start.dz === -14 && st7.lanes[1].start.dy === 3,
+  `镜像位优先：卡农复制 (14,3) → (−14,3)（实际 ${st7.lanes[1].start.dz},${st7.lanes[1].start.dy}）`);
+// 镜像位被占 → 回退空位扫描（不落下重叠起点；新车道插在源后一位 index 1）
+st7.lanes[0].start = { dz: 8, dy: 1 };
+st7.lanes.push({ tracks: [], start: { dz: -8, dy: 1 } }); // 预先占住镜像位 (−8,1)
+context.duplicateLane(0);
+const copyStart = st7.lanes[1].start;
+check(copyStart.dz === 11 && copyStart.dy === 1
+  && new Set(st7.lanes.map(l => `${l.start.dz},${l.start.dy}`)).size === st7.lanes.length,
+  `镜像被占 → 回退扫描到空闲位 (11,1)（实际 ${copyStart.dz},${copyStart.dy}，无重叠）`);
 st7.lanes.forEach((l, i) => { l.start = { dz: (i + 1) * 7, dy: i * 3 }; }); // 复位避免重叠报错
 st7.lanes.push({ tracks: [] }); // 空车道：generate 的过滤 lanes 必须与起点逐一对齐
 context.syncLaneStarts();

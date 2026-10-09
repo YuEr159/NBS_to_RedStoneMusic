@@ -3801,13 +3801,15 @@ function unassignedTracks(song, pool, lanes) {
 function duplicateLane(li) {
   const src = AppState.lanes[li];
   if (!src) return false;
-  // 新车道起点不用源起点（会重叠报错）：空位启发——源 Z 右侧每 +3 扫描一格，
-  // 与既有起点重叠则继续，同排扫 40 次（120 格）放不下则抬升一行（dy+1 从 Z=0 重扫）
+  // 新车道起点：优先「关于 y 轴对称」的镜像位（dz 取反、dy 不变）——2026-10-09 用户定案；
+  //   镜像位被占（精确点重叠、含轨道 0/参考车道）则回退空位启发：源 Z 右侧每 +3 扫描一格，
+  //   与既有起点重叠则继续，同排扫 40 次（120 格）放不下则抬升一行（dy+1 从 Z=0 重扫）
   const taken = new Set(AppState.lanes.map(l => (l.start ? l.start.dz + ',' + l.start.dy : '')));
   if (AppState.lane0) taken.add(AppState.lane0.start.dz + ',' + AppState.lane0.start.dy);
   for (const l of AppState.refLanes) if (l.start) taken.add(l.start.dz + ',' + l.start.dy);
   const free = (dz, dy) => !taken.has(dz + ',' + dy);
-  let start = null;
+  const mirror = { dz: src.start ? -src.start.dz : 0, dy: src.start ? src.start.dy : 0 };
+  let start = free(mirror.dz, mirror.dy) ? mirror : null;
   for (let row = 0; row < 2 && !start; row++) {
     const baseDy = row === 0 ? (src.start ? src.start.dy : 0) : (src.start ? src.start.dy : 0) + 1;
     for (let n = 0; n < 40 && !start; n++) {
