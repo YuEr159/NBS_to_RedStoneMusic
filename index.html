@@ -231,8 +231,8 @@ input[type="number"] { width: 70px; }
       <button id="applyPackBtn" hidden>🧩 应用无冲突打包建议</button>
       <button id="assignRestBtn" hidden>＋ 自动并入未分配音轨</button>
       <span class="hint" id="groupCount"></span>
-      <span class="hint">轨道 0（默认）恒生成于池顶：顶层雪块导轨每 32 格 1 个赭黄蛙灯；节奏参考声道的粒子命令方块统一放在轨道 0 主位底座（触发链），起点可在布局编辑器拖拽</span>
-      <span class="hint">把上方音轨池中的音轨拖入车道卡片即分配；同一音轨可重复拖入（占多个音符盒位齐响，更响）；点击已分配标签 ✕ 移除一次</span>
+      <span class="hint">轨道 0（默认）恒生成于池顶：顶层雪块导轨每 32 格 1 赭黄蛙灯；承载粒子命令方块；起点可拖拽</span>
+      <span class="hint">把上方音轨池中的音轨拖入车道卡片即分配；同一音轨可重复拖入齐响加倍；点击已分配标签 ✕ 移除一次</span>
     </div>
     <div id="mergeAdvice" class="merge-advice"></div>
     <div id="groupList"></div>
@@ -269,13 +269,13 @@ input[type="number"] { width: 70px; }
     <div class="toolbar">
       <button id="addRefLaneBtn">＋ 新增参考车道</button>
       <span class="hint" id="refGroupCount"></span>
-      <span class="hint">勾选音轨池的「节奏参考」→ 默认并入第一条参考车道、放不下自动新建；也可把左侧音轨池的音轨直接拖入卡片（拖入即登记为节奏参考并入该车道，允许重复拖入）；参考车道**不生成任何方块**，只作为粒子特效的节奏/音高参考——想让参考声道同时在普通轨道发声 = 勾选其行内「发声」（建一条普通车道）或把音轨拖入「车道池」卡片；每条参考车道可选类型（单线式/MIDI式，作用于该车道全部成员）——单线式粒子锚定本车道虚拟盒位（起点可在上方「普通车道起点布局」窗口直接拖）、MIDI式锚定轨道 0 CB + 本车道起点基准（本分区下方独立窗口可拖，缺省 (0,0)）再按音高偏移；粒子恒产生（与「发声」无关）；想关闭本车道粒子 = 在下方「粒子特效总览」模块取消该车道的「触发型」勾选</span>
+      <span class="hint">勾选音轨池的「节奏参考」→ 默认并入第一条参考车道、放不下自动新建；也可把音轨直接拖入卡片（允许重复拖入）；参考车道不生成任何方块，只作粒子特效的节奏/音高参考——想让参考声道同时在普通轨道发声 = 勾选其行内「发声」或把音轨拖入「车道池」卡片；每条参考车道可选类型（单线式/MIDI式，作用于全部成员）：单线式锚定本车道虚拟盒位、MIDI式锚定轨道 0 CB + 本车道起点再按音高偏移；粒子恒产生；想关闭本车道粒子 = 取消下方「粒子特效总览」的「触发型」勾选</span>
     </div>
     <div id="refLaneList"></div>
     <h3>参考车道起点布局（Y-Z 截面；MIDI 式可拖 = 粒子中心基准，单线式在上方布局窗口拖）</h3>
     <div class="layout-tools">
       <button id="fitRefLayoutBtn">缩放到全部</button>
-      <span class="hint">拖拽移动 MIDI式参考车道（其起点 = 粒子中心基准，缺省 (0,0) = 轨道 0 CB 位置）；单线式参考车道（紫、半透明）显示虚拟盒位几何、在本窗口不可拖（到音轨布局窗口拖）；普通车道（灰）仅作空间参照、不可移动；轨道 0 可拖；参考车道不参与物理碰撞校验（MIDI式中心重叠 = 粒子有意叠放），可与普通车道任意并排</span>
+      <span class="hint">拖拽移动 MIDI式参考车道（起点 = 粒子中心基准，缺省 (0,0) = 轨道 0 CB）；单线式（紫、半透明）显示虚拟盒位、本窗口不可拖（到音轨布局窗口拖）；普通车道（灰）仅空间参照；轨道 0 可拖；参考车道不参与碰撞校验（中心重叠 = 粒子有意叠放）</span>
     </div>
     <canvas id="refLaneCanvas" width="640" height="420"></canvas>
     <div class="layout-info" id="refLayoutInfo"></div>
@@ -376,11 +376,11 @@ input[type="number"] { width: 70px; }
     <div class="setting-row">
       <label>MIDI式参考 · 音高 Z 步长（格/半音）</label>
       <input type="number" id="sfxPitchStep" min="0" max="8" step="0.1" value="1">
-      <span class="hint">MIDI式参考声道：粒子中心 Z 偏移 =（音高 − 12）× 步长；音高 12 居中，默认 1；支持小数（步进 0.1，依赖 particleex 坐标段接受小数）</span>
+      <span class="hint">MIDI式参考声道：粒子中心 Z 偏移 =（音高 − 12）× 步长；音高 12 居中；支持小数步进 0.1</span>
     </div>
     <div class="setting-row">
       <label><input type="checkbox" id="listenerEnabled"> 矿车监听系统</label>
-      <span class="hint">启用后 .litematic 含 2 个命令方块（链头上方 yb+3）+ 数据包 2 function；所有链向 +Z 平移让位（矿车在布局原点 (0,0) 沿主链方向同速行走，不碰撞）；启动 CB 点击后玩家自动坐上矿车（需安装数据包 + 命令方块权限）</span>
+      <span class="hint">启用后 .litematic 含 2 个命令方块 + 数据包 2 function；所有链向 +Z 平移让位（矿车在布局原点沿主链同速行走）；启动 CB 点击后玩家自动坐上矿车（需装数据包 + 命令方块权限）</span>
     </div>
   </section>
 
@@ -4308,7 +4308,7 @@ function renderSfxLaneParams(lane, li) {
   box.appendChild(h1);
   const tip1 = document.createElement('div');
   tip1.className = 'hint';
-  tip1.textContent = '仅影响本车道**绑定行**（MIDI式独立行主命令属声道级，仍用默认命令）。组名（可选，单 token）写入命令组位——仅当尾参以 null 结尾时替换该 token，否则忽略（留空 = 不分组）。追加命令（可选）= 每行一条完整命令（如 conditional 条件粒子），单线式绑定行/MIDI式独立行均生效，逐行跟在主行后。留空任一项 → 按默认命令生成。';
+  tip1.textContent = '仅影响本车道绑定行（MIDI式独立行主命令属声道级，仍用默认命令）。组名（可选，单 token）写入命令组位——仅当尾参以 null 结尾时替换该 token（留空 = 不分组）。追加命令（可选）= 每行一条完整命令，绑定行/独立行均生效，逐行跟在主行后。留空任一项 → 按默认命令生成。';
   box.appendChild(tip1);
   const rowHead = document.createElement('div');
   rowHead.className = 'sfx-pf';
@@ -4427,7 +4427,7 @@ function renderSfxLaneParams(lane, li) {
   box.appendChild(h2);
   const tip2 = document.createElement('div');
   tip2.className = 'hint';
-  tip2.textContent = '仅影响本车道的成员：相邻演奏 tick A→B 画一条线段，笔尖恰好在 B 的触发 tick 抵达 B（无缝衔接）。风格：直线 = 笔尖与链同速；弧线 = 抛物线拱（垂直向上）+ 近 B 端减速（阻力感），端点仍恰抵 B。此处调视觉：粒子、颜色（R G B A 四值 0~1）、m 寿命（每粒子自出生起存活的游戏 tick 数，≥ 2Δt = 到达后整线停留再消融，< 2Δt = 彗星尾）、漂移 α（整线朝 B 漂移速度系数，0 = 静止）、组名（可选，写入命令组位，留空 = null）。弧线参数：弧高比 lift（顶点 = lift × 弦长，0 = 退化为直线）、阻力指数 p（1 = 匀速无阻力，越大近 B 端越慢）——仅弧线风格生效。任一项留空 → 该字段回默认。';
+  tip2.textContent = '仅影响本车道成员：相邻演奏 tick A→B 画一条线段，笔尖恰在 B 的触发 tick 抵达 B。风格：直线 = 笔尖与链同速；弧线 = 抛物线拱 + 近 B 端减速。此处调视觉：粒子、颜色（R G B A 四值 0~1）、m 寿命（≥ 2Δt = 整线停留再消融，< 2Δt = 彗星尾）、漂移 α（0 = 静止）、组名（可选，留空 = null）。弧线参数：弧高比 lift（0 = 退化为直线）、阻力指数 p（越大近 B 端越慢）——仅弧线风格生效。任一项留空 → 回默认。';
   box.appendChild(tip2);
   const conn = normConnectParams(lane.sfxParams ? lane.sfxParams.connect : null) || SFX_CONNECT_DEFAULTS;
   const rowConn = document.createElement('div');
@@ -4504,7 +4504,7 @@ function renderSfxLaneParams(lane, li) {
   box.appendChild(h4);
   const tip4 = document.createElement('div');
   tip4.className = 'hint';
-  tip4.textContent = '需先在勾选表显式开启「消失型」（默认不勾选）。提前量 N：每个演奏 tick 前 N tick 生成 #Cube 条件立方体粒子、恰在该 tick 消亡（寿命自动 = N）；歌曲开头提前量不足时生成钳位到 tick 0、寿命 = t（实际提前量）。任一项留空/非法 → 该字段回默认。';
+  tip4.textContent = '需先在勾选表显式开启「消失型」（默认不勾选）。提前量 N：每个演奏 tick 前 N tick 生成 #Cube 粒子、恰在该 tick 消亡（寿命自动 = N）；歌曲开头不足时钳位到 tick 0（寿命 = t）。任一项留空/非法 → 回默认。';
   box.appendChild(tip4);
   const vanish = normVanishParams(lane.sfxParams ? lane.sfxParams.vanish : null) || SFX_VANISH_DEFAULTS;
   const rowVanish = document.createElement('div');
