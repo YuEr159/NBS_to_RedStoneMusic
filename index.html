@@ -5188,9 +5188,9 @@ class LayoutEditor {
     const pAxZ = this.w2s(0, 0);
     ctx.beginPath(); ctx.moveTo(pAxZ.x, 0); ctx.lineTo(pAxZ.x, H); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(0, pAxZ.y); ctx.lineTo(W, pAxZ.y); ctx.stroke();
-    // 可听范围参考圈（仅 main 窗口）：以原点 (0,0) 为圆心画 12/24/36/48 格半径，
+    // 可听范围参考圈（main/ref 窗口一致，2026-10-09 用户定案）：以原点 (0,0) 为圆心画 12/24/36/48 格半径，
     // 对应音符盒 48 格线性衰减的 75%/50%/25%/0% 音量边界；颜色同坐标轴（#4a5568）、透明度 70%（用户要求）
-    if (this.mode === 'main') {
+    if (this.mode === 'main' || this.mode === 'ref') {
       ctx.lineWidth = 1;
       ctx.setLineDash([4, 4]);
       ctx.strokeStyle = 'rgba(74, 85, 104, 0.7)';
