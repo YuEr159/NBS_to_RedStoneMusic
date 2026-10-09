@@ -2207,8 +2207,9 @@ try {
       //    行落 tick 0/barLen/2·barLen…，sfxBackgroundTicks 支撑轨道 0 CB。
       {
         // BG_CMD 用合法 normal 形态（2026-10-10 并行会话实锤：模组命令树**无 bg 子命令**，
-        //   `particleex bg …` 在游戏内报「未知子命令」；旧 BG_CMD 退化为非法样例仅用于警告断言）
-        const BG_CMD = 'particleex normal minecraft:portal ~ ~0.5 ~ 0.5 0.1 0.1 0 0 0 1 1 1 100 10 null 1.0 null';
+        //   `particleex bg …` 在游戏内报「未知子命令」；旧 BG_CMD 退化为非法样例仅用于警告断言；
+        //   预览引擎全链路验证过（errors=0/spawned=100）——alpha 修正为 1（0 = 透明不可见）
+        const BG_CMD = 'particleex normal minecraft:portal ~ ~0.5 ~ 0.5 0.1 0.1 1 0 0 0 1 1 1 100 10 null 1.0 null';
         const BG_BAD = 'particleex bg minecraft:portal ~ ~0.5 ~ 0.5 0.1 0.1 0 0 0 0 10 0.4 1.0 null';
         const REFIND = new Map([[0, { type: 'independent', sound: true }]]);
         // L1 单元：sfxBarLen 拍号映射 + 非法兜底；sfxNormBackground trim/空/类型
