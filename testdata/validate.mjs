@@ -1468,6 +1468,62 @@ try {
     } else {
       console.log('PASS MIDI式小数步长 2.5：粒子行 (0,2,4)/(0,2,16.5)，命令文本无浮点噪声');
     }
+    // C4) MIDI式超音域外推 + 中心自适应（2026-10-10 用户定案）：
+    //    中心 = 距车道全部音符 key 中位数最近的 F# 系音（F#3/F#4/F#5 → note 0/12/24，平手取较低）。
+    //    本歌曲 keys [20,33,35]（超低音 + F#3 + D3）：中位数 33 → note 0 → 中心 F#3（note 0）——
+    //    低音区车道不再以 F#4 为中心；超低音 key 20 不再夹到 note 0（旧行为 z=−12），按原音高外推
+    //    z = 20−33−0 = −13；生成明细提醒音域外音符（外推显示，与普通轨道「跳过该音」语义不同）
+    const nbsC4 = makeNbs({ tempoTps: 20, songLength: 8, layers: 1, noteSpecs: [
+      { tick: 0, layer: 0, instrument: 0, key: 20 },
+      { tick: 2, layer: 0, instrument: 0, key: 33 },
+      { tick: 4, layer: 0, instrument: 0, key: 35 },
+    ]});
+    const tmpC4 = 'synth_midi_outer.nbs';
+    writeFileSync(path.join(__dirname, tmpC4), nbsC4);
+    const rC4 = runE2E(tmpC4, {
+      lane0: { dz: 0, dy: 0 },
+      refLayers: new Map([[0, { type: 'independent', sound: true }]]),
+      groups: [{ layers: [0] }], groupStarts: [{ dz: 3, dy: 0 }],
+      refLanes: [{ tracks: [0], start: { dz: 0, dy: 0 }, effects: ['trigger'] }],
+    });
+    ok = verifyE2E('参考车道池·MIDI式超音域外推', rC4) && ok;
+    const statC4 = rC4.result.stats;
+    const tlbC4 = rC4.result.sfxTickList;
+    if (statC4.sfxStandaloneNotes !== 3 || tlbC4.length !== 3
+      || JSON.stringify(tlbC4[0].lines) !== JSON.stringify([sfxParticleCmd(0, 0, -13), EXI(0, -13)])
+      || JSON.stringify(tlbC4[1].lines) !== JSON.stringify([sfxParticleCmd(0, 0, 0), EXI(0, 0)])
+      || JSON.stringify(tlbC4[2].lines) !== JSON.stringify([sfxParticleCmd(0, 0, 2), EXI(0, 2)])) {
+      console.log(`FAIL MIDI式超音域外推：行=${JSON.stringify(tlbC4)}（期望 key20→z=−13、key33→0、key35→2，中心 F#3）`); ok = false;
+    } else if (!statC4.discardedDetails.some(d => d.includes('MIDI式参考车道') && d.includes('外推'))
+      || !statC4.discardedDetails.some(d => d.includes('音域外音符') && d.includes('1 个'))) {
+      console.log(`FAIL MIDI式超音域提醒：明细=${JSON.stringify(statC4.discardedDetails)}`); ok = false;
+    } else {
+      console.log('PASS MIDI式超音域外推：key 20 → z=−13（不再夹到边界）、中心取距中位数最近的 F#3、明细提醒 1 个音域外音符');
+    }
+    // C5) 高音区中心贴 F#5（note 24）：keys [55,57,60] → 中位数 57 → note 24 → 中心 F#5；
+    //    超高音 key 60 外推 z = 60−33−24 = +3（旧行为夹到 note 24 时 z=+12）
+    const nbsC5 = makeNbs({ tempoTps: 20, songLength: 8, layers: 1, noteSpecs: [
+      { tick: 0, layer: 0, instrument: 0, key: 55 },
+      { tick: 2, layer: 0, instrument: 0, key: 57 },
+      { tick: 4, layer: 0, instrument: 0, key: 60 },
+    ]});
+    const tmpC5 = 'synth_midi_high.nbs';
+    writeFileSync(path.join(__dirname, tmpC5), nbsC5);
+    const rC5 = runE2E(tmpC5, {
+      lane0: { dz: 0, dy: 0 },
+      refLayers: new Map([[0, { type: 'independent', sound: true }]]),
+      groups: [{ layers: [0] }], groupStarts: [{ dz: 3, dy: 0 }],
+      refLanes: [{ tracks: [0], start: { dz: 0, dy: 0 }, effects: ['trigger'] }],
+    });
+    ok = verifyE2E('参考车道池·MIDI式高音区中心', rC5) && ok;
+    const tlbC5 = rC5.result.sfxTickList;
+    if (JSON.stringify(tlbC5[0].lines) !== JSON.stringify([sfxParticleCmd(0, 0, -2), EXI(0, -2)])
+      || JSON.stringify(tlbC5[1].lines) !== JSON.stringify([sfxParticleCmd(0, 0, 0), EXI(0, 0)])
+      || JSON.stringify(tlbC5[2].lines) !== JSON.stringify([sfxParticleCmd(0, 0, 3), EXI(0, 3)])) {
+      console.log(`FAIL MIDI式高音区中心：行=${JSON.stringify(tlbC5)}（期望 key55→z=−2、key57→0、key60→+3，中心 F#5）`); ok = false;
+    } else {
+      console.log('PASS MIDI式高音区中心贴 F#5：key 57 → z=0，超高音 key 60 外推 z=+3，明细含 1 个音域外音符提醒');
+    }
     // D) 类型选型按参考车道：refLayers 记MIDI式、但参考车道 lane.type='bound' → 绑定语义胜出，
     //    粒子锚定参考车道虚拟槽位（dz=6/dy=1 → (0,2,6)）
     const rD = runE2E(tmpFile, {
