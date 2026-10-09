@@ -190,7 +190,7 @@ input[type="number"] { width: 70px; }
   <div id="content">
   <aside id="sidebar" hidden>
     <div id="sidebar-bar">
-      <button id="sidebarToggle" title="收起音轨池侧栏（收起后在右侧顶部点「▶ 展开音轨池」恢复）">◀</button>
+      <button id="sidebarToggle" title="收起音轨池侧栏（收起后点「▶ 展开音轨池」恢复）">◀</button>
       <span class="sidebar-title">音轨池侧栏</span>
     </div>
     <section id="layer-section" hidden>
@@ -205,7 +205,7 @@ input[type="number"] { width: 70px; }
   </aside>
   <main id="main">
   <div id="main-topbar">
-    <button id="sidebarOpenBtn" title="展开音轨池侧边栏（680px）">▶ 展开音轨池</button>
+    <button id="sidebarOpenBtn" title="展开音轨池侧边栏">▶ 展开音轨池</button>
     <span class="hint">音轨池侧栏已折叠</span>
   </div>
   <section id="file-section">
@@ -389,7 +389,7 @@ input[type="number"] { width: 70px; }
     <div class="toolbar">
       <button class="primary" id="generateBtn">生成 schematic</button>
       <button id="downloadBtn" hidden>下载 .litematic</button>
-      <button id="sfxZipBtn" hidden title="粒子数据包（pack.mcmeta + data/nbs2sfx/…/<tick>.mcfunction + 歌词字库 data/nbs2sfx/lyric/*.png）：放入世界 datapacks 目录后 /reload，配合 .litematic 使用；歌词 PNG 另需部署到 .minecraft/particleImages/lyric/">⬇ 下载粒子数据包 (.zip)</button>
+      <button id="sfxZipBtn" hidden title="粒子数据包：放入世界 datapacks 后 /reload；歌词 PNG 另需部署到 .minecraft/particleImages/lyric/">⬇ 下载粒子数据包 (.zip)</button>
       <button id="debugBtn" hidden>导出 JSON 调试包</button>
       <span class="hint" id="genStatus"></span>
       <div class="gen-progress" id="genProgress" hidden><div id="genProgressFill"></div></div>
@@ -3171,7 +3171,7 @@ function renderLayerList() {
     row.className = 'layer-row';
     row.draggable = true;                    // 可拖到车道池分配
     row.dataset.dragLayer = String(i);
-    row.title = '可拖到右侧车道池或节奏型参考车道池的车道卡片中分配';
+    row.title = '拖到车道卡片中分配';
     row.innerHTML = `
       <label>
         <input type="checkbox" class="layer-check" data-i="${i}" ${AppState.selectedLayers.has(i) ? 'checked' : ''}>
@@ -3179,12 +3179,12 @@ function renderLayerList() {
         <span class="layer-meta">${st.noteCount} 音符 · ${instSummary} · 音量 ${layer.volume}</span>
       </label>
       <span class="layer-ref-group">
-        <label class="layer-ref-cell" title="节奏参考声道：每个音符在轨道 0 触发一次粒子特效（命令方块 + nbs2sfx 数据包）">
+        <label class="layer-ref-cell" title="节奏参考：每个音符在轨道 0 触发一次粒子特效">
           <input type="checkbox" class="layer-ref" data-i="${i}" ${isRef ? 'checked' : ''}>
           <span>节奏参考</span>
         </label>
         ${isRef ? `
-        <label class="layer-sound-cell" title="在普通轨道也发声：勾选 = 在「车道池」放该声道的真实音符盒（普通车道发声）；取消 = 普通轨道无盒，只留参考车道的节奏/音高参考（粒子恒产生）。对所有类型统一">
+        <label class="layer-sound-cell" title="勾选 = 普通轨道放真实音符盒发声；取消 = 普通轨道无盒，仅节奏/音高参考">
           <input type="checkbox" class="layer-sound" data-i="${i}" ${refOn ? 'checked' : ''}>
           <span>发声</span>
         </label>` : ''}
@@ -4080,13 +4080,13 @@ function renderRefLaneSection() {
     const nameSpan = document.createElement('span');
     nameSpan.className = 'lane-name';
     nameSpan.textContent = `参考车道 ${li + 1}`;
-    nameSpan.title = '纯虚拟参考：不生成任何物理结构，可与普通车道任意并排（不参与碰撞校验）；起点 + 3 盒位槽位仅作粒子锚点几何';
+    nameSpan.title = '纯虚拟参考：不生成物理结构；起点 + 3 盒位槽位仅作粒子锚点几何';
     head.appendChild(nameSpan);
     const dupBtn = document.createElement('button');
     dupBtn.className = 'lane-dup ref-lane-dup';
     dupBtn.textContent = '⧉ 复制';
     dupBtn.dataset.li = String(li);
-    dupBtn.title = '复制本参考车道（音轨相同，第二条虚拟参考 = 粒子锚点加倍）';
+    dupBtn.title = '复制参考车道（粒子锚点加倍）';
     head.appendChild(dupBtn);
     const delBtn = document.createElement('button');
     delBtn.className = 'lane-del ref-lane-del';
@@ -4104,7 +4104,7 @@ function renderRefLaneSection() {
     const typeSel = document.createElement('select');
     typeSel.className = 'ref-lane-type';
     typeSel.dataset.li = String(li);
-    typeSel.title = '本参考车道全部成员声道共用的参考类型（选型按车道）：单线式 = 粒子锚定本车道该声道的虚拟盒位（按槽位偏移）；MIDI式 = 粒子锚定轨道 0 CB + 本车道起点基准（下方布局窗口可拖，缺省 (0,0)），Z 再按音高偏移。参考车道恒为虚拟参考，粒子恒产生（与「发声」无关）';
+    typeSel.title = '单线式 = 粒子锚定本车道虚拟盒位槽位；MIDI式 = 粒子锚定轨道 0 CB + 本车道起点（可拖），Z 按音高偏移。粒子恒产生';
     typeSel.innerHTML = `<option value="independent" ${laneType === 'independent' ? 'selected' : ''}>MIDI式</option>
       <option value="bound" ${laneType === 'bound' ? 'selected' : ''}>单线式</option>`;
     typeSel.addEventListener('change', (e) => onRefLaneTypeChange(li, e.target.value));
@@ -4121,9 +4121,9 @@ function renderRefLaneSection() {
       const muted = !sp || sp.sound === false;
       if (muted) {
         tag.classList.add('ref-lane-tag-muted');
-        tag.title = '未勾选「发声」：普通轨道无盒，仅作节奏/音高参考（粒子恒产生）。想同时在普通轨道发声，请在左侧音轨池勾选该声道的「发声」。点击移除本次分配（不影响「节奏参考」勾选状态）';
+        tag.title = '未勾选「发声」：普通轨道无盒，仅作节奏/音高参考；要发声请到音轨池勾选「发声」。点击移除本次分配';
       } else {
-        tag.title = '点击移除本次分配（不影响「节奏参考」勾选状态；如需彻底退出参考，取消音轨池的参考勾选）';
+        tag.title = '点击移除本次分配；彻底退出请到音轨池取消勾选';
       }
       tag.textContent = `#${t} ${song.layers[t] && song.layers[t].name ? song.layers[t].name : '(未命名)'}${muted ? '（静音）' : ''} ✕`;
       tags.appendChild(tag);
@@ -4272,12 +4272,12 @@ function renderSfxEffectLanes() {
       cb.dataset.li = String(li);
       cb.dataset.k = t.key;
       cb.title = t.key === 'trigger'
-        ? '触发型：控制本车道粒子行是否生成（单线式 → 绑定行；MIDI式 → 独立行；空 tick 时 CB 回退雪块）'
+        ? '触发型：是否生成粒子行（单线式绑定行 / MIDI式独立行；空 tick 回退雪块）'
         : t.key === 'connect'
-        ? '连接型：控制本车道成员相邻演奏 tick 之间的线段是否生成（MIDI式按音高中心连线、单线式沿链 X 方向连线）'
+        ? '连接型：相邻演奏 tick 间线段是否生成（MIDI式按音高连线 / 单线式沿链连线）'
         : t.key === 'vanish'
-        ? '消失型（默认不勾选）：每个演奏 tick 前 N tick（车道级提前量，缺省 500）出现 #Cube 粒子、恰在该 tick 消亡（寿命自动计算）'
-        : '背景型：按乐曲小节间隔（拍号×18.125 tick 取整，4/4 → 73）周期性执行车道模板命令（铺底氛围；模板留空不产行）';
+        ? '消失型：演奏 tick 前 N tick（缺省 500）出现 #Cube 粒子，恰在该 tick 消亡'
+        : '背景型：每小节周期性执行车道模板命令（铺底氛围；模板留空不产行）';
       cb.addEventListener('change', onSfxEffectToggle);
       td.appendChild(cb);
       tr.appendChild(td);
@@ -4330,7 +4330,7 @@ function renderSfxLaneParams(lane, li) {
     inC.type = 'text';
     inC.value = p[k];
     inC.placeholder = '如 ~';
-    inC.title = '坐标段占位（构建时整体替换为按车道算出的 ~dx/~dy/~dz）';
+    inC.title = '坐标段占位，构建时替换为按车道算出的 ~dx ~dy ~dz';
     inC.addEventListener('change', (e) => onSfxParamEdit(li, k, e.target.value));
     rowCoord.appendChild(lb); rowCoord.appendChild(inC);
   });
@@ -4343,7 +4343,7 @@ function renderSfxLaneParams(lane, li) {
   inT.type = 'text';
   inT.value = p.tail;
   inT.placeholder = '如 1 0.95 0.89 1 0 0 0 -10 10 … 1.0 null';
-  inT.title = '命令尾参（含单引号表达式等），逐字保留；模组端占位符在此自行解释';
+  inT.title = '命令尾参逐字保留；模组端占位符在此自行解释';
   inT.addEventListener('change', (e) => onSfxParamEdit(li, 'tail', e.target.value));
   rowTail.appendChild(lbT); rowTail.appendChild(inT);
   box.appendChild(rowTail);
@@ -4355,7 +4355,7 @@ function renderSfxLaneParams(lane, li) {
   inG.type = 'text';
   inG.value = (typeof p.group === 'string') ? p.group : '';
   inG.placeholder = 'particleex 组名（如 bg1）';
-  inG.title = '粒子组名（单 token，不含空白）：写入命令组位（仅当尾参末 token 为 null 时替换）。留空 = 不分组（命令组位保持 null）';
+  inG.title = '粒子组名（单 token）：写入命令组位（仅当尾参末 token 为 null 时替换）；留空 = 不分组';
   inG.addEventListener('change', (e) => onSfxParamEdit(li, 'group', e.target.value));
   rowGroup.appendChild(lbG); rowGroup.appendChild(inG);
   box.appendChild(rowGroup);
@@ -4370,7 +4370,7 @@ function renderSfxLaneParams(lane, li) {
   inE.rows = 3;
   inE.value = (typeof (lane.sfxParams && lane.sfxParams.extra) === 'string') ? lane.sfxParams.extra : SFX_EXTRA_DEFAULT_CMD;
   inE.placeholder = '每行一条完整 particleex 命令（如 conditional 条件粒子）；坐标段 ~x ~y ~z 按本车道偏移替换';
-  inE.title = '每行一条完整命令（含单引号表达式，整行原文保留）；单线式绑定行/MIDI式独立行均生效，构建时坐标段（前 3 词后首个 ~ 起 3 个）替换为与本行主命令相同的 ~dx ~dy ~dz；无坐标段的行跳过并告警。缺省 = 内置 conditional 默认命令（下方预填），清空 = 不追加';
+  inE.title = '每行一条完整命令，单线式绑定行/MIDI式独立行均生效；坐标段替换为本车道 ~dx ~dy ~dz；无坐标段的行跳过并告警。留空 = 不追加';
   inE.addEventListener('change', (e) => onSfxExtraEdit(li, e.target.value));
   rowExtra.appendChild(lbE); rowExtra.appendChild(inE);
   box.appendChild(rowExtra);
@@ -4382,7 +4382,6 @@ function renderSfxLaneParams(lane, li) {
   lbP.textContent = '预设模板库';
   const selP = document.createElement('select');
   selP.className = 'sfx-preset-sel';
-  selP.title = '选择预设 → 回填本表单（5 字段 + 组名）';
   const optP0 = document.createElement('option');
   optP0.value = '';
   optP0.textContent = '选择预设…回填本表单';
@@ -4411,7 +4410,7 @@ function renderSfxLaneParams(lane, li) {
   btnPsave.type = 'button';
   btnPsave.className = 'sfx-preset-save';
   btnPsave.textContent = '另存当前';
-  btnPsave.title = '把本表单当前 5 字段 + 组名另存为命名预设（同名覆盖）';
+  btnPsave.title = '另存为命名预设（同名覆盖）';
   btnPsave.addEventListener('click', () => onSfxPresetSave(li, inP.value));
   const btnPdel = document.createElement('button');
   btnPdel.type = 'button';
@@ -4438,7 +4437,7 @@ function renderSfxLaneParams(lane, li) {
   lbStyle.textContent = '风格';
   const inStyle = document.createElement('select');
   inStyle.className = 'sfx-connect-style';
-  inStyle.title = '直线 = tickpolarparameter 线性参数化；弧线 = 抛物线拱（垂直向上）+ 近 B 端减速（阻力感）';
+  inStyle.title = '直线 = tickpolarparameter 线性参数化；弧线 = 抛物线拱 + 近 B 端减速';
   ['line', 'arc'].forEach(v => {
     const o = document.createElement('option');
     o.value = v; o.textContent = v === 'line' ? '直线' : '弧线';
@@ -4454,7 +4453,7 @@ function renderSfxLaneParams(lane, li) {
   inLift.className = 'sfx-connect-field';
   inLift.value = String(conn.lift);
   inLift.placeholder = '0~1，如 0.15';
-  inLift.title = '弧线顶点偏离弦高 = lift × 弦长（0 = 退化为直线，缺省 0.15；仅弧线风格生效）';
+  inLift.title = '弧线顶点偏离弦高 = lift × 弦长（缺省 0.15）';
   inLift.addEventListener('change', (e) => onSfxConnectEdit(li, 'lift', e.target.value));
   const lbArcP = document.createElement('label');
   lbArcP.textContent = '阻力指数 p';
@@ -4463,7 +4462,7 @@ function renderSfxLaneParams(lane, li) {
   inArcP.className = 'sfx-connect-field';
   inArcP.value = String(conn.p);
   inArcP.placeholder = '1~2，如 1.4';
-  inArcP.title = '弧线阻力感强度（1 = 匀速无阻力，越大近 B 端越慢；缺省 1.4；仅弧线风格生效）';
+  inArcP.title = '弧线阻力感（缺省 1.4：1 = 匀速无阻力，越大近 B 端越慢）';
   inArcP.addEventListener('change', (e) => onSfxConnectEdit(li, 'p', e.target.value));
   [lbLift, inLift, lbArcP, inArcP].forEach(n => { n.hidden = (conn.style !== 'arc'); });
   rowConn.appendChild(lbLift); rowConn.appendChild(inLift);
@@ -4471,9 +4470,9 @@ function renderSfxLaneParams(lane, li) {
   const restConn = [
     ['particle', '粒子', 'minecraft:end_rod', '如 minecraft:end_rod / minecraft:heart'],
     ['color', '颜色 R G B A', conn.color, '4 个 0~1 小数，如 1 0.95 0.89 1'],
-    ['m', 'm 寿命 (tick)', String(conn.m), '每粒子自出生起存活的 tick（整数 ≥0；0 = 立即消亡）'],
-    ['alpha', '漂移 α', String(conn.alpha), '整线朝 B 漂移速度系数（≥0；0 = 静止）'],
-    ['group', '组（可选）', (typeof conn.group === 'string') ? conn.group : '', 'particleex 组名（单 token）；留空 = 不分组（命令组位 null）'],
+    ['m', 'm 寿命 (tick)', String(conn.m), '每粒子自出生起存活的 tick 数；0 = 立即消亡'],
+    ['alpha', '漂移 α', String(conn.alpha), '整线朝 B 漂移速度系数；0 = 静止'],
+    ['group', '组（可选）', (typeof conn.group === 'string') ? conn.group : '', 'particleex 组名（单 token）；留空 = 不分组'],
   ];
   restConn.forEach(([k, label, val, ph]) => {
     const lb = document.createElement('label');
@@ -4512,8 +4511,8 @@ function renderSfxLaneParams(lane, li) {
   rowVanish.className = 'sfx-pf-coord';
   [['particle', '粒子', vanish.particle, '如 minecraft:end_rod / minecraft:heart'],
    ['color', '颜色 R G B A', vanish.color, '4 个 0~1 小数，如 1 0.95 0.89 1'],
-   ['ahead', '提前量 N (tick)', String(vanish.ahead), '提前出现的 tick 数（整数 ≥0，默认 500）；寿命自动 = N'],
-   ['group', '组（可选）', (typeof vanish.group === 'string') ? vanish.group : '', 'particleex 组名（单 token）；留空 = 不分组（命令组位 null）'],
+   ['ahead', '提前量 N (tick)', String(vanish.ahead), '提前出现的 tick 数，默认 500；寿命自动 = N'],
+   ['group', '组（可选）', (typeof vanish.group === 'string') ? vanish.group : '', 'particleex 组名（单 token）；留空 = 不分组'],
   ].forEach(([k, label, val, ph]) => {
     const lb = document.createElement('label');
     lb.textContent = label;
@@ -4686,7 +4685,7 @@ function renderLaneSection() {
   const lane0Name = document.createElement('span');
   lane0Name.className = 'lane-name';
   lane0Name.textContent = '轨道 0（默认）';
-  lane0Name.title = '默认轨道：顶层每 32 格 1 个赭黄蛙灯的雪块导轨；承载节奏参考声道的粒子命令方块（触发链，统一在轨道 0 主位底座）；起点可在布局编辑器中拖拽';
+  lane0Name.title = '默认轨道：顶层雪块导轨每 32 格 1 赭黄蛙灯；承载粒子命令方块；起点可拖拽';
   lane0Head.appendChild(lane0Name);
   const lane0Badge = document.createElement('span');
   lane0Badge.className = 'lane-conflict-ok';
@@ -4724,7 +4723,7 @@ function renderLaneSection() {
     dupBtn.className = 'lane-dup';
     dupBtn.textContent = '⧉ 复制';
     dupBtn.dataset.li = String(li);
-    dupBtn.title = '复制本车道（音轨相同，生成第二条独立链 = 齐响加倍）';
+    dupBtn.title = '复制本车道，第二条独立链齐响加倍';
     head.appendChild(dupBtn);
     // 音量还原（2026-10-09）：以车道起点增益为 100 基准，按 velocity 沿 Z 偏移还原音量
     //   （依赖矿车监听；每 tick ≤1 盒；主链自动重定位到本轨音符中位数）
@@ -4736,10 +4735,8 @@ function renderLaneSection() {
     restoreCb.dataset.li = String(li);
     restoreCb.checked = !!lane.volRestore;
     const g0Hint = volRestoreGain(lane.start.dz, lane.start.dy);
-    restoreCb.title = `音量还原：以本车道起点增益（当前起点 ≈ ${Math.round(g0Hint * 100)}%）为 100 基准，`
-      + '每个音符按 velocity 沿 Z 偏移放置（48 格线性衰减反解距离）；'
-      + '主链自动重定位到本轨音符位置的中位数（跨度>30 时中点夹取，100 侧优先）；'
-      + '每 tick 至多 1 个音符盒（和弦保留 velocity 最高），velocity=0 丢弃。依赖「矿车监听」启用。';
+    restoreCb.title = `音量还原：以起点增益（≈ ${Math.round(g0Hint * 100)}%）为 100 基准按 velocity 沿 Z 偏移；`
+      + '主链重定位到音符中位数（跨度>30 夹取保 100 侧）；每 tick ≤1 盒，和弦保留 velocity 最高。需「矿车监听」启用';
     const restoreTxt = document.createElement('span');
     restoreTxt.textContent = ' 音量还原';
     restoreBox.appendChild(restoreCb);
@@ -4838,7 +4835,7 @@ function renderSettings() {
       sndIn.className = 'custom-inst-sound';
       sndIn.dataset.instId = String(instId);
       sndIn.placeholder = '资源包声音 ID（可选，如 minecraft:block.portal.trigger）';
-      sndIn.title = `填了则 #${instId} 的音符盒静音代位（红石粉保导电 + 底座雪块 + 音符盒正上方命令方块直写 playsound），真实音色按 tick 精确触发（需自备资源包）；留空 = 按左侧映射的内置音色播放`;
+      sndIn.title = `填了则 #${instId} 音符盒静音，正上方命令方块按 tick 播放真实音色（需自备资源包）；留空 = 内置音色播放`;
       sndIn.value = AppState.settings.soundIdMap.get(instId) || '';
       selects.appendChild(sndIn);
     });
