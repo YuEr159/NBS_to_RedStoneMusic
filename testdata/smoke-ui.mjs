@@ -332,7 +332,7 @@ function makeNbs({ tempoTps = 10, songLength = 4, noteSpecs = [] }) {
     let prevLayer = -1;
     for (const n of ns) {
       u16(n.layer - prevLayer); prevLayer = n.layer;
-      u8(n.instrument); u8(n.key); u8(100); u8(100); i16(0);
+      u8(n.instrument); u8(n.key); u8(n.velocity ?? 100); u8(100); i16(0);
     }
     u16(0);
   }
@@ -1853,6 +1853,61 @@ check(!infoHtml.includes('小号'), 'v5 歌曲：ID 16 是自定义乐器而非�
   const r1 = st.result.result;
   const cbs2 = r1.tileEntities.filter(te => te.Command && te.Command.startsWith('function nbs2sfx:listener_'));
   check(cbs2.length === 0 && r1.geometry.listener === null, 'L 取消勾选 → 0 监听 CB / listener=null（零回归）');
+}
+
+// ---------- M 音量还原模式（2026-10-09）：每轨 opt-in，依赖矿车监听 ----------
+{
+  const st = context.window.__NBS2SCHEMATIC.state;
+  context.clearError();
+  const mBuf = makeNbs({ tempoTps: 10, songLength: 6, noteSpecs: [
+    { tick: 0, layer: 0, instrument: 0, key: 40, velocity: 100 },
+    { tick: 2, layer: 0, instrument: 0, key: 41, velocity: 80 },
+  ]});
+  context.onSongLoaded(context.parseNBS(new Uint8Array(mBuf)), null);
+  st.lanes = [{ tracks: [0], start: { dz: 6, dy: 0 }, volRestore: true }];
+  st.lane0.start = { dz: 0, dy: 0 };
+  context.window.__NBS2SCHEMATIC.syncLaneStarts();
+  // 车道卡片渲染层断言：音量还原复选框勾选态 + title 含起点增益百分比（volRestoreGain(6,0)≈87%）
+  context.renderLaneSection();
+  const findRestoreCb = (node) => {
+    if (node.className && String(node.className).split(/\s+/).includes('lane-restore')) return node;
+    for (const c of (node.children || [])) { const f = findRestoreCb(c); if (f) return f; }
+    return null;
+  };
+  const restoreCb = findRestoreCb(elements.get('groupList'));
+  check(!!restoreCb && restoreCb.checked === true && restoreCb.title.includes('87%'),
+    `M 车道卡片渲染音量还原复选框（勾选 + title 含起点增益 87%；实际 ${restoreCb && (restoreCb.checked ? '勾选' : '未勾选')}）`);
+  // 未启用监听 → 报错中止（音量还原依赖监听者作增益参照物）
+  await context.generate();
+  const errTxt = elements.get('errors').textContent;
+  check(errTxt.includes('音量还原') && errTxt.includes('矿车监听'), `M 未启用监听：报错提示（${errTxt.slice(0, 36)}…）`);
+  // 启用监听 → 生成：锚点 = 让位后 zc 8（dz6+shift2）、g0=1−√65/48；v100 → 分支末端盒、v80 → 主位盒
+  const cb = elements.get('listenerEnabled');
+  cb.checked = true; cb.dispatch('change', { target: cb });
+  await context.generate();
+  const r = st.result && st.result.result;
+  check(!!r, 'M 启用监听后生成成功');
+  const vr = r && r.geometry.volRestore;
+  check(Array.isArray(vr) && vr.length === 1, `M geometry.volRestore 单条记录（实际 ${vr ? vr.length : vr}）`);
+  if (vr && vr[0]) {
+    check(vr[0].lane === 1 && vr[0].anchorZc === 8 && vr[0].noteCount === 2,
+      `M 锚点=让位后 zc 8、参与音符 2（组索引 ${vr[0].lane} = 音轨车道，组 0 = 轨道 0；anchorZc=${vr[0].anchorZc}）`);
+    check(vr[0].zLine === 16 && Math.abs(vr[0].g0 - 0.8320362969) < 1e-9,
+      `M 主链重定位 zLine=16、g0=${vr[0].g0}（=1−√65/48）`);
+    check(vr[0].clampedTo100 === false && vr[0].truncated === 0, 'M 未截断（跨度 8.02 ≤ 30 且 |dz| ≤ 15）');
+  }
+  check(r && r.stats.volRestoreNotes === 2 && r.stats.noteBlocks === 2 && r.stats.notesDiscarded === 0,
+    `M 两音符均放盒（v100 分支末端 / v80 主位；volRestoreNotes=${r && r.stats.volRestoreNotes}）`);
+  check(r && r.stats.discardedDetails.some(s => s.includes('音量还原启用') && s.includes('主链已重定位')),
+    'M 明细含「音量还原启用…主链已重定位」');
+  // 取消音量还原 → 零回归（geometry.volRestore=null、无计数）
+  st.lanes[0].volRestore = false;
+  context.renderLaneSection();
+  check(findRestoreCb(elements.get('groupList')).checked === false, 'M 取消后卡片复选框回未勾选');
+  await context.generate();
+  const r2 = st.result.result;
+  check(r2.geometry.volRestore === null && r2.stats.volRestoreNotes === 0, 'M 取消音量还原 → geometry.volRestore=null（零回归）');
+  cb.checked = false; cb.dispatch('change', { target: cb }); // 复原监听开关
 }
 
 console.log(`汇总：共 ${passed + failed} 项 — ${passed} PASS / ${failed} FAIL`);

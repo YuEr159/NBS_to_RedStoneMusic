@@ -115,6 +115,8 @@ input[type="number"] { width: 70px; }
 .lane-row .lane-name { font-weight: 700; color: var(--accent); }
 .lane-row .lane-del { background: #4a2530; border-color: #7a4050; padding: 2px 8px; font-size: 12px; }
 .lane-row .lane-dup { background: #2d3a4a; padding: 2px 8px; font-size: 12px; }
+.lane-restore-wrap { display: inline-flex; align-items: center; margin-left: 8px; font-size: 12px; cursor: pointer; color: #cbd5e0; }
+.lane-restore-wrap input { margin: 0 4px 0 0; cursor: pointer; }
 .lane-drop { flex: 1; min-width: 180px; padding: 10px 8px; border: 2px dashed var(--border); border-radius: 6px; text-align: center; color: #7a8ba3; font-size: 12px; }
 .lane-drop.drop-active { border-color: #4caf50; color: #4caf50; background: rgba(76, 175, 80, 0.08); }
 .lane-tag { display: inline-block; background: #2d3a4a; border-radius: 3px; padding: 1px 6px; margin: 1px 2px; font-size: 11px; color: var(--text); cursor: pointer; user-select: none; }
@@ -1501,6 +1503,49 @@ class VoxelGrid {
   get(x, y, z) { return this.inBounds(x, y, z) ? this.data[this.idx(x, y, z)] : 0; }
 }
 
+/* ===== 05a 音量还原纯函数（每轨 opt-in：沿 Z 偏移还原 NBS velocity） ===== */
+// 原理（2026-10-09 用户定案 · 详见 ref/redstone_power.md）：
+//   监听者 = 布局原点 (0,0,0) 行走行的矿车（中心 (x, 0.5, 0)，随主链每 tick 推进，与信号前沿同速）；
+//   盒声源中心 = (x, yb+1.5, z) → 与行走行中心的距离 d = hypot(z, yb+1)（y 无关，只由绝对 z 决定）；
+//   增益 gain(d) = max(0, 1−d/48)（48 格线性衰减，volume 3.0× 默认 16）。
+//   轨道锚点（用户拖的 start dz，监听让位后值）= 100 基准：g0 = gain(zc)；
+//   目标增益 g = g0 × velocity/100 → 反解盒绝对 z（v<100 → +Z 偏移；v>100 → −Z 偏移）。
+// 红石约束（反编译实锤）：主位必须恒为红石粉（粉链只走粉↔粉）；分支纯粉链从主位逐格 −1，
+//   盒在末端只需邻格功率 ≥1 → |dz| ≤ 15；行走行 z=0 恒空气 → 负偏移不得跨过 z=0。
+// volRestoreGain(z, yb)：盒绝对 z → 行走行增益（z=0 = 行走行本身，盒不能放那里，调用方保证 z≥1）
+function volRestoreGain(z, yb) {
+  return Math.max(0, 1 - Math.hypot(z, yb + 1) / 48);
+}
+// volRestoreReqZ(v, zAnchor, yb)：velocity 的目标盒绝对 z（连续值，未量化未截断；v=0 → 0 表意「不发声」）
+//   最近可放位置 z=1（行走行 z=0 恒空气）→ 目标增益超过该点可达增益时（v>100 侧）回 1（只能更响，截断由调用方告警）
+function volRestoreReqZ(v, zAnchor, yb) {
+  const yv = yb + 1;
+  const target = volRestoreGain(zAnchor, yb) * v / 100;
+  const d = 48 * (1 - target);
+  if (d <= yv) return 1;
+  const z = Math.sqrt(d * d - yv * yv);
+  return z < 1 ? 1 : z;
+}
+// volRestoreZLine(vels, zAnchor, yb)：主链（红石线行走区域）重定位——
+//   先算全部音符目标 z 的上下界；跨度 ≤30 → 取中位数；中位数致任一音偏移 >15 → 回退 30 跨度中点
+//   （用户定）；跨度 >30 → 中点并夹取到 [z0−15, z0+15]（z0 = v100 的 z，保 100 一侧，用户定）。
+function volRestoreZLine(vels, zAnchor, yb) {
+  const zs = (vels || []).filter(v => v > 0).map(v => volRestoreReqZ(v, zAnchor, yb));
+  if (zs.length === 0) return zAnchor;
+  zs.sort((a, b) => a - b);
+  const zMin = zs[0], zMax = zs[zs.length - 1], span = zMax - zMin;
+  let zLine;
+  if (span <= 30) {
+    zLine = zs[Math.floor(zs.length / 2)]; // 中位数（偶数个取上中位）
+    if (Math.max(zMax - zLine, zLine - zMin) > 15) zLine = (zMin + zMax) / 2;
+  } else {
+    const z0 = volRestoreReqZ(100, zAnchor, yb);
+    zLine = (zMin + zMax) / 2;
+    zLine = Math.min(z0 + 15, Math.max(z0 - 15, zLine));
+  }
+  return Math.max(zLine, 1);
+}
+
 // 默认轨道 0 的顶层雪块导轨周期：每 32 格替换 1 格为赭黄蛙灯（用户风格；蛙灯与雪块同为不透明满方块，
 //   仅装饰差异，不影响命令方块预留空间的几何）。
 const DEFAULT_RAIL_SPACING = 32;
@@ -1590,6 +1635,10 @@ function buildLayout(song, groups, groupStarts, nTicks, settings, defaultStart, 
       // MIDI式粒子中心基准（用户 2026-09-07 需求 5：参考窗口可拖）= 本车道 start（虚拟起点）；
       //   独立行 = 轨道 0 CB + (0, dy, dz) + (0, 0, 音高×sfxPitchStep)；未拖过的车道 start=(0,0)（v1 存档迁移保证）
       refLaneStart: isRef ? (refLanes[i - (defaultStart ? 1 : 0) - nOrd].start || null) : null,
+      // 音量还原（2026-10-09 用户定案）：音轨车道 opt-in（lane.volRestore），依赖矿车监听；
+      //   预计算段填 anchorZc/g0/zLine/reqZ；参考车道/轨道 0 恒 false
+      volRestore: isRef ? false : (!!(allGroups[i].volRestore) && !(i === 0 && !!defaultStart)),
+      volAnchorZc: null, volG0: null, volZLine: null, volReqZ: null,
     };
   });
   // 参考车道池启用 ⇔ 调用方传了 refLanes（UI 恒传数组；旧调用/测试传 undefined → 旧行为：单线式锚定音轨车道）
@@ -1626,6 +1675,57 @@ function buildLayout(song, groups, groupStarts, nTicks, settings, defaultStart, 
       if (!c.isRefLane) c.zc += shift;
     }
   }
+  // 音量还原预计算（2026-10-09 用户定案 · 每轨 opt-in）：
+  //   依赖矿车监听（未启用 → 报错，由调用方先行校验）；锚点 = 让位后 zc（= 100 基准，g0 定义点）；
+  //   主链重定位到 zLine（中位数/中点回退，见 volRestoreZLine）→ c.zc 就地改写，下游尺寸/放置/监听 geom 全复用；
+  //   分支盒绝对 z ∈ [1, zLine±15]，网格 Z 边界相应扩展（未启用零回归：扩展只由 volRestore 车道贡献）。
+  const stats = {
+    notesPlaced: 0, notesDiscarded: 0, noteBlocks: 0,
+    repeaters: 0, wires: 0,
+    commandBlocks: 0, sfxNotes: 0, playsoundNotes: 0,
+    volRestoreNotes: 0,
+    sfxBoundNotes: 0, sfxStandaloneNotes: 0, sfxConnectLines: 0, sfxVanishNotes: 0, sfxBackgroundNotes: 0,
+    sfxDiscarded: 0, sfxEmptyTicks: 0,
+    lyricSentences: 0, lyricLines: 0, lyricParticles: 0, lyricPngs: 0,
+    discardedDetails: [],
+  };
+  const volRestoreEntries = [];
+  if (listenerActive) {
+    for (const c of chains) {
+      if (!c.volRestore) continue;
+      c.volAnchorZc = c.zc;
+      c.volG0 = volRestoreGain(c.zc, c.yb);
+      const velSet = new Set();
+      for (const li of c.layers) {
+        const spec = refLayers && refLayers.has(li) ? normRef(refLayers.get(li)) : null;
+        if (spec && spec.sound === false) continue; // 不发声音道（参考声道代位）不参与
+        const layer = song.layers && song.layers[li];
+        if (!layer) continue;
+        for (const [tt, n] of layer.notes) if (tt >= 0 && tt < nTicks && n && n.velocity > 0) velSet.add(n.velocity);
+      }
+      const velArr = Array.from(velSet);
+      if (velArr.length === 0) {
+        stats.discardedDetails.push(`组 ${c.groupIndex + 1}：音量还原开启但无有效音符（velocity=0 或全静音），保持起点不重定位`);
+        volRestoreEntries.push({ lane: c.groupIndex, anchorZc: c.zc, zLine: c.zc, g0: c.volG0,
+          truncated: 0, clampedTo100: false, noteCount: 0 });
+        continue;
+      }
+      c.volZLine = volRestoreZLine(velArr, c.zc, c.yb);
+      c.volReqZ = velArr.map(v => volRestoreReqZ(v, c.zc, c.yb)).sort((a, b) => a - b);
+      const z0 = volRestoreReqZ(100, c.zc, c.yb);
+      const zMin = c.volReqZ[0], zMax = c.volReqZ[c.volReqZ.length - 1];
+      c.zc = Math.round(c.volZLine); // 主链重定位到整数 z（zLine 浮点就近取整；末端盒误差 ≤0.5 格，增益误差 <1/48；就地；锚点语义不变）
+      const clamped = !(z0 >= zMin && z0 <= zMax); // z0 在 [zMin,zMax] 外 = 100 侧被截断（偏音告警）
+      volRestoreEntries.push({ lane: c.groupIndex, anchorZc: c.volAnchorZc, zLine: c.zc,
+        g0: c.volG0, truncated: 0, clampedTo100: clamped, noteCount: velArr.length });
+      if (clamped) {
+        stats.discardedDetails.push(`组 ${c.groupIndex + 1}：音量还原跨度 >30，100 基准侧（v=100）被截断到边界，该侧音量偏移`);
+      }
+    }
+    if (volRestoreEntries.length > 0) {
+      stats.discardedDetails.push(`音量还原启用：${volRestoreEntries.length} 条车道主链已重定位（每 tick ≤1 盒；velocity=0 音符丢弃）`);
+    }
+  }
   const realChains = chains.filter(c => !c.isRefLane);
   const zcList = realChains.map(c => c.zc);
   const ybList = realChains.map(c => c.yb);
@@ -1637,22 +1737,18 @@ function buildLayout(song, groups, groupStarts, nTicks, settings, defaultStart, 
   // 默认轨道 0 顶层导轨在 yb+2、音符盒在 yb+1 → 网格 y 最大用到 maxYb+2+yOffset → 总高 +3；
   //   监听启用时启动/跟随 CB 在 yb+3、yb+4（链头正上方两层，避开顶层导轨）→ 再 +2
   const sy = maxYb + yOffset + 3 + (listenerActive ? 2 : 0);
-  // 第 3 音符盒在 zc−1、第 2 音符盒在 zc+1 → 网格 z 用到 [minZc−1, zMax+1]+zOffset
-  //   zOffset = 1−min(0,minZc) 保证下界 ≥0；sz 保证上界 zMax+1+zOffset 在界内
-  const sz = zMax + zOffset + 2;
+  // 网格 Z 上界：第 2 音符盒在 zc+1、音量还原分支盒在 zLine+15 → 取较大者
+  const zHi = Math.max(zMax + 1, ...realChains.map(c => c.volRestore && listenerActive ? c.zc + 15 : c.zc + 1));
+  // 下界（布局 z）：第 3 音符盒在 zc−1；音量还原分支盒在 zLine−15 → 取各链最小，主偏移保证 ≥−(zOffset−1)
+  const zLo = zOffset + Math.min(...realChains.map(c => c.zc - (c.volRestore && listenerActive ? 15 : 1)));
+  // zOffset = 1−min(0,minZc) 保证下界 ≥0（全非负起点 = 1，旧行为）；音量还原下界更低时再加平移
+  const zExtra = Math.max(0, -zLo);
+  const zOff = zOffset + zExtra; // 网格 z 实际偏移（TE/导轨/监听 CB 一律用 zOff）
+  const sz = zHi + zOff + 1;
   const grid = new VoxelGrid(sx, sy, sz);
-  const W = (x, y, z, s) => grid.set(x, y + yOffset, z + zOffset, s);
+  const W = (x, y, z, s) => grid.set(x, y + yOffset, z + zOff, s);
 
   // --- 每 tick 段 ---
-  const stats = {
-    notesPlaced: 0, notesDiscarded: 0, noteBlocks: 0,
-    repeaters: 0, wires: 0,
-    commandBlocks: 0, sfxNotes: 0, playsoundNotes: 0,
-    sfxBoundNotes: 0, sfxStandaloneNotes: 0, sfxConnectLines: 0, sfxVanishNotes: 0, sfxBackgroundNotes: 0,
-    sfxDiscarded: 0, sfxEmptyTicks: 0,
-    lyricSentences: 0, lyricLines: 0, lyricParticles: 0, lyricPngs: 0,
-    discardedDetails: [],
-  };
   // 节奏参考声道双类型（用户批准设计 v2）；类型选型按参考车道（用户 2026-09-04 定）：
   //   单线式 bound：粒子中心 = 所属参考车道的虚拟盒位（参考车道 2026-09-07 起纯虚拟、不生成结构，
   //     偏移按虚拟 (zc,yb) 与轨道 0 的坐标差求解；粒子恒产生，不受 sound 影响）；
@@ -1774,7 +1870,7 @@ function buildLayout(song, groups, groupStarts, nTicks, settings, defaultStart, 
   //   激活下方方块 → 音符 tick 执行）；Command = playsound 裸命令（无斜杠），不经 function 管线。
   //   只写空气格：目标格若被其他结构占用（如极端布局下邻链/参考车道结构），跳过不覆盖（声音缺失优于破坏结构）。
   function placePlaysoundCb(x, y, z, soundId, velocity, key) {
-    const gy = y + yOffset, gz = z + zOffset;
+    const gy = y + yOffset, gz = z + zOff;
     if (!grid.inBounds(x, gy, gz) || grid.data[grid.idx(x, gy, gz)] !== 0) return false;
     grid.set(x, gy, gz, SFX_CB_STATE);
     tileEntities.push({
@@ -1942,6 +2038,116 @@ function buildLayout(song, groups, groupStarts, nTicks, settings, defaultStart, 
         W(xCur, ySig, zc, `minecraft:repeater[facing=west,delay=${repDelay},locked=false,powered=false]`);
         W(xCur, yb, zc, 'minecraft:snow_block');
         stats.repeaters++;
+        if (c.volRestore && listenerActive) {
+          // 音量还原（2026-10-09 用户定案）：每 tick ≤1 盒——
+          //   · 主位（zLine）恒红石粉（粉链只走粉↔粉，ref/redstone_power.md §2）；
+          //   · v=100 → 盒放主位（无分支，增益 = g0 精确）；v≠100 → 纯粉分支沿 Z 到 z=zLine+dz，
+          //     盒在分支末端（邻格功率 ≥1 即触发，同 tick）；分支格被占 → 丢弃该音（声音缺失优于破坏结构）。
+          //   · velocity=0 丢弃；同 tick 多音保留 velocity 最高者。
+          let pick = null;
+          for (const n of notes) {
+            if (n.note.velocity <= 0) {
+              stats.notesDiscarded++;
+              stats.discardedDetails.push(`tick ${t} 组 ${c.groupIndex + 1}：音量还原 velocity=0 音符丢弃`);
+              sfxBoundDiscard(t, n.layerIdx);
+              continue;
+            }
+            if (!pick || n.note.velocity > pick.note.velocity) pick = n;
+            else {
+              stats.notesDiscarded++;
+              stats.discardedDetails.push(`tick ${t} 组 ${c.groupIndex + 1}：音量还原同刻多音，仅保留 velocity 最高者（丢弃 velocity=${n.note.velocity}）`);
+              sfxBoundDiscard(t, n.layerIdx);
+            }
+          }
+          if (!pick) {
+            W(xCur + 1, ySig, zc, 'minecraft:redstone_wire');
+            W(xCur + 1, yb, zc, 'minecraft:snow_block');
+            stats.wires++;
+          } else {
+            const v = pick.note.velocity;
+            const dzRaw = Math.round(volRestoreReqZ(v, c.volAnchorZc, yb) - c.volZLine);
+            // 分支预算 ±15（红石功率 15 反编译实锤）；下端受行走行约束：末端盒 z ≥ 1（z=0 恒空气）
+            const dzEnd = Math.max(1 - zc, Math.min(15, Math.max(-15, dzRaw)));
+            const truncated = dzEnd !== dzRaw;
+            const zEnd = zc + dzEnd;
+            W(xCur + 1, ySig, zc, 'minecraft:redstone_wire');
+            W(xCur + 1, yb, zc, 'minecraft:snow_block');
+            stats.wires++;
+            if (dzEnd === 0) {
+              // v=100 侧：盒放主位，增益恰为 g0（精确 100 表达）；越域 key / playsound 乐器与标准主位同语义
+              const noteVal = noteFromKey(pick.note.key);
+              const mainSound = noteVal >= 0 ? soundIdOf(pick.note.instrument) : null;
+              if (mainSound) {
+                W(xCur + 1, ySig, zc, 'minecraft:redstone_wire');
+                W(xCur + 1, yb, zc, 'minecraft:snow_block');
+                stats.wires++;
+                stats.notesDiscarded++;
+                stats.playsoundNotes++;
+                stats.discardedDetails.push(`tick ${t} 组 ${c.groupIndex + 1}：#ID ${pick.note.instrument} 已配置资源包声音 ${mainSound}，音量还原主位盒代位（静音，playsound 命令方块直写）`);
+                sfxBoundDiscard(t, pick.layerIdx);
+                if (placePlaysoundCb(xCur + 1, yb + 2, zc, mainSound, v, pick.note.key)) stats.commandBlocks++;
+              } else if (noteVal >= 0) {
+                const base = baseBlockFor(pick.note.instrument, customMap);
+                W(xCur + 1, ySig, zc, `minecraft:note_block[instrument=${instrumentNameFor(pick.note.instrument)},note=${noteVal},powered=false]`);
+                W(xCur + 1, yb, zc, base);
+                stats.noteBlocks++; stats.notesPlaced++; stats.volRestoreNotes++;
+                if (truncated) stats.discardedDetails.push(`tick ${t} 组 ${c.groupIndex + 1}：音量还原偏移超 ±15 截断（velocity=${v} 偏音量）`);
+                sfxBoundNoteLine(t, pick.layerIdx, 0);
+              } else {
+                W(xCur + 1, ySig, zc, 'minecraft:redstone_wire');
+                W(xCur + 1, yb, zc, 'minecraft:snow_block');
+                stats.wires++;
+                stats.notesDiscarded++;
+                stats.discardedDetails.push(`tick ${t} 组 ${c.groupIndex + 1}：音量还原主位音高 key=${pick.note.key} 超出音符盒音域 [33,57]，跳过该音（红石粉代位）`);
+                sfxBoundDiscard(t, pick.layerIdx);
+              }
+            } else {
+              // 纯粉分支：主位外沿 Z 到 zEnd（逐格；占用格 → 放弃该音不覆盖）
+              const step = dzEnd > 0 ? 1 : -1;
+              let ok = true;
+              for (let z = zc + step; ok && z !== zEnd + step; z += step) {
+                if (!grid.inBounds(xCur + 1, ySig + yOffset, z + zOff) || grid.data[grid.idx(xCur + 1, ySig + yOffset, z + zOff)] !== 0) ok = false;
+              }
+              if (!ok) {
+                stats.notesDiscarded++;
+                stats.discardedDetails.push(`tick ${t} 组 ${c.groupIndex + 1}：音量还原分支格（z=${zEnd}）被占用，丢弃该音`);
+                sfxBoundDiscard(t, pick.layerIdx);
+              } else {
+                for (let z = zc + step; z !== zEnd + step; z += step) {
+                  W(xCur + 1, ySig, z, 'minecraft:redstone_wire');
+                  stats.wires++;
+                }
+                const noteVal = noteFromKey(pick.note.key);
+                const mainSound = noteVal >= 0 ? soundIdOf(pick.note.instrument) : null;
+                if (mainSound) {
+                  // playsound 代位：分支末端红石粉 + 正上方 CB（与主位代位同机制）
+                  W(xCur + 1, ySig, zEnd, 'minecraft:redstone_wire');
+                  W(xCur + 1, yb, zEnd, 'minecraft:snow_block');
+                  stats.wires++;
+                  stats.notesDiscarded++;
+                  stats.playsoundNotes++;
+                  stats.discardedDetails.push(`tick ${t} 组 ${c.groupIndex + 1}：#ID ${pick.note.instrument} 已配置资源包声音 ${mainSound}，音量还原偏移盒代位（静音，playsound 命令方块直写）`);
+                  sfxBoundDiscard(t, pick.layerIdx);
+                  if (placePlaysoundCb(xCur + 1, yb + 2, zEnd, mainSound, v, pick.note.key)) stats.commandBlocks++;
+                } else if (noteVal >= 0) {
+                  const base = baseBlockFor(pick.note.instrument, customMap);
+                  W(xCur + 1, ySig, zEnd, `minecraft:note_block[instrument=${instrumentNameFor(pick.note.instrument)},note=${noteVal},powered=false]`);
+                  W(xCur + 1, yb, zEnd, base);
+                  stats.noteBlocks++; stats.notesPlaced++; stats.volRestoreNotes++;
+                  if (truncated) stats.discardedDetails.push(`tick ${t} 组 ${c.groupIndex + 1}：音量还原偏移超 ±15 截断（velocity=${v} 偏音量）`);
+                  sfxBoundNoteLine(t, pick.layerIdx, dzEnd);
+                } else {
+                  W(xCur + 1, ySig, zEnd, 'minecraft:redstone_wire');
+                  W(xCur + 1, yb, zEnd, 'minecraft:snow_block');
+                  stats.wires++;
+                  stats.notesDiscarded++;
+                  stats.discardedDetails.push(`tick ${t} 组 ${c.groupIndex + 1}：音量还原偏移位音高 key=${pick.note.key} 超出音符盒音域 [33,57]，跳过该音（红石粉代位）`);
+                  sfxBoundDiscard(t, pick.layerIdx);
+                }
+              }
+            }
+          }
+        } else {
         // 主位（slot 0）：主音符盒 或 红石粉
         const hasMain = slots.some(s => s.slot === 0);
         if (hasMain) {
@@ -1991,12 +2197,12 @@ function buildLayout(song, groups, groupStarts, nTicks, settings, defaultStart, 
           stats.wires++;
           if (isSfxTick) {
             stats.commandBlocks++;
-            // TE 坐标 = 网格坐标（布局 yb/zc 加 yOffset/zOffset；CB 格即 W(x, yb, zc) → 网格 (y+yOffset, z+zOffset)）；
+            // TE 坐标 = 网格坐标（布局 yb/zc 加 yOffset/zOff；CB 格即 W(x, yb, zc) → 网格 (y+yOffset, z+zOff)）；
             // verifyLitematic 会核对所在格方块与 te.state 一致
-            sfxCbs.set(t, { x: xCur + 1, y: yb + yOffset, z: zc + zOffset, teIndex: tileEntities.length });
+            sfxCbs.set(t, { x: xCur + 1, y: yb + yOffset, z: zc + zOff, teIndex: tileEntities.length });
             tileEntities.push({
               id: 'minecraft:command_block',
-              x: xCur + 1, y: yb + yOffset, z: zc + zOffset,
+              x: xCur + 1, y: yb + yOffset, z: zc + zOff,
               Command: `function ${SFX_NAMESPACE}:${t}`,
               auto: false,
               state: SFX_CB_STATE,
@@ -2063,6 +2269,7 @@ function buildLayout(song, groups, groupStarts, nTicks, settings, defaultStart, 
             sfxBoundDiscard(t, s3.layerIdx);
           }
         }
+        } // 音量还原分支（else = 标准三槽路径）
       }
     }
     xCur += cells;
@@ -2243,7 +2450,7 @@ function buildLayout(song, groups, groupStarts, nTicks, settings, defaultStart, 
     const yRail = c.yb + 2 + yOffset; // 网格坐标（W 之外的直接写入同样要加偏移）
     for (let x = 0; x < xMax; x++) {
       const state = x > 0 && x % DEFAULT_RAIL_SPACING === 0 ? DEFAULT_RAIL_LIGHT : 'minecraft:snow_block';
-      const gx = x, gz = c.zc + zOffset;
+      const gx = x, gz = c.zc + zOff;
       if (grid.inBounds(gx, yRail, gz) && grid.data[grid.idx(gx, yRail, gz)] === 0) {
         grid.set(gx, yRail, gz, state);
       }
@@ -2281,7 +2488,7 @@ function buildLayout(song, groups, groupStarts, nTicks, settings, defaultStart, 
   if (settings && settings.listener && settings.listener.enabled) {
     const rail = chains.find(c => c.isDefaultRail);
     if (rail) {
-      const startGy = rail.yb + 3 + yOffset, startGz = rail.zc + zOffset;
+      const startGy = rail.yb + 3 + yOffset, startGz = rail.zc + zOff;
       const followGy = startGy + 1;
       const cellFree = (y, z) => grid.inBounds(0, y, z) && grid.data[grid.idx(0, y, z)] === 0;
       const okStart = cellFree(startGy, startGz);
@@ -2303,15 +2510,15 @@ function buildLayout(song, groups, groupStarts, nTicks, settings, defaultStart, 
         });
       }
       // listenerGeom：function 内 ~ 相对启动 CB 的偏移（随布局 yb/zc 与 yOffset/zOffset 变化，负起点平移后仍正确）：
-      //   summon 目标 = 网格 (0, yOffset, zOffset)（布局原点 (0,0,0) 行走行）
-      //     → summonDy = yOffset − startGy、summonDz = zOffset − startGz；
+      //   summon 目标 = 网格 (0, yOffset, zOff)（布局原点 (0,0,0) 行走行）
+      //     → summonDy = yOffset − startGy、summonDz = zOff − startGz；
       //   setblock 目标 = 链头输入侧 (−1, yb+1, zc) → 相对启动 CB x=−1（命令固定）、setblockDy = −2、z 同列
       listenerInfo = {
         start: { x: 0, y: startGy, z: startGz, placed: okStart },
         follow: { x: 0, y: followGy, z: startGz, placed: okFollow },
         geom: {
           summonDy: yOffset - startGy,
-          summonDz: zOffset - startGz,
+          summonDz: zOff - startGz,
           setblockDy: (rail.yb + 1 + yOffset) - startGy,
         },
       };
@@ -2330,11 +2537,14 @@ function buildLayout(song, groups, groupStarts, nTicks, settings, defaultStart, 
     tileEntities, entities,
     sfxTickList, // [{ tick, lines: [命令行...] }]，与轨道 0 CB 对应；无参考声道时为空数组
     geometry: {
-      xMax, zMax, zOffset, yOffset, // 网格坐标 = 布局坐标 + 偏移（起点可负，整体平移保证非负）
+      xMax, zMax, zOffset: zOff, yOffset, // 网格坐标 = 布局坐标 + 偏移（起点可负，整体平移保证非负）
       // 默认轨道 0（粒子触发链）：顶层导轨所在层与起点
       defaultRail: chains.find(c => c.isDefaultRail) || null,
       defaultRailSpacing: DEFAULT_RAIL_SPACING,
       listener: listenerInfo, // 矿车监听系统 CB 位置（settings.listener.enabled 时非 null）
+      // 音量还原车道几何（2026-10-09；未启用 = null）：anchorZc = 用户 start dz（100 基准）、
+      // zLine = 主链重定位后的实际 zc、g0 = 锚点增益、clampedTo100 = v=100 侧被截断
+      volRestore: volRestoreEntries.length > 0 ? volRestoreEntries : null,
     },
   };
 }
@@ -3102,6 +3312,7 @@ function saveStateNow() {
       lanes: AppState.lanes.map(l => ({
         tracks: [...l.tracks],
         start: l.start ? { dz: l.start.dz, dy: l.start.dy } : null,
+        volRestore: !!l.volRestore, // 音量还原 opt-in（2026-10-09；false = 不写该键保持旧形状）
       })),
       lane0Start: AppState.lane0 ? { dz: AppState.lane0.start.dz, dy: AppState.lane0.start.dy } : null,
       refLanes: AppState.refLanes.map(l => ({
@@ -3218,7 +3429,7 @@ function applySavedState(song, saved) {
     [i, typeof spec === 'object' && spec !== null
       ? { type: spec.type, sound: !!spec.sound }
       : { type: 'independent', sound: !!spec }]));
-  AppState.lanes = saved.lanes.map(l => ({ tracks: [...l.tracks], start: { dz: l.start.dz, dy: l.start.dy } }));
+  AppState.lanes = saved.lanes.map(l => ({ tracks: [...l.tracks], start: { dz: l.start.dz, dy: l.start.dy }, volRestore: !!l.volRestore }));
   if (saved.lane0Start) AppState.lane0 = { start: { dz: saved.lane0Start.dz, dy: saved.lane0Start.dy } };
   AppState.refLanes = (Array.isArray(saved.refLanes) ? saved.refLanes : [])
     .map(l => ({ tracks: [...l.tracks], type: l.type || 'independent',
@@ -4515,6 +4726,25 @@ function renderLaneSection() {
     dupBtn.dataset.li = String(li);
     dupBtn.title = '复制本车道（音轨相同，生成第二条独立链 = 齐响加倍）';
     head.appendChild(dupBtn);
+    // 音量还原（2026-10-09）：以车道起点增益为 100 基准，按 velocity 沿 Z 偏移还原音量
+    //   （依赖矿车监听；每 tick ≤1 盒；主链自动重定位到本轨音符中位数）
+    const restoreBox = document.createElement('label');
+    restoreBox.className = 'lane-restore-wrap';
+    const restoreCb = document.createElement('input');
+    restoreCb.type = 'checkbox';
+    restoreCb.className = 'lane-restore';
+    restoreCb.dataset.li = String(li);
+    restoreCb.checked = !!lane.volRestore;
+    const g0Hint = volRestoreGain(lane.start.dz, lane.start.dy);
+    restoreCb.title = `音量还原：以本车道起点增益（当前起点 ≈ ${Math.round(g0Hint * 100)}%）为 100 基准，`
+      + '每个音符按 velocity 沿 Z 偏移放置（48 格线性衰减反解距离）；'
+      + '主链自动重定位到本轨音符位置的中位数（跨度>30 时中点夹取，100 侧优先）；'
+      + '每 tick 至多 1 个音符盒（和弦保留 velocity 最高），velocity=0 丢弃。依赖「矿车监听」启用。';
+    const restoreTxt = document.createElement('span');
+    restoreTxt.textContent = ' 音量还原';
+    restoreBox.appendChild(restoreCb);
+    restoreBox.appendChild(restoreTxt);
+    head.appendChild(restoreBox);
     // 冲突徽章：本车道合并后的同刻音符分析
     const cst = laneConflictStats(song, lane.tracks);
     const badge = document.createElement('span');
@@ -4972,6 +5202,22 @@ class LayoutEditor {
       ctx.fillText('36', pAxZ.x + 36 * this.zoom + 3, pAxZ.y - 3);
       ctx.fillText('24', pAxZ.x + 24 * this.zoom + 3, pAxZ.y - 3);
       ctx.fillText('12', pAxZ.x + 12 * this.zoom + 3, pAxZ.y - 3);
+      // 俯仰角 ±67.5° 线（2026-10-08 用户实测：盒对玩家俯仰角 >67.5° 时立体声明显减弱）：
+      //   Y–Z 截面上 y = ±tan(67.5°)·z（过原点两条对称线）= 立体声有效区边界；琥珀色区别于灰参考圈
+      const k67 = Math.tan(67.5 * Math.PI / 180); // ≈2.414
+      ctx.lineWidth = 1;
+      ctx.setLineDash([6, 4]);
+      ctx.strokeStyle = 'rgba(230, 126, 34, 0.75)';
+      const T = 60; // 画长（画布自动裁剪）
+      ctx.beginPath(); ctx.moveTo(this.w2s(-T, -T * k67).x, this.w2s(-T, -T * k67).y);
+      ctx.lineTo(this.w2s(T, T * k67).x, this.w2s(T, T * k67).y); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(this.w2s(-T, T * k67).x, this.w2s(-T, T * k67).y);
+      ctx.lineTo(this.w2s(T, -T * k67).x, this.w2s(T, -T * k67).y); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.lineWidth = 2;
+      ctx.fillStyle = 'rgba(230, 126, 34, 0.9)';
+      ctx.font = '11px sans-serif';
+      ctx.fillText('±67.5°', this.w2s(30, 30 * k67).x + 4, this.w2s(30, 30 * k67).y - 4);
     }
     // 轴标签（加大加粗）
     ctx.fillStyle = '#8a94a6';
@@ -5474,6 +5720,7 @@ window.__NBS2SCHEMATIC = {
   get sidePreview() { return sidePreview; },
   parseNBS, computeDelays, noteFromKey, baseBlockFor, instrumentNameFor,
   buildLayout, buildPalette, buildLitematic,
+  volRestoreGain, volRestoreReqZ, volRestoreZLine,
   SFX_NAMESPACE, SFX_PARTICLE_CMD, SFX_CB_STATE, SFX_PACKFORMAT, sfxPackFormat, sfxParticleCmd,
   SFX_PARTICLE_FIELDS, sfxParticleCmdFromParts, sfxParticleCmdWithGroup, normSfxParams, sfxParamsPayload,
   sfxParseCmdCoord, sfxNormExtra, sfxParseExtraCommands, SFX_EXTRA_DEFAULT_CMD,
@@ -5548,6 +5795,15 @@ async function generate() {
   setStage('生成中…', 0, 15, 0);
   await new Promise(r => setTimeout(r, 30)); // 让 UI 刷新
 
+  // 音量还原依赖矿车监听（2026-10-09 用户定）：监听者 = 行走行矿车，未启用时增益基准无参照
+  const listenerOn = !!(AppState.settings && AppState.settings.listener && AppState.settings.listener.enabled);
+  const restoreLanes = lanes.filter(l => l.volRestore);
+  if (restoreLanes.length > 0 && !listenerOn) {
+    showError(`车道 ${restoreLanes.map(l => lanes.indexOf(l) + 1).join('、')} 启用了音量还原，需先在设置中开启「矿车监听系统」（监听者即增益参照物）`);
+    failReset();
+    return;
+  }
+
   try {
     // 防陈旧产物：先清上一次结果（本次失败时下载按钮不得亮着旧字节）
     AppState.result = null;
@@ -5566,8 +5822,10 @@ async function generate() {
     // 负起点时网格整体平移（yOffset/zOffset，见 buildLayout），实际跨度 = max − min（min 可为负），
     // 故按 max−min 预估才能与 buildLayout 的真实包围盒一致（起点为负时跨度更大，只估 max 会绕过 40M 上限）
     const ys = lanes.map(l => l.start.dy), zs = lanes.map(l => l.start.dz);
+    // 音量还原分支盒沿 Z 延伸 ±15（主链重定位后的 zc 上下各 15 格）→ 上下界扩展
+    const zsExt = lanes.flatMap(l => l.volRestore ? [l.start.dz - 15, l.start.dz + 15] : [l.start.dz]);
     const estY = Math.max(...ys, AppState.lane0.start.dy) - Math.min(...ys, AppState.lane0.start.dy, 0) + 3;
-    const estZ = Math.max(...zs, AppState.lane0.start.dz) - Math.min(...zs, AppState.lane0.start.dz, 0) + 5;
+    const estZ = Math.max(...zsExt, AppState.lane0.start.dz) - Math.min(...zsExt, AppState.lane0.start.dz, 0) + 5;
     // 4000 万格：Uint16Array 2 字节/格 ≈ 80MB 网格 + 调色板/位打包/产物 NBT 开销，防止浏览器内存打爆
     if (estX * estY * estZ > 40_000_000) {
       showError(`预估体素 ${estX}×${estY}×${estZ} = ${((estX * estY * estZ) / 1e6).toFixed(0)}M 格，超过 4000 万格上限，请减少音轨或缩短歌曲`);
@@ -5583,7 +5841,7 @@ async function generate() {
       lyricWarnDivs.push(d); // 失败/重试时由 failReset 统一移除
     }
     const result = buildLayout(song,
-      lanes.map(l => ({ layers: l.tracks })), lanes.map(l => l.start),
+      lanes.map(l => ({ layers: l.tracks, volRestore: !!l.volRestore })), lanes.map(l => l.start),
       delays, AppState.settings, AppState.lane0.start,
       refLanes.map(l => ({ tracks: [...l.tracks], type: l.type || 'independent', start: { ...l.start },
         effects: Array.isArray(l.effects) ? [...l.effects] : undefined,
@@ -5968,6 +6226,15 @@ $('groupList').addEventListener('click', (e) => {
   const btn = e.target.closest('.lane-del');
   if (!btn) return;
   deleteLane(parseInt(btn.dataset.li, 10));
+});
+// 音量还原勾选（2026-10-09）：写 lane.volRestore（change 事件：label 内 checkbox 的 click 不经过上面委托）
+$('groupList').addEventListener('change', (e) => {
+  const cb = e.target.closest('.lane-restore');
+  if (!cb) return;
+  const lane = AppState.lanes[parseInt(cb.dataset.li, 10)];
+  if (!lane) return;
+  lane.volRestore = !!cb.checked;
+  scheduleStateSave();
 });
 
 // 参考车道池：新增（空车道，起点默认单行接续）+ 标签✕移除成员 / ⧉复制 / ✕删除
