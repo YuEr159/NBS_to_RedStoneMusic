@@ -2766,33 +2766,36 @@ try {
     ],
   });
   const stats = (a, b) => [{ panSum: a, velSum: 100, cnt: 2 }, { panSum: b, velSum: 80, cnt: 1 }, { panSum: b, velSum: 30, cnt: 1 }, { panSum: b, velSum: 30, cnt: 1 }];
-  // panning 模式：均值降序（交叉乘）l1(100) > l0(0) > l2(−100,k2) > l3(−100,k3) → rank0..3 交替 ±3、±6，大 panning 靠 +Z
+  // panning 模式：均值降序（交叉乘）l1(100) > l0(0) > l2(−100,k2) > l3(−100,k3) → 依序占半径 24 圆上
+  //   r0=(24,0)、r1=(10,22)、r2=(−24,0)、r3=(10,−22)（俯仰 ≥67° 的点贴 66° 边界）
   const st1 = lanePanStats(mkSong(), [{ tracks: [0] }, { tracks: [1] }, { tracks: [2] }, { tracks: [3] }]);
   if (st1[0].panSum !== 0 || st1[0].velSum !== 200 || st1[0].cnt !== 2
     || st1[1].panSum !== 100 || st1[2].panSum !== -100 || st1[3].panSum !== -100) {
     console.log('FAIL P1 lanePanStats 累加', JSON.stringify(st1)); ok = false;
   } else console.log('PASS P1 lanePanStats：pan/vel/cnt 按车道成员层累加（重复层按 slot 逐次计入）');
   const p1 = panPreset('panning', st1, 4, { dz: 0, dy: 0 });
-  if (!(p1[0].dz === -3 && p1[0].dy === 0 && p1[1].dz === 3 && p1[2].dz === 6 && p1[3].dz === -6)) {
-    console.log('FAIL P2 panning 模式期望 l0→−3 l1→+3 l2→+6 l3→−6，实际', JSON.stringify(p1)); ok = false;
-  } else console.log('PASS P2 panning 模式：均值降序（交叉乘）两侧交替、大 panning 靠 +Z（l0→−3、l1→+3、l2→+6、l3→−6）');
+  if (!(p1[0].dz === 10 && p1[0].dy === 22 && p1[1].dz === 24 && p1[1].dy === 0
+    && p1[2].dz === -24 && p1[2].dy === 0 && p1[3].dz === 10 && p1[3].dy === -22)) {
+    console.log('FAIL P2 panning 模式期望 l0→(10,22) l1→(24,0) l2→(−24,0) l3→(10,−22)，实际', JSON.stringify(p1)); ok = false;
+  } else console.log('PASS P2 panning 模式：均值降序（交叉乘）占半径 24 圆（大 panning 靠 +Z 轴；y 轴侧俯仰 67° 内贴边）l0→(10,22)、l1→(24,0)、l2→(−24,0)、l3→(10,−22)');
   // volume 模式：用真实合成 song 的 stats（l0 中心/l1 +100 dist8/l2 l3 −100 dist3）：
-  // l2/l3 dist=3 先后占 slot 3/4（外推）、l1 dist=8、中心 l0 由 + 侧 slot1 起
+  // 非中心序 l2(dist3,k2) < l3(dist3,k3) < l1(dist8)，中心 l0 殿后 → r0..r3 占圆周
   const p2 = panPreset('volume', st1, 4, { dz: 0, dy: 0 });
-  if (!(p2[0].dz === 3 && p2[1].dz === 24 && p2[2].dz === -9 && p2[3].dz === -12)) {
-    console.log('FAIL P3 volume 模式期望 l0→+3 l1→+24 l2→−9 l3→−12，实际', JSON.stringify(p2)); ok = false;
-  } else console.log('PASS P3 volume 模式：响度定距（vel/10）+ 方向定侧 + occupied 外推（l0→+3、l1→+24、l2→−9、l3→−12）');
-  // 全零退化 = 单行预置逐位一致（r%2 交替，与 k 相同）
+  if (!(p2[0].dz === 10 && p2[0].dy === -22 && p2[1].dz === -24 && p2[1].dy === 0
+    && p2[2].dz === 24 && p2[2].dy === 0 && p2[3].dz === 10 && p2[3].dy === 22)) {
+    console.log('FAIL P3 volume 模式期望 l0→(10,−22) l1→(−24,0) l2→(24,0) l3→(10,22)，实际', JSON.stringify(p2)); ok = false;
+  } else console.log('PASS P3 volume 模式：方向+响度排序占半径 24 圆（l2→(24,0)、l3→(10,22)、l1→(−24,0)、l0→(10,−22)）');
+  // 全零退化：全平手按 k 升 → r0..r3 依序占圆周
   const p3 = panPreset('panning', stats(0, 0), 4, { dz: 0, dy: 0 });
-  const pLine = [0, 1, 2, 3].map(k => ({ dz: (k % 2 === 0 ? 1 : -1) * 3 * (Math.floor(k / 2) + 1), dy: 0 }));
-  if (JSON.stringify(p3) !== JSON.stringify(pLine)) {
-    console.log('FAIL P4 全零退化 ≠ 单行', JSON.stringify(p3), JSON.stringify(pLine)); ok = false;
-  } else console.log('PASS P4 全零 panning 退化 = 单行预置逐位一致');
+  const pRing = [[24, 0], [10, 22], [-24, 0], [10, -22]].map(([dz, dy]) => ({ dz, dy }));
+  if (JSON.stringify(p3) !== JSON.stringify(pRing)) {
+    console.log('FAIL P4 全零退化 ≠ 24 圆依序', JSON.stringify(p3), JSON.stringify(pRing)); ok = false;
+  } else console.log('PASS P4 全零 panning 退化 = 半径 24 圆按 k 依序（r0..r3）');
   // 交叉乘平手：0.5/1 与 1/2 均值均为 0.5 → 按 k 升定序
   const p4 = panPreset('panning', [{ panSum: 0, velSum: 0, cnt: 1 }, { panSum: 1, velSum: 0, cnt: 2 }], 2, { dz: 0, dy: 0 });
-  if (!(p4[1].dz === 3 && p4[0].dz === -3)) {
+  if (!(p4[0].dz === -24 && p4[0].dy === 0 && p4[1].dz === 24 && p4[1].dy === 0)) {
     console.log('FAIL P5 平手按 k 升序，实际', JSON.stringify(p4)); ok = false;
-  } else console.log('PASS P5 交叉乘平手（均值相等）按 k 升定序');
+  } else console.log('PASS P5 交叉乘平手（均值相等）按 k 升定序（k1 先占 (24,0)、k0 占 (−24,0)）');
   // buildLayout 第 10 参 progress：产物与不传一致 + fraction 单调递增且末值 1
   const delays = computeDelays(20, 5);
   const sP = { buttonType: 'minecraft:oak_button', customInstrumentMap: new Map() };

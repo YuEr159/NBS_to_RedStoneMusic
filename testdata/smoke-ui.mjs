@@ -1773,13 +1773,16 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
     const modeSel = context.document.getElementById('panPresetMode');
     modeSel.value = 'panning';
     elements.get('presetPanBtn').dispatch('click', {});
-    check(st2.lanes[0].start.dz === 3 && st2.lanes[0].start.dy === 0
-      && st2.lanes[1].start.dz === 6 && st2.lanes[2].start.dz === -3,
-      '预置声像·panning：均值降序（90>50>−100）两侧交替、大 panning 靠 +Z → (3,0)/(6,0)/(−3,0)');
+    check(st2.lanes[0].start.dz === 24 && st2.lanes[0].start.dy === 0
+      && st2.lanes[1].start.dz === -12 && st2.lanes[1].start.dy === -21
+      && st2.lanes[2].start.dz === -12 && st2.lanes[2].start.dy === 21,
+      '预置声像·panning：均值降序（90>50>−100）占半径 24 圆 → (24,0)/(−12,−21)/(−12,21)');
     modeSel.value = 'volume';
     elements.get('presetPanBtn').dispatch('click', {});
-    check(st2.lanes[0].start.dz === 3 && st2.lanes[1].start.dz === -9 && st2.lanes[2].start.dz === 6,
-      '预置声像·volume：响度定距+方向定侧+occupied 外推（lane2 的 slot1 被 lane0 占 → 外推 slot2）→ (3,0)/(−9,0)/(6,0)');
+    check(st2.lanes[0].start.dz === 24 && st2.lanes[0].start.dy === 0
+      && st2.lanes[1].start.dz === -12 && st2.lanes[1].start.dy === -21
+      && st2.lanes[2].start.dz === -12 && st2.lanes[2].start.dy === 21,
+      '预置声像·volume：方向+响度排序占半径 24 圆 → (24,0)/(−12,−21)/(−12,21)');
     check(st2.refLanes[0].start.dz === 7 && st2.refLanes[0].start.dy === 2,
       '预置声像：参考车道保持不动 (7,2)（预置只重排普通车道）');
     st2.song = origSong; // 还原

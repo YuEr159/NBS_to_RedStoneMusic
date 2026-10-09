@@ -6415,10 +6415,14 @@ function lanePanStats(song, lanes) {
 }
 function panPreset(mode, stats, nLanes, c0) {
   const pos = new Array(nLanes);
+  // 2026-10-09 用户定案：轨道优先放距中心 ≈24 格（半径 24 圆周，圆心 = 轨道 0 起点 c0；
+  //   取整近似距离），且优先在俯仰角 <67° 的位置（10-08 实测 >67.5° 立体声减弱——
+  //   圆上靠近 y 轴的点俯仰角 ≥67°，贴到 66° 边界避免取整后越界）。
+  // 该圆内无「中心/定距」语义：排序只决定谁占哪个角度（大 panning 靠 +Z 轴 = r0 的 (24,0)）。
+  let order;
   if (mode === 'volume') {
-    // 音量模式：side = sign(panSum)（0 = 中心车道），dist = max(1, round(velAvg/10))（响 = 远）；
-    // 放置序 = 非中心按 (dist 升、|panAvg| 降【交叉乘】、k 升)，随后中心按 k 升；
-    // 槽位被占（occupied 含中心 dz）则同向外推，互异槽位 ⇒ 间距恰 3（不触「起点过近」警告）
+    // 音量模式：side = sign(panSum)（0 = 中心车道）、dist = max(1, round(velAvg/10))（响 = 优先）；
+    // 放置序 = 非中心按 (dist 升、|panAvg| 降【交叉乘】、k 升)，随后中心按 k 升
     const items = stats.map((s, k) => ({
       k,
       side: s.panSum > 0 ? 1 : (s.panSum < 0 ? -1 : 0),
@@ -6430,25 +6434,22 @@ function panPreset(mode, stats, nLanes, c0) {
       || (Math.abs(b.s.panSum) * a.s.cnt - Math.abs(a.s.panSum) * b.s.cnt)
       || (a.k - b.k));
     const center = items.filter(x => x.side === 0).sort((a, b) => a.k - b.k);
-    const occupied = new Set([c0.dz]);
-    const put = (k, side, startSlot) => {
-      let slot = startSlot;
-      while (occupied.has(c0.dz + side * 3 * slot)) slot++;
-      occupied.add(c0.dz + side * 3 * slot);
-      pos[k] = { dz: c0.dz + side * 3 * slot, dy: c0.dy };
-    };
-    for (const x of nonCenter) put(x.k, x.side, x.dist);
-    center.forEach((x, i) => put(x.k, altSlot(i).side, altSlot(i).slot));
+    order = nonCenter.map(x => x.k).concat(center.map(x => x.k));
   } else {
-    // panning 模式：均值降序（整数交叉乘 panB·cntA vs panA·cntB，禁浮点均值比较；平手 k 升），
-    // 大 panning 靠 +Z 两侧交替；全 0 时平手按 k ⇒ 与单行逐位一致
-    const order = stats.map((s, k) => k).sort((a, b) =>
+    // panning 模式：均值降序（整数交叉乘 panB·cntA vs panA·cntB，禁浮点均值比较；平手 k 升）。
+    // 全 0 时平手按 k ⇒ 与 k 序逐一对应（角度退化为 k 序）
+    order = stats.map((s, k) => k).sort((a, b) =>
       (stats[b].panSum * stats[a].cnt - stats[a].panSum * stats[b].cnt)
       || (a - b));
-    order.forEach((k, r) => {
-      const { side, slot } = altSlot(r);
-      pos[k] = { dz: c0.dz + side * 3 * slot, dy: c0.dy };
-    });
+  }
+  for (let r = 0; r < nLanes; r++) {
+    const th = (2 * Math.PI * r) / nLanes;
+    let deg = th * 180 / Math.PI;
+    if (deg > 180) deg -= 360; // 归一到 (−180,180]
+    const beta = Math.abs(deg) > 90 ? 180 - Math.abs(deg) : Math.abs(deg); // 俯仰角（0..90）
+    if (beta >= 67) deg = Math.sign(deg) * 66; // 贴到 66° 边界（66+取整误差仍 <67）
+    const rd = deg * Math.PI / 180;
+    pos[order[r]] = { dz: c0.dz + Math.round(24 * Math.cos(rd)), dy: c0.dy + Math.round(24 * Math.sin(rd)) };
   }
   return pos;
 }
