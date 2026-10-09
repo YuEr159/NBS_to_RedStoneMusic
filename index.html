@@ -6414,7 +6414,8 @@ function lanePanStats(song, lanes) {
 }
 function panPreset(mode, stats, nLanes, c0) {
   const pos = new Array(nLanes);
-  // 2026-10-09 用户定案：轨道优先放距中心 ≈24 格（半径 24 圆周，圆心 = 轨道 0 起点 c0；
+  // 2026-10-09 用户定案：轨道优先放距中心 ≈24 格（半径 24 圆周，圆心 = 坐标轴原点 (0,0)
+  //   2026-10-10 用户定案修正——声像距离/俯仰语义相对听者（原点），非轨道 0 起点；
   //   取整近似距离），且优先在俯仰角 <67° 的位置（10-08 实测 >67.5° 立体声减弱——
   //   圆上靠近 y 轴的点俯仰角 ≥67°，贴到 66° 边界避免取整后越界）。
   // 该圆内无「中心/定距」语义：排序只决定谁占哪个角度（大 panning 靠 +Z 轴 = r0 的 (24,0)）。
@@ -6496,7 +6497,9 @@ $('presetPanBtn').addEventListener('click', () => {
   if (!song || !song.layers) return;
   const mode = $('panPresetMode').value === 'volume' ? 'volume' : 'panning';
   const stats = lanePanStats(song, AppState.lanes);
-  const pos = panPreset(mode, stats, AppState.lanes.length, (AppState.lane0 && AppState.lane0.start) || { dz: 0, dy: 0 });
+  // 圆心 = 坐标轴原点 (0,0)（2026-10-10 用户定案：声像的距离/俯仰语义相对听者（原点），
+  //   与参考圈、±67.5° 线同心；轨道 0 起点可被拖走，不作为圆心）
+  const pos = panPreset(mode, stats, AppState.lanes.length, { dz: 0, dy: 0 });
   presetAllLanes((c0, k) => pos[k]);
 });
 $('presetLineBtn').addEventListener('click', () => {

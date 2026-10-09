@@ -1785,6 +1785,13 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
       '预置声像·volume：方向+响度排序占半径 24 圆 → (24,0)/(−12,−21)/(−12,21)');
     check(st2.refLanes[0].start.dz === 7 && st2.refLanes[0].start.dy === 2,
       '预置声像：参考车道保持不动 (7,2)（预置只重排普通车道）');
+    // 圆心 = 坐标轴原点（2026-10-10 用户定案）：轨道 0 起点非原点时声像仍以 (0,0) 为圆心
+    st2.lane0.start = { dz: 2, dy: 3 };
+    modeSel.value = 'panning';
+    elements.get('presetPanBtn').dispatch('click', {});
+    check(st2.lanes[0].start.dz === 24 && st2.lanes[0].start.dy === 0,
+      '预置声像：圆心恒为坐标轴原点 (0,0)（轨道 0 起点 (2,3) 不参与）');
+    st2.lane0.start = { dz: 0, dy: 0 }; // 还原
     st2.song = origSong; // 还原
   }
   // 4d) 预置：圆环（2026-10-07，48 格可听范围参考）：4 条车道半径 16 → 十字形 (±16,0)/(0,±16)
