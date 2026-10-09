@@ -936,7 +936,7 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
     const anchor = { dx: 0, dy: laneV.start.dy + 1, dz: laneV.start.dz };
     const vLines = [];
     for (const e of resV.sfxTickList) for (const l of e.lines) if (l.startsWith('particleex conditional ')) vLines.push(l);
-    check(vLines.length > 0 && vLines.every(l => /^particleex conditional minecraft:end_rod ~0 ~\d+ ~-?\d+ 1 0\.95 0\.89 1 0 0 0 0\.5 0\.5 0\.5 '\(abs\(y\)==0\.5.*' 0\.1 \d+ 'vy=0\.05' 1\.0 null$/.test(l)),
+    check(vLines.length > 0 && vLines.every(l => /^particleex conditional minecraft:end_rod ~0 ~\d+ ~-?\d+ 1 0\.95 0\.89 1 0 0 0 0\.5 0\.5 0\.5 '\(abs\(y\)==0\.5.*' 0\.1 \d+ 'vy=0\.05' 1\.0 (null|nbs2sfx_vanish_\d+)$/.test(l)),
       `消失型行 = #Cube 原型（坐标段 ~0 ~${anchor.dy} ~${anchor.dz} 锚点、寿命字段为数字、几何逐字）`);
     check(vLines.some(l => l.includes(`~${anchor.dy} ~${anchor.dz} `)),
       `消失型行锚点 = 车道虚拟主位 (0,${anchor.dy},${anchor.dz})`);
@@ -1100,8 +1100,8 @@ check(st8.lanes.length === Math.ceil(nLayers / 3) && st8.lanes[0].tracks.join(',
     const resG2 = st.result.result;
     const vG = resG2.sfxTickList.flatMap(e => e.lines).filter(l => l.startsWith('particleex conditional '));
     const cG = resG2.sfxTickList.flatMap(e => e.lines).filter(l => l.startsWith('particleex tickpolarparameter '));
-    check(vG.length > 0 && vG.every(l => /\s+vg9$/.test(l)),
-      `消失行组位 = vg9（实际 ${vG.length} 行）`);
+    check(vG.length > 0 && vG.every(l => /\s+vg9\|nbs2sfx_vanish_\d+$/.test(l)),
+      `消失行组位 = vg9|保险组（实际 ${vG.length} 行）`);
     check(cG.length > 0 && cG.every(l => /\s+cg9$/.test(l)),
       `连接线组位 = cg9（实际 ${cG.length} 行）`);
     // ① 绑定行组位 = g1（lane.sfxParams 含完整 5 字段默认模板 + group → 组位替换）

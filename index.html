@@ -1087,7 +1087,8 @@ function normConnectParams(p) {
 // ===== ④ 消失型（2026-09-07e 用户定规格：演奏 tick 前 N tick 提前出现，恰在演奏 tick 消亡）=====
 // 机制（用户 07e 定「自动计算粒子寿命，正好卡上对应 tick 就消失」）：每个参考音符在 t−N tick 生成一行
 //   粒子命令（conditional 立方体 #Cube 原型），**寿命字段 = N 自动计算**（构建时替换原型尾参里的寿命值）
-//   → 粒子常驻 t−N→t 区间、恰在 t tick 消亡（与音符激活同 tick，无分组/无 remove 命令）。
+//   → 粒子常驻 t−N→t 区间、恰在 t tick 消亡（与音符激活同 tick）；演奏 tick 有保险 remove
+//     （2026-10-10：组位并入 nbs2sfx_vanish_<t>，function 里 group remove 兜底清除，见生成段）。
 //   钳位：t−N < 0（歌曲开头提前量不足）→ 生成落 tick 0、寿命 = t（实际提前量）。
 // 位置（与触发型同锚点）：单线式 = 所属参考车道虚拟主位（中间槽位）；MIDI式 = 车道 start 基准（可拖，缺省 (0,0)）。
 // 用户可调（车道级 lane.sfxParams.vanish，缺省 = SFX_VANISH_DEFAULTS）：
@@ -1105,14 +1106,22 @@ const SFX_VANISH_PROTO = [
   '0.1', '20', "'vy=0.05'", '1.0', 'null',
 ];
 // 车道级消失型命令：坐标段 = ~dx ~dy ~dz（按锚点求解），寿命 = 实际 N（钳位后），
-//   组位（数组索引 13）= v.group（缺省/未填 = 'null'）
-const sfxVanishCmd = (dx, dy, dz, N, v) => {
+//   组位（数组索引 13）= v.group（缺省/未填 = 'null'）；t（可选，2026-10-10 保险组）非缺省时
+//   并入专用保险组 `nbs2sfx_vanish_<t>`（组位按 | 分拆注册/移除，模组 GroupUtil 源码实锤）——
+//   演奏 tick t 的 function 发 `particleex group remove nbs2sfx_vanish_<t>` 兜底清除：age 正常时
+//   粒子已自灭（no-op），异常残留时保险生效；用户组与保险组并存不冲突
+const sfxVanishCmd = (dx, dy, dz, N, v, t) => {
   const p = (v && v.particle) ? v.particle : SFX_VANISH_DEFAULTS.particle;
   const color = (v && v.color) ? v.color : SFX_VANISH_DEFAULTS.color;
   const a = SFX_VANISH_PROTO.slice();
   a[1] = p; a[2] = `~${dx}`; a[3] = `~${dy}`; a[4] = `~${dz}`;
   a[5] = color; a[10] = String(N);   // age 字段（原型第 11 元素 '20'），寿命 = 实际 N
-  a[13] = (v && v.group) ? v.group : 'null';   // 组位（2026-09-10 开放为车道级可选组名）
+  if (t !== undefined) {
+    const ins = `nbs2sfx_vanish_${t}`;
+    a[13] = (v && v.group) ? `${v.group}|${ins}` : ins;
+  } else {
+    a[13] = (v && v.group) ? v.group : 'null';   // 组位（2026-09-10 开放为车道级可选组名）
+  }
   return a.join(' ');
 };
 // 归一化车道级消失型模板：3 字段全合法才返回完整对象，否则 undefined（= 缺省默认）。
@@ -1920,13 +1929,40 @@ function buildLayout(song, groups, groupStarts, nTicks, settings, defaultStart, 
     }
     stats.sfxStandaloneNotes++;
   }
+  // MIDI式参考车道：音高展开中心 = 距该车道全部音符 key 中位数最近的 F# 系音（F#3/F#4/F#5 → note 0/12/24，
+  //   2026-10-10 用户定案；平手取较低）；同段统计音域外音符 → 生成明细提醒（粒子按原音高外推显示，
+  //   与普通轨道「跳过该音」不同——参考粒子无物理盒，位置不受音符盒可发声音域约束）
+  //   构建于消失型段之前（消失型 MIDI式锚点同源引用，本会话 2026-10-10 上移）
+  const sfxLaneCenter = new Map(); // chain 下标 → center note（0/12/24）
+  for (const [ci, ev] of sfxLaneEvents) {
+    const lane = chains[ci];
+    if (!lane || !lane.isRefLane || lane.refLaneType !== 'independent') continue;
+    const keys = [...ev.values()].flat();
+    const ks = keys.slice().sort((a, b) => a - b);
+    const med = ks.length ? (ks[(ks.length - 1) >> 1] + ks[ks.length >> 1]) / 2 : 33;
+    const nm = med - 33;
+    let center = 0;
+    if (Math.abs(nm - 12) < Math.abs(nm - center)) center = 12;
+    if (Math.abs(nm - 24) < Math.abs(nm - center)) center = 24;
+    sfxLaneCenter.set(ci, center);
+    const nOut = keys.filter(k => k < 33 || k > 57).length;
+    if (nOut > 0) {
+      stats.discardedDetails.push(`MIDI式参考车道 ${chains.indexOf(lane) - (defaultStart ? 1 : 0) - nOrd + 1} 含 ${nOut} 个音域外音符（key<33 或 >57）：粒子行按原音高外推显示（超出音符盒可发声音域）`);
+    }
+  }
   // --- ④ 消失型（2026-09-07e 用户定规格：演奏 tick 前 N tick 提前出现、恰在演奏 tick 消亡） ---
   // 每个参考音符在 t−N tick 产 1 行（寿命 = N，构建替换原型 age 字段「索引 10 的 '20'」）；钳位 t−N<0 → 生成 tick 0、寿命 = t。
   //   门控：车道 effects 显式含 'vanish'（**默认不勾选**，opt-in——旧存档/未勾选车道产物逐位不变）；
-  //   锚点：bound = 车道虚拟主位（同触发主位）/ independent = 车道 start（可拖基准，缺省 (0,0)）。
+  //   锚点：bound = 车道虚拟主位（同触发主位）/ independent = 车道 start（可拖基准，缺省 (0,0)）；
+  //   MIDI式逐音符按音高外推展开（2026-10-10 用户定案：与连接线/独立行同源 sfxLaneCenter，锚点 dz
+  //   += (key−33−center)×sfxPitchStep——各音高的框铺开在音高轴上，不再全叠在 start 一点；bound 无音高展开）。
   //   生成行落 t−N 自持 function/CB：t−N 一般无参考音符 → 用 sfxVanishTicks 支撑轨道 0 CB（见放置循环）；
   //   生成行已进 sfxTickLines → 空 tick 回退天然不触（该 tick 有行）。
+  //   保险 remove（2026-10-10 用户定案）：生成行组位并入 `nbs2sfx_vanish_<t>` 保险组，演奏 tick t 的
+  //   function 追加 `particleex group remove nbs2sfx_vanish_<t>` 兜底清除（age 正常时粒子已自灭 = no-op；
+  //   异常残留时保险生效）——演奏 tick 恒有行 → 不再空 tick 回退。
   const sfxVanishTicks = new Set();
+  const sfxVanishRemove = new Set();  // 演奏 tick（该批保险组 remove 行已挂）
   if (railChain) {
     for (const [ci, tickMap] of sfxLaneEvents) {
       const lane = chains[ci];
@@ -1936,16 +1972,27 @@ function buildLayout(song, groups, groupStarts, nTicks, settings, defaultStart, 
       const vp = lane.refLaneVanish || SFX_VANISH_DEFAULTS;
       const N = vp.ahead;
       const isBound = lane.refLaneType === 'bound';
-      const anchor = isBound ? [0, (lane.yb + 1) - railChain.yb, lane.zc - railChain.zc]
-                             : [0, (lane.refLaneStart ? lane.refLaneStart.dy : 0), (lane.refLaneStart ? lane.refLaneStart.dz : 0)];
+      const center = sfxLaneCenter.get(ci) ?? 12;   // MIDI式音高展开中心（F# 系，见 sfxLaneCenter 构建段）
+      const base = isBound ? [0, (lane.yb + 1) - railChain.yb, lane.zc - railChain.zc]
+                           : [0, (lane.refLaneStart ? lane.refLaneStart.dy : 0), (lane.refLaneStart ? lane.refLaneStart.dz : 0)];
       for (const t of [...tickMap.keys()].sort((a, b) => a - b)) {
-        const gT = Math.max(0, t - N);
-        const life = t - gT;    // 钳位后的实际寿命（= 实际提前量）
-        if (life <= 0) continue; // t=0 → 无提前量，跳过（无 t−N 可生成）
-        sfxVanishTicks.add(gT);
-        if (!sfxTickLines.has(gT)) sfxTickLines.set(gT, []);
-        sfxTickLines.get(gT).push(sfxVanishCmd(anchor[0], anchor[1], anchor[2], life, vp));
-        stats.sfxVanishNotes++;
+        let made = false;
+        for (const key of tickMap.get(t)) {   // 逐音符（和弦同 tick 多 key → 多框按音高铺开）
+          const gT = Math.max(0, t - N);
+          const life = t - gT;    // 钳位后的实际寿命（= 实际提前量）
+          if (life <= 0) continue; // t=0 → 无提前量，跳过（无 t−N 可生成）
+          sfxVanishTicks.add(gT);
+          if (!sfxTickLines.has(gT)) sfxTickLines.set(gT, []);
+          const dz = isBound ? base[2] : base[2] + (key - 33 - center) * sfxPitchStep;
+          sfxTickLines.get(gT).push(sfxVanishCmd(base[0], base[1], dz, life, vp, t));
+          stats.sfxVanishNotes++;
+          made = true;
+        }
+        if (made && !sfxVanishRemove.has(t)) {   // 兜底清除：本 tick 有生成行才挂（N=0 全跳过 → 无行可清）
+          sfxVanishRemove.add(t);
+          if (!sfxTickLines.has(t)) sfxTickLines.set(t, []);
+          sfxTickLines.get(t).push(`particleex group remove nbs2sfx_vanish_${t}`);
+        }
       }
     }
   }
@@ -2344,26 +2391,6 @@ function buildLayout(song, groups, groupStarts, nTicks, settings, defaultStart, 
         }
         stats.sfxBoundNotes++;
       }
-    }
-  }
-  // MIDI式参考车道：音高展开中心 = 距该车道全部音符 key 中位数最近的 F# 系音（F#3/F#4/F#5 → note 0/12/24，
-  //   2026-10-10 用户定案；平手取较低）；同段统计音域外音符 → 生成明细提醒（粒子按原音高外推显示，
-  //   与普通轨道「跳过该音」不同——参考粒子无物理盒，位置不受音符盒可发声音域约束）
-  const sfxLaneCenter = new Map(); // chain 下标 → center note（0/12/24）
-  for (const [ci, ev] of sfxLaneEvents) {
-    const lane = chains[ci];
-    if (!lane || !lane.isRefLane || lane.refLaneType !== 'independent') continue;
-    const keys = [...ev.values()].flat();
-    const ks = keys.slice().sort((a, b) => a - b);
-    const med = ks.length ? (ks[(ks.length - 1) >> 1] + ks[ks.length >> 1]) / 2 : 33;
-    const nm = med - 33;
-    let center = 0;
-    if (Math.abs(nm - 12) < Math.abs(nm - center)) center = 12;
-    if (Math.abs(nm - 24) < Math.abs(nm - center)) center = 24;
-    sfxLaneCenter.set(ci, center);
-    const nOut = keys.filter(k => k < 33 || k > 57).length;
-    if (nOut > 0) {
-      stats.discardedDetails.push(`MIDI式参考车道 ${chains.indexOf(lane) - (defaultStart ? 1 : 0) - nOrd + 1} 含 ${nOut} 个音域外音符（key<33 或 >57）：粒子行按原音高外推显示（超出音符盒可发声音域）`);
     }
   }
   // --- MIDI式参考：粒子行汇总（粒子中心 = 轨道 0 CB + 所属MIDI式参考车道 start 基准，Z 再按音高展开） ---
