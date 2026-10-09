@@ -2008,7 +2008,14 @@ function buildLayout(song, groups, groupStarts, nTicks, settings, defaultStart, 
   //   sfxBackgroundTicks 支撑轨道 0 CB（并入 isSfxTick 判定）；无车道产行的 tick 不入集合
   //   （不放 CB、不触发空 tick 回退，旧产物逐位不变）。
   //   遍历 chains（非 sfxLaneEvents）：无音符成员的参考车道也要产背景行。
+  // 背景模板合法子命令集（2026-10-10 模组源码实锤：command/particlep 11 类 + parameter 家族变体，
+  //   共 18 个；模板全文透传不改语义——超集外子命令提示但照常生成）
+  const SFX_BG_LEGAL_SUB = new Set(['normal', 'conditional', 'parameter', 'polarparameter',
+    'rgbaparameter', 'rgbapolarparameter', 'rgbatickparameter', 'rgbatickpolarparameter',
+    'tickparameter', 'tickpolarparameter', 'image', 'imagematrix', 'video', 'videomatrix',
+    'group', 'clearparticle', 'clearcache', 'functionlist']);
   const sfxBackgroundTicks = new Set();
+  const sfxBgWarned = new Set();   // 非法子命令警告（冲突车道一次性）
   if (railChain) {
     const barLen = sfxBarLen(song);
     for (let t = 0; t < nTicks; t += barLen) {
@@ -2019,6 +2026,16 @@ function buildLayout(song, groups, groupStarts, nTicks, settings, defaultStart, 
         if (eff && !eff.includes('background')) continue;   // 显式取消勾选 → 不产
         const cmd = lane.refLaneBackground;                 // null = 未填模板 → 不产
         if (!cmd) continue;
+        // 2026-10-10 并行会话实锤：模组命令树**没有 bg 子命令**（18 个合法值见上）——
+        //   非法子命令的游戏内表现 = 「未知子命令」报错（命令方块执行失败、粒子不出）；
+        //   历史示例 `particleex bg …` 即属此类。透传语义保留（合法命令不受影响），
+        //   非法首子命令 → 生成明细一次性警告
+        const toks = cmd.trim().split(/\s+/);
+        const sub = toks[0] === 'particleex' ? toks[1] : toks[0];
+        if (sub && !SFX_BG_LEGAL_SUB.has(sub) && !sfxBgWarned.has(lane)) {
+          sfxBgWarned.add(lane);
+          stats.discardedDetails.push(`参考车道 ${chains.indexOf(lane) - (defaultStart ? 1 : 0) - nOrd + 1} 背景模板子命令「${sub}」不在模组合法子命令集（normal/conditional/parameter 系/image/video/group 等 18 个）——游戏内会报「未知子命令」、粒子不出现，请改填合法命令`);
+        }
         if (!sfxTickLines.has(t)) sfxTickLines.set(t, []);
         sfxTickLines.get(t).push(cmd);
         stats.sfxBackgroundNotes++;
@@ -4556,7 +4573,7 @@ function renderSfxLaneParams(lane, li) {
   inC3.type = 'text';
   inC3.className = 'sfx-param-plain';
   inC3.value = (typeof lane.sfxParams === 'object' && lane.sfxParams !== null && typeof lane.sfxParams.background === 'string') ? lane.sfxParams.background : '';
-  inC3.placeholder = 'particleex …（留空 = 不产背景行）';
+  inC3.placeholder = 'particleex …（留空 = 不产背景行；须为模组合法子命令，如 particleex normal/conditional …；「bg」不是合法子命令）';
   inC3.addEventListener('change', (e) => onSfxParamPlainEdit(li, 'background', e.target.value));
   box.appendChild(inC3);
   // ④ 消失型：结构化 4 字段（粒子/颜色 R G B A/提前量 N/组名；#Cube 原型几何逐字写死，寿命自动 = 实际提前量）

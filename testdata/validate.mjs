@@ -2206,7 +2206,10 @@ try {
       //    门控 = effects 含 'background'（缺省 = 勾选）+ 模板非空 → 旧存档/未填模板产物逐位不变；
       //    行落 tick 0/barLen/2·barLen…，sfxBackgroundTicks 支撑轨道 0 CB。
       {
-        const BG_CMD = 'particleex bg minecraft:portal ~ ~0.5 ~ 0.5 0.1 0.1 0 0 0 0 10 0.4 1.0 null';
+        // BG_CMD 用合法 normal 形态（2026-10-10 并行会话实锤：模组命令树**无 bg 子命令**，
+        //   `particleex bg …` 在游戏内报「未知子命令」；旧 BG_CMD 退化为非法样例仅用于警告断言）
+        const BG_CMD = 'particleex normal minecraft:portal ~ ~0.5 ~ 0.5 0.1 0.1 0 0 0 1 1 1 100 10 null 1.0 null';
+        const BG_BAD = 'particleex bg minecraft:portal ~ ~0.5 ~ 0.5 0.1 0.1 0 0 0 0 10 0.4 1.0 null';
         const REFIND = new Map([[0, { type: 'independent', sound: true }]]);
         // L1 单元：sfxBarLen 拍号映射 + 非法兜底；sfxNormBackground trim/空/类型
         if (sfxBarLen({ timeSignature: 4 }) !== 73 || sfxBarLen({ timeSignature: 3 }) !== 54
@@ -2232,6 +2235,21 @@ try {
           console.log(`FAIL 背景型默认不产：bg=${statL2.sfxBackgroundNotes} 行=${JSON.stringify(tlbL2)}（期望 0 行、行与缺省一致 [P0R,BC_26]/[P0R]）`); ok = false;
         } else {
           console.log('PASS 背景型默认不产（模板留空）：不产行、产物与未实现时逐位一致（旧存档向后兼容）');
+        }
+        // L2b 非法子命令警告（2026-10-10）：模板 `particleex bg …` 不在模组合法子命令集 →
+        //   行照常生成（全文透传语义不变）+ 生成明细一次性警告「不在模组合法子命令集」
+        const rL2b = runE2E(tmpFile, {
+          lane0: { dz: 0, dy: 0 }, refLayers: REF,
+          groups: [{ layers: [0] }], groupStarts: [{ dz: 3, dy: 0 }],
+          refLanes: [{ tracks: [0], type: 'bound', start: { dz: 6, dy: 1 },
+            sfxParams: { background: BG_BAD } }],
+        });
+        const statL2b = rL2b.result.stats;
+        if (statL2b.sfxBackgroundNotes !== 1
+          || !statL2b.discardedDetails.some(d => d.includes('不在模组合法子命令集') && d.includes('bg'))) {
+          console.log(`FAIL 背景型非法子命令警告：bg=${statL2b.sfxBackgroundNotes} 明细=${JSON.stringify(statL2b.discardedDetails)}`); ok = false;
+        } else {
+          console.log('PASS 背景型非法子命令警告：`particleex bg` 模板行照常透传 + 明细提示「不在模组合法子命令集」（游戏内会报未知子命令）');
         }
         // L3 e2e 4/4（barLen=73）：3 小节内音符 t0/t100/t200 → 背景行落 tick 0/73/146（219 ≥ nTicks=209 不产）；
         //   tick0 行序 = [背景行, 绑定行, 连接线]（背景块在绑定行段之前；bound 车道 connect 缺省开 → t0→t100 连接线 Δt=100）；CB = {0,73,100,146,200} 共 5
