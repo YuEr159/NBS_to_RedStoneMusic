@@ -2640,9 +2640,9 @@ try {
       console.log(`FAIL N0 行几何：${JSON.stringify(geo)}（期望 ${JSON.stringify(gExp)}）`); ok = false;
     } else console.log('PASS N0 lyricLineGeoms：X=−widthPx/64 水平居中、Y=3.6/2.4 居中堆叠（lineH=1.2、首行最高）');
     const cmdL = sfxL('minecraft:end_rod', -1, 3.6, 0, 'lyric/s0000_l0.png', 2, 16, 1);
-    if (cmdL !== 'particleex image minecraft:end_rod -1 3.6 0 lyric/s0000_l0.png 0.03125 1 2 0 0 10 0 0 0 16 null 1 null') {
+    if (cmdL !== 'particleex image minecraft:end_rod -1 3.6 0 lyric/s0000_l0.png 0.03125 90 180 0 not 10 0 0 0 16 null 1 null') {
       console.log(`FAIL N0 命令字面：${cmdL}`); ok = false;
-    } else console.log('PASS N0 sfxLyricImageCmd 18 token 字面（scaling 0.03125 / pitch 1 / rotate 2 / age 16 / dpb 10 / 静止 / group null）');
+    } else console.log('PASS N0 sfxLyricImageCmd 18 token 字面（scaling 0.03125 / pitch 1→90° / rotate 2→180° / flip not / age 16 / dpb 10 / 静止 / group null）');
     // --- N1 e2e：合成歌 10 t/s 曲长 100；句 0(0,8,2行) 句 1(20,20 无效 en≤st 跳过) 句 2(50,120 截断) 句 3 无效（NaN 跳过）---
     const nbsN = makeNbs({ tempoTps: 10, songLength: 100, layers: 1, noteSpecs: [
       { tick: 0, layer: 0, instrument: 0, key: 45 },

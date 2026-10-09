@@ -188,8 +188,8 @@ NBS 格式没有歌词字段，歌词在**「粒子歌词」section**（参考�
 - **设置**：**字体源**（CDN LXGW WenKai Lite（SIL OFL，jsdelivr webfont）/ 系统楷体链 / 本地上传 ttf·otf（FontFace 运行时加载，**不持久化**——刷新后需重传）；select 旁实时渲染「我的世界」样例供预览；CDN 加载 5s 超时自动回退系统楷体链并在生成摘要提示）、**字号**（16/24/32/48/64，缺省 32）、**字距**（像素，缺省 2）、**每行字数**（自动换行，缺省 8）、**粒子名**（缺省 `minecraft:end_rod`）、**旋转**（偏航 0/90/180/270°，缺省 0°）、**俯仰**（0/90/180/270°，缺省 0°；90° = 文字躺平朝上；朝向以游戏实测为准）、**歌词位置**（布局编辑器第三窗口「歌词位置」，Y-Z 截面拖拽「歌词中心点」，缺省 (0,3,0)）
 - **渲染**：每句按每行字数分行，每行 canvas 渲染（白字透明底）→ 按不透明边界裁剪为整行 PNG（`lyric/s{句序号04d}_l{行}.png`，文件名 ASCII，与命令一一对应）；canvas 尺寸上限守护（2000×1000，超宽行告警跳过）
 - **命令**（每行一条，写入该句**起始 tick** 的 `<t>.mcfunction`，18 token）：
-  `particleex image <粒子> <X> <Y> <Z> <path> 0.03125 <pitch> <rotate> 0 0 10 0 0 0 <age> null 1 null`
-  ——scaling 固定 1/32 = 1 格/32px；`<pitch>` = 俯仰（xRot，0-3）、`<rotate>` = 偏航（yRot，0-3）；X = 位置.x − 行宽/2（行水平居中）、Y = 位置.y + 行偏移（行高 = 字号/32×1.2，句内多行以中心垂直堆叠）、Z = 位置.z；**age = (end−start)×2 游戏 tick**（1 NBS tick = 2 游戏 tick）到期**模组端自动消失**（`setMaxAge`，模组源码实锤）→ 句末**无 remove 行**；group null。起始 tick 轨道 0 主位放底座命令方块（`function nbs2sfx:<t>`，与参考声道同一套 CB 支撑）
+  `particleex image <粒子> <X> <Y> <Z> <path> 0.03125 <pitch> <rotate> 0 not 10 0 0 0 <age> null 1 null`
+  ——scaling 固定 1/32 = 1 格/32px；`<pitch>` = 俯仰（xRot，0-3）、`<rotate>` = 偏航（yRot，0-3），**命令文本按 90° 步进角度序列化**（档位 1→90°、2→180°、3→270°；模组 RotateArgumentType.parse 要求 90 的倍数，内部再 /90 存 0-3）；flip 恒 `not`（枚举词 not/horizontally/vertical，数字会被 parse 拒绝）；X = 位置.x − 行宽/2（行水平居中）、Y = 位置.y + 行偏移（行高 = 字号/32×1.2，句内多行以中心垂直堆叠）、Z = 位置.z；**age = (end−start)×2 游戏 tick**（1 NBS tick = 2 游戏 tick）到期**模组端自动消失**（`setMaxAge`，模组源码实锤）→ 句末**无 remove 行**；group null。起始 tick 轨道 0 主位放底座命令方块（`function nbs2sfx:<t>`，与参考声道同一套 CB 支撑）
 - **数据包**：zip 条件放宽为「**有参考声道或有歌词**」——纯歌词（无参考声道）也产 zip（pack.mcmeta + 歌词 function + PNG 条目 `data/nbs2sfx/lyric/*.png`，二进制条目，STORE 零依赖自写写入器 + CRC32）
 - **部署**：从数据包 zip 取 `data/nbs2sfx/lyric/` 目录**整体复制到 `.minecraft/particleImages/lyric/`**（模组 image 命令读客户端本地 `./particleImages/` 相对路径，支持子目录，按 (文件, scaling) 缓存），与 datapacks 部署相互独立
 - **持久化**：导入的歌词（`lyrics`，tick 整数）与设置（`settings.lyric`）进 per-song 载荷（可选键，旧存档无此键 = 无歌词，产物逐位不变；v=2 不变）；字体文件不持久化

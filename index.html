@@ -918,13 +918,16 @@ function renderLyricLine(text, settings, fontFamily) {
   if (!b64) return { ok: false, error: 'toDataURL 失败' };
   return { ok: true, pngBytes: lyricBase64ToBytes(b64), widthPx: cw, heightPx: ch, pixels };
 }
-// 歌词 image 命令字面（18 token，模组 ImageCommand 逐字段核验 2026-10-06）：
-//   particleex image <粒子> <X> <Y> <Z> <path> 0.03125 <pitch> <rotate> 0 0 10 0 0 0 <age> null 1 null
+// 歌词 image 命令字面（18 token，模组 ImageCommand 逐字段核验 2026-10-06 + 2026-10-10 字段值修正）：
+//   particleex image <粒子> <X> <Y> <Z> <path> 0.03125 <pitch> <rotate> 0 not 10 0 0 0 <age> null 1 null
 //   scaling 固定 1/32 = 1 格/32px；dpb 10 = 粒子间隔 0.1 格；静止；group null（age 到期自动消失，无 remove 行）。
-//   <pitch> = xRot 俯仰（0-3，90° 步进）、<rotate> = yRot 偏航（0-3）；zRot 恒 0。
+//   <pitch>/<rotate> = xRot/yRot 俯仰/偏航（UI 0-3 四档），命令文本须为 90° 步进角度（模组
+//   RotateArgumentType.parse 读整数、非 90 倍数直接报错；内部再 /90 存 0-3）；zRot 恒 0。
+//   flip 恒 not（枚举词 not/horizontally/vertical，parse 映射 0/1/2；数字会被拒）——2026-10-10
+//   并行会话源码核对实锤修正（旧版填 0-3 与 0 会被模组 parse 拒绝，歌词命令从未在游戏内生效）。
 const LYRIC_SCALING = 0.03125; // 1/32
 function sfxLyricImageCmd(particle, X, Y, Z, fileName, rotate, age, pitch) {
-  return `particleex image ${particle} ${sfxNum(X)} ${sfxNum(Y)} ${sfxNum(Z)} ${fileName} ${LYRIC_SCALING} ${Number(pitch) || 0} ${Number(rotate) || 0} 0 0 10 0 0 0 ${Math.max(0, Math.round(Number(age) || 0))} null 1 null`;
+  return `particleex image ${particle} ${sfxNum(X)} ${sfxNum(Y)} ${sfxNum(Z)} ${fileName} ${LYRIC_SCALING} ${(Number(pitch) || 0) * 90} ${(Number(rotate) || 0) * 90} 0 not 10 0 0 0 ${Math.max(0, Math.round(Number(age) || 0))} null 1 null`;
 }
 // 歌词行几何（居中堆叠）：一行 = 1 张 PNG（1 格/32px）；句内多行以 pos 为中心、行距 = size/32×1.2 格。
 // 返回该句每一行 { fileName, X, Y, Z, age, widthPx }（供命令生成 + PNG 导出清单）。
