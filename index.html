@@ -178,6 +178,11 @@ input[type="number"] { width: 70px; }
 .hint { color: var(--text-dim); font-size: 12px; }
 .gen-progress { flex-basis: 100%; height: 6px; background: var(--panel2); border: 1px solid var(--border); border-radius: 3px; overflow: hidden; }
 .gen-progress > div { height: 100%; width: 0; background: var(--accent); transition: width .15s; }
+/* 自绘 tooltip（2026-10-09，用户定案）：深色气泡替代浏览器默认白底 title——延迟出现、视口边缘翻转 */
+#tipRoot { position: fixed; z-index: 9999; max-width: 320px; padding: 6px 10px;
+  background: var(--panel2); border: 1px solid var(--border); color: var(--text);
+  font-size: 12px; line-height: 1.5; border-radius: 6px; box-shadow: 0 4px 14px rgba(0,0,0,.45);
+  pointer-events: none; }
 </style>
 </head>
 <body>
@@ -418,6 +423,7 @@ input[type="number"] { width: 70px; }
   </main>
   </div>
 </div>
+<div id="tipRoot" hidden></div>
 
 <script>
 'use strict';
@@ -6681,6 +6687,44 @@ $('lyricFontFileInput').addEventListener('change', (e) => {
   } catch (e) { /* head 不存在（测试桩）→ 仅 fonts.load 尝试 */ }
   lyricFontEnsureLoad();
 })();
+// 自绘 tooltip（2026-10-09，用户定案）：深色气泡替代浏览器默认白底 title——
+//   事件委托 + 延迟出现；悬停时 title 暂存置空（防原生气泡）、移出恢复（属性文本始终可程序读取）；
+//   环境不支持事件委托（测试 stub）时静默退化回原生 title。
+let tipSource = null, tipTimer = null;
+try {
+  document.addEventListener('mouseover', (e) => {
+    const t = e.target && e.target.closest ? e.target.closest('[title]') : null;
+    if (!t || !t.title) return;
+    tipSource = t;
+    const text = t.title;
+    t._tipText = text; t.title = '';
+    clearTimeout(tipTimer);
+    tipTimer = setTimeout(() => {
+      const tip = document.getElementById('tipRoot');
+      if (!tip) return;
+      tip.textContent = text;
+      tip.hidden = false;
+      const r = t.getBoundingClientRect();
+      const w = tip.offsetWidth || 0, h = tip.offsetHeight || 0;
+      const vw = (window.innerWidth || 800), vh = (window.innerHeight || 600);
+      let x = r.left + r.width / 2 - w / 2, y = r.bottom + 8;
+      if (x < 4) x = 4;
+      if (x + w > vw - 4) x = vw - w - 4;
+      if (y + h > vh - 4) y = r.top - h - 8;
+      if (y < 4) y = 4;
+      tip.style.left = x + 'px'; tip.style.top = y + 'px';
+    }, 300);
+  });
+  document.addEventListener('mouseout', () => {
+    clearTimeout(tipTimer);
+    if (tipSource) {
+      if (tipSource._tipText !== undefined) { tipSource.title = tipSource._tipText; delete tipSource._tipText; }
+      tipSource = null;
+    }
+    const tip = document.getElementById('tipRoot');
+    if (tip) tip.hidden = true;
+  });
+} catch (err) { /* 测试 stub 无 document.addEventListener：保持原生 title 行为 */ }
 </script>
 </body>
 </html>
