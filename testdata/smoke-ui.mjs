@@ -132,13 +132,13 @@ check(elements.get('layer-section').hidden === false, '音轨池区已显示');
   check((eff.match(/已实现/g) || []).length === 4 && (eff.match(/规划中/g) || []).length === 0,
     '粒子特效总览：4 类全标「已实现」（背景型 2026-09-10 落地，无规划中）');
   check(eff.includes('minecraft:end_rod') && eff.includes('sfxPitchStep'),
-    '粒子特效总览：触发型条目含当前效果（end_rod 螺旋）与参数规则描述');
-  check(eff.includes('tickpolarparameter') && eff.includes('点距 ≤0.1 格'),
-    '粒子特效总览：连接型条目含实现描述（tickpolarparameter、点距 ≤0.1 格）');
+    '粒子特效总览：触发型条目含当前效果（end_rod 圆环）与参数规则描述');
+  check(eff.includes('依次显现') && eff.includes('无缝衔接'),
+    '粒子特效总览：连接型条目含核心语义（依次显现、无缝衔接）');
   check(eff.includes('particleex conditional') && eff.includes('默认不勾选'),
     '粒子特效总览：消失型条目含 #Cube 条件立方体描述与默认不勾选注记');
-  check(eff.includes('18.125') && eff.includes('73'),
-    '粒子特效总览：背景型条目含小节长公式（拍号×18.125 取整，4/4 → 73）');
+  check(eff.includes('0/73/146') && eff.includes('4/4 拍 → 73'),
+    '粒子特效总览：背景型条目含小节执行点（每小节 tick 0/73/146，4/4 → 73）');
 }
 // 粒子特效独立模块 + 按车道勾选表（无参考车道时空提示）
 check(elements.get('sfxEffect-section').hidden === false, '粒子特效总览为独立 section（已显示）');

@@ -228,6 +228,28 @@ input[type="number"] { width: 70px; }
     <div id="tempoAdvice"></div>
   </section>
 
+  <section id="settings-section" hidden>
+    <h2>设置</h2>
+    <div class="setting-row" id="customInstRow" hidden>
+      <label>自定义乐器映射</label>
+      <span id="customInstSelects"></span>
+    </div>
+    <div class="setting-row">
+      <label>目标 Litematica 版本</label>
+      <select id="targetVersion"></select>
+      <span class="hint" id="targetVersionHint"></span>
+    </div>
+    <div class="setting-row">
+      <label>MIDI式参考 · 音高 Z 步长（格/半音）</label>
+      <input type="number" id="sfxPitchStep" min="0" max="8" step="0.1" value="1">
+      <span class="hint">MIDI式参考声道：粒子中心 Z 偏移 =（音高 − 12）× 步长；音高 12 居中；支持小数步进 0.1</span>
+    </div>
+    <div class="setting-row">
+      <label><input type="checkbox" id="listenerEnabled"> 矿车监听系统</label>
+      <span class="hint">启用后 .litematic 含 2 个命令方块 + 数据包 2 function；所有链向 +Z 平移让位（矿车在布局原点沿主链同速行走）；启动 CB 点击后玩家自动坐上矿车（需装数据包 + 命令方块权限）</span>
+    </div>
+  </section>
+
   <section id="group-section" hidden>
     <h2>车道池（每条车道 = 一条中继器链 + 3 个音符盒位，同 tick 超 3 位会被丢弃）</h2>
     <div class="toolbar">
@@ -365,28 +387,6 @@ input[type="number"] { width: 70px; }
     </div>
     <canvas id="lyricCanvas" width="640" height="420"></canvas>
     <div class="layout-info" id="lyricLayoutInfo"></div>
-  </section>
-
-  <section id="settings-section" hidden>
-    <h2>设置</h2>
-    <div class="setting-row" id="customInstRow" hidden>
-      <label>自定义乐器映射</label>
-      <span id="customInstSelects"></span>
-    </div>
-    <div class="setting-row">
-      <label>目标 Litematica 版本</label>
-      <select id="targetVersion"></select>
-      <span class="hint" id="targetVersionHint"></span>
-    </div>
-    <div class="setting-row">
-      <label>MIDI式参考 · 音高 Z 步长（格/半音）</label>
-      <input type="number" id="sfxPitchStep" min="0" max="8" step="0.1" value="1">
-      <span class="hint">MIDI式参考声道：粒子中心 Z 偏移 =（音高 − 12）× 步长；音高 12 居中；支持小数步进 0.1</span>
-    </div>
-    <div class="setting-row">
-      <label><input type="checkbox" id="listenerEnabled"> 矿车监听系统</label>
-      <span class="hint">启用后 .litematic 含 2 个命令方块 + 数据包 2 function；所有链向 +Z 平移让位（矿车在布局原点沿主链同速行走）；启动 CB 点击后玩家自动坐上矿车（需装数据包 + 命令方块权限）</span>
-    </div>
   </section>
 
   <section id="generate-section" hidden>
@@ -4190,26 +4190,25 @@ function renderSfxEffectList() {
     list.appendChild(c);
   };
   card('① 触发型', 'on',
-    '由音符触发，参数由 1 个音符决定。每个参考音符在轨道 0 同 tick 触发一次粒子：' +
-    '单线式 = 粒子中心锚定所属参考车道虚拟盒位的**主位（中间槽位）**（每 tick 每车道至多 1 行，多成员齐响不展开第2/3位，与「发声」无关、恒产生，' +
-    '可被下方车道勾选关闭）；MIDI式 = 锚定轨道 0 CB + 所属参考车道的起点基准（「参考车道起点布局」窗口可拖，缺省 (0,0)），再按音高偏移 (音高−12)×sfxPitchStep。' +
-    '当前效果条目：end_rod 圆环（particleex polarparameter minecraft:end_rod：dis=0.05 小圆环、s1=t 扫一圈、速度表达式 exp 衰减振荡，20 粒子，坐标段由构建时按车道起点/槽位/音高求解替换；旧版「螺旋展开」= 内置预设，预设模板库可点选回填）。');
+    '由音符触发，参数由 1 个音符决定：每个参考音符在轨道 0 同 tick 触发一次粒子——' +
+    '单线式锚定所属参考车道虚拟主位（每 tick 每车道至多 1 行；与「发声」无关、恒产生，可在下方车道勾选关闭）；' +
+    'MIDI式锚定参考车道起点（参考窗口可拖，缺省 (0,0)）+ 音高偏移 (音高−12)×sfxPitchStep。' +
+    '当前效果：minecraft:end_rod 圆环（20 粒子小圆环 + 扫圈 + 衰减振荡；旧版「螺旋展开」= 内置预设，模板库可回填）。');
   card('② 连接型', 'on',
-    '由音符触发，参数由 2 个音符决定：连接参考车道**相邻演奏 tick**（t_A < t_B，按车道连；和弦 = 多成员同 tick 齐响，按 ≤32 tick 规则配对连线）——' +
-    'MIDI式按各音粒子中心画**真空间斜线**（A = t_A 粒子中心、B = t_B 粒子中心沿链前移 2Δt 格，同音高退化为沿链 +X 水平线），同 tick 和弦配对（间隔 ≤32 tick 时 1:1 最近邻 + 落单音就近挂靠，否则严格 1:1）；' +
-    '单线式与音高无关 → 端点简并为车道中间槽位、沿链 X 方向连线（每 NBS tick 2 格）。' +
-    'tickpolarparameter 分 tick 逐点生成（每游戏 tick 至多 cpt 点、总点数跨 2Δt+1 游戏 tick = Δt 个 NBS tick 铺完，点距 ≤0.1 格）→ 粒子在 A→B 之间沿方向**依次显现**（与链传播同速 1 格/游戏 tick），笔尖恰好在 B 的触发型/音符盒激活那一 tick 抵达 B，无缝衔接。' +
-    '两种风格（车道级，下方展开面板可选）：**直线**（缺省）= 匀速直线；**弧线** = 抛物线拱（垂直向上）+ 近 B 端减速（轻阻力感，端点仍恰抵 B）。' +
-    '粒子/颜色/寿命 m/漂移在下方车道展开面板调。');
+    '由音符触发，参数由 2 个音符决定：连接参考车道**相邻演奏 tick**（按车道连；和弦按 ≤32 tick 规则配对）——' +
+    'MIDI式按各音粒子中心画**真空间斜线**（B 端沿链前移 2Δt 格，同音高退化为沿链水平线）；' +
+    '单线式端点简并为车道中间槽位、沿链 X 方向连线。粒子沿 A→B **依次显现**（与链传播同速），' +
+    '笔尖恰在 B 触发 tick 抵达，无缝衔接。风格（下方展开面板可选）：**直线**（缺省）= 匀速；' +
+    '**弧线** = 抛物线拱 + 近 B 端减速。粒子/颜色/寿命 m/漂移在下方面板调。');
   card('③ 背景型', 'on',
-    '与具体音符无关，按乐曲小节间隔周期性激活（铺底氛围）。小节长 = 拍号 × 18.125 tick 四舍五入（4/4 → 73，3/4 → 54），' +
-    '每小节 tick 0/73/146… 为车道执行一条自定义 particleex 命令（下方车道模板文本框，全文逐字；坐标 ~ 相对该 tick 轨道 0 CB）。' +
-    '模板留空 = 不产行；勾选缺省 = 勾选（与触发/连接同语义）。');
+    '与具体音符无关，按乐曲小节间隔周期性激活（铺底氛围）：每小节 tick 0/73/146…（4/4 拍 → 73）' +
+    '为车道执行一条自定义 particleex 命令（下方车道模板文本框，全文逐字；坐标 ~ 相对该 tick 轨道 0）。' +
+    '模板留空 = 不产行；缺省勾选。');
   card('④ 消失型', 'on',
-    '由音符触发，参数由 1 个音符决定：**演奏 tick 前 N tick 提前出现、恰在演奏 tick 消亡**（N = 车道级「提前量」，缺省 500 tick，' +
-    '寿命 = N 由构建自动计算并写入命令；歌曲开头提前量不足时钳位到 tick 0、寿命 = 实际提前量）。' +
-    '粒子 = #Cube 条件立方体（particleex conditional：1×1×1 线框立方，边长 1 格、0.1 步长采样，vy=0.05 缓升），' +
-    '位置 = 车道锚点（单线式 = 虚拟主位；MIDI式 = 车道 start 基准）。**默认不勾选**——需在下方车道勾选表显式开启。');
+    '由音符触发，参数由 1 个音符决定：**演奏 tick 前 N tick 提前出现、恰在演奏 tick 消亡**' +
+    '（N = 车道级「提前量」，缺省 500，寿命自动计算；歌曲开头不足时钳位到 tick 0）。' +
+    '粒子 = particleex conditional #Cube 线框立方（vy=0.05 缓升），位置 = 车道锚点（单线式虚拟主位 / MIDI式起点）。' +
+    '**默认不勾选**——需在下方勾选表显式开启。');
 }
 // 按参考车道勾选涉及的特效：每车道一行 3 个 checkbox + 行首展开钮（▼/▲，展开后该行下方为模板编辑面板）
 function renderSfxEffectLanes() {
