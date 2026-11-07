@@ -3,7 +3,7 @@
 server-*.json
 v*.json
 vm.json
-# 本地工具配置
+# 本地工具配置目录（不入库）
 .[c]laude/
 # 本地工具指令文件（不入库）
 *LAUDE.md
