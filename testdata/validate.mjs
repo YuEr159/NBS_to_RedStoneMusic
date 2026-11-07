@@ -3428,5 +3428,59 @@ try {
   }
 }
 
+// ---------- W 分支底座（2026-11-07 用户反馈）与 X 徽章音高越界 ----------
+{
+  // W：音量还原的纯粉分支格下方必须有雪块底座（此前只写红石粉 → 游戏内是浮空线）
+  const { volRestoreReqZ: rq } = context.window.__NBS2SCHEMATIC;
+  const nbsW = makeNbs({ tempoTps: 20, songLength: 2, noteSpecs: [
+    { tick: 0, layer: 0, instrument: 0, key: 40, velocity: 100 },
+    { tick: 1, layer: 0, instrument: 0, key: 41, velocity: 60 },
+  ]});
+  const tmpW = 'synth_w.nbs';
+  writeFileSync(path.join(__dirname, tmpW), nbsW);
+  try {
+    const sW = { buttonType: 'minecraft:oak_button', customInstrumentMap: new Map(), listener: { enabled: true } };
+    const rW = runE2E(tmpW, { lane0: { dz: 6, dy: 0 }, groups: [{ layers: [0], volRestore: true }], groupStarts: [{ dz: 8, dy: 0 }], settings: sW });
+    const grW = rW.result.grid, zoW = rW.result.geometry.zOffset;
+    const idWireW = grW.stateIds.get('minecraft:redstone_wire');
+    const orphans = [];
+    let branchWires = 0;
+    for (let z = 0; z < grW.sz; z++) for (let x = 0; x < grW.sx; x++) {
+      if (grW.data[grW.idx(x, 1, z)] !== idWireW) continue;
+      branchWires++;
+      if (grW.data[grW.idx(x, 0, z)] === 0) orphans.push({ x, z: z - zoW });
+    }
+    const wOk = branchWires > 0 && orphans.length === 0;
+    if (!wOk) {
+      console.log(`FAIL W 分支底座：红石粉 ${branchWires} 格，其中下方悬空 ${orphans.length} 格 ${JSON.stringify(orphans.slice(0, 6))}`); ok = false;
+    } else console.log(`PASS W 分支底座：${branchWires} 格红石粉全部有雪块托底（此前分支中段悬空）`);
+  } finally {
+    try { rmSync(path.join(__dirname, tmpW)); } catch {}
+  }
+
+  // X：车道徽章须同时报「同 tick 超 3 位」与「音高越界」（此前只报前者，生成却报两者合计）
+  const api = context.window.__NBS2SCHEMATIC;
+  const songX = { layers: [
+    { notes: new Map([[0, { key: 40, instrument: 0, velocity: 100 }], [1, { key: 20, instrument: 0, velocity: 100 }]]) }, // key=20 越界
+    { notes: new Map([[0, { key: 41, instrument: 0, velocity: 100 }]]) },
+    { notes: new Map([[0, { key: 42, instrument: 0, velocity: 100 }]]) },
+    { notes: new Map([[0, { key: 43, instrument: 0, velocity: 100 }]]) },   // 同 tick 4 个 → 超 3 位
+  ]};
+  const stX = api.laneConflictStats(songX, [0, 1, 2, 3]);
+  const bdX = api.laneConflictBadge(stX);
+  const xOk = stX.outOfRange === 1 && stX.discarded === 1 && bdX.warn
+    && bdX.text.includes('音高越界') && bdX.text.includes('超 3 位');
+  if (!xOk) {
+    console.log(`FAIL X 徽章：outOfRange=${stX.outOfRange}（应 1）discarded=${stX.discarded}（应 1）badge="${bdX.text}"`); ok = false;
+  } else console.log(`PASS X 徽章：同时报出两类丢弃（"${bdX.text}"）——此前只报超 3 位，与生成端 notesDiscarded 不一致`);
+
+  // X2：无任何问题时仍是「✓ 无冲突」
+  const stX2 = api.laneConflictStats({ layers: [{ notes: new Map([[0, { key: 40, instrument: 0, velocity: 100 }]]) }] }, [0]);
+  const bdX2 = api.laneConflictBadge(stX2);
+  const x2Ok = !bdX2.warn && bdX2.text.includes('无冲突');
+  if (!x2Ok) { console.log(`FAIL X2 无冲突徽章："${bdX2.text}"`); ok = false; }
+  else console.log(`PASS X2 无冲突徽章："${bdX2.text}"`);
+}
+
 console.log(`汇总：共 ${passedCnt + failedCnt} 项 — ${passedCnt} PASS / ${failedCnt} FAIL`);
 process.exit(ok ? 0 : 1);

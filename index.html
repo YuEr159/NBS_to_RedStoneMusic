@@ -2247,6 +2247,9 @@ function buildLayout(song, groups, groupStarts, nTicks, settings, defaultStart, 
               } else {
                 for (let z = zc + step; z !== zEnd + step; z += step) {
                   W(xCur + 1, ySig, z, 'minecraft:redstone_wire');
+                  // 分支格底座（2026-11-07 用户反馈）：主位/末端盒都有雪块托底，中间的纯粉分支格此前只写
+                  //   红石粉、下方悬空——游戏内看是一条浮空线。整条分支统一补底座，与主位底座同层同材质。
+                  W(xCur + 1, yb, z, 'minecraft:snow_block');
                   stats.wires++;
                 }
                 const noteVal = noteFromKey(pick.note.key);
@@ -3778,7 +3781,21 @@ function laneTickCounts(song, tracks) {
   return merged;
 }
 
-// 车道冲突分析：合并 tracks 后每 tick 的同时音符数
+// 冲突徽章文案（2026-11-07）：同时反映两类丢弃——同 tick 超 3 位 + key 越界。
+//   生成端的 notesDiscarded 把两者合并计数，徽章此前只报前者，导致「徽章 ✓ 无冲突 但生成报丢弃 N」。
+function laneConflictBadge(stats) {
+  const parts = [];
+  if (stats.discarded > 0) parts.push(`${stats.discarded} 音符同 tick 超 3 位`);
+  if (stats.outOfRange > 0) parts.push(`${stats.outOfRange} 音符音高越界（key 需在 33–57）`);
+  return {
+    warn: parts.length > 0,
+    text: parts.length > 0 ? `⚠ 预计丢弃：${parts.join('；')}` : `✓ 无冲突（最大同刻 ${stats.maxSimul}）`,
+  };
+}
+
+// 车道冲突分析：合并 tracks 后每 tick 的同时音符数 + 音高是否超出音符盒音域
+//   （2026-11-07 用户反馈：生成时会报「丢弃 N 个音符」，但卡片徽章显示「✓ 无冲突」——
+//    徽章此前只统计「同 tick 超 3 位」，完全没查 key 越界，而生成端两类丢弃都计入 notesDiscarded。）
 function laneConflictStats(song, tracks) {
   const merged = laneTickCounts(song, tracks);
   let maxSimul = 0, overflowTicks = 0, discarded = 0;
@@ -3786,7 +3803,14 @@ function laneConflictStats(song, tracks) {
     if (c > maxSimul) maxSimul = c;
     if (c > 3) { overflowTicks++; discarded += c - 3; }
   }
-  return { maxSimul, overflowTicks, discarded };
+  // key 越界（音符盒只能发 [33, 57]）：这些音在生成时逐个丢弃并放红石粉代位，与「超 3 位」同属丢弃
+  let outOfRange = 0;
+  for (const t of tracks) {
+    const layer = song.layers && song.layers[t];
+    if (!layer) continue;
+    for (const n of layer.notes.values()) if (n && (n.key < 33 || n.key > 57)) outOfRange++;
+  }
+  return { maxSimul, overflowTicks, discarded, outOfRange };
 }
 
 // 主导乐器：层内出现最多的乐器
@@ -4234,11 +4258,10 @@ function renderRefLaneSection() {
     delBtn.dataset.li = String(li);
     head.appendChild(delBtn);
     const cst = laneConflictStats(song, lane.tracks);
+    const bt = laneConflictBadge(cst);
     const badge = document.createElement('span');
-    badge.className = cst.discarded > 0 ? 'lane-conflict-warn' : 'lane-conflict-ok';
-    badge.textContent = cst.discarded > 0
-      ? `⚠ 预计丢弃 ${cst.discarded} 音符（${cst.overflowTicks} 个 tick 超 3 位）`
-      : `✓ 无冲突（最大同刻 ${cst.maxSimul}）`;
+    badge.className = bt.warn ? 'lane-conflict-warn' : 'lane-conflict-ok';
+    badge.textContent = bt.text;
     head.appendChild(badge);
     const laneType = lane.type || 'independent';
     const typeSel = document.createElement('select');
@@ -4887,11 +4910,10 @@ function renderLaneSection() {
     head.appendChild(restoreBox);
     // 冲突徽章：本车道合并后的同刻音符分析
     const cst = laneConflictStats(song, lane.tracks);
+    const bt = laneConflictBadge(cst);
     const badge = document.createElement('span');
-    badge.className = cst.discarded > 0 ? 'lane-conflict-warn' : 'lane-conflict-ok';
-    badge.textContent = cst.discarded > 0
-      ? `⚠ 预计丢弃 ${cst.discarded} 音符（${cst.overflowTicks} 个 tick 超 3 位）`
-      : `✓ 无冲突（最大同刻 ${cst.maxSimul}）`;
+    badge.className = bt.warn ? 'lane-conflict-warn' : 'lane-conflict-ok';
+    badge.textContent = bt.text;
     head.appendChild(badge);
     row.appendChild(head);
     // 已分配音轨标签（点击 ✕ 移除一次；同一音轨可出现多次 = 占多个音符盒位齐响）
@@ -5881,7 +5903,7 @@ window.__NBS2SCHEMATIC = {
   SFX_EFFECT_TYPES, renderSfxEffectList, renderSfxEffectLanes, onSfxEffectToggle,
   buildSfxPackMcmeta, buildSfxFunctions, buildZip, zipCrc32, buildSfxDatapackZip,
   TARGET_VERSIONS, targetEntry, DEFAULT_TARGET_MC,
-  playbackPlan, laneConflictStats, dominantInstrument, mergeSuggestions, packLanesNoConflict,
+  playbackPlan, laneConflictStats, laneConflictBadge, dominantInstrument, mergeSuggestions, packLanesNoConflict,
   laneTickCounts, unassignedTracks, assignUnassigned, duplicateLane, deleteLane, syncLaneStarts, onLayerToggle,
   lanePoolMembers, onRefToggle, onRefSoundToggle, onRefLaneTypeChange, refSpecOf,
   refLanePoolMembers, addToRefLanes, dropToRefLane, syncRefLaneStarts, duplicateRefLane, deleteRefLane, renderRefLaneSection,
