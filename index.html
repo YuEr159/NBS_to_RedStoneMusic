@@ -1534,15 +1534,21 @@ class VoxelGrid {
 function volRestoreGain(z, yb) {
   return Math.max(0, 1 - Math.hypot(z, yb + 1) / 48);
 }
-// volRestoreReqZ(v, zAnchor, yb)：velocity 的目标盒绝对 z（连续值，未量化未截断；v=0 → 0 表意「不发声」）
-//   最近可放位置 z=1（行走行 z=0 恒空气）→ 目标增益超过该点可达增益时（v>100 侧）回 1（只能更响，截断由调用方告警）
+// volRestoreReqZ(v, zAnchor, yb)：velocity 的目标盒绝对 z（连续值，未量化未截断）
+//   符号（2026-11-07 用户定案 D1）：盒恒在**同一侧**——side = sign(zAnchor)，zAnchor=0 时取 +1（右）。
+//     不能让公式返回无符号的绝对距离：车道在 z=−24 时 v=100 会返回 +24，被镜像到玩家另一侧。
+//   语义：v=100 → zAnchor（本轨原位）；v<100 → 更远（更轻）；v>100 → 更近（更响，D2 夹到同侧 |z|=1）。
+//   参照物是行走行 z=0 的矿车，增益 gain(z,yb) 随距离衰减——故「更轻」只能靠「更远」实现。
+//   最近可放位置 |z|=1（行走行 z=0 恒空气）→ 目标增益超过该点可达增益时回 side*1（只能更响，截断由调用方告警）
 function volRestoreReqZ(v, zAnchor, yb) {
   const yv = yb + 1;
+  const side = Math.sign(zAnchor) || 1;          // D1：0 → 右（+1）
   const target = volRestoreGain(zAnchor, yb) * v / 100;
+  if (target >= 1) return side * 1;              // D2：目标增益超模型上限 → 同侧最近格
   const d = 48 * (1 - target);
-  if (d <= yv) return 1;
+  if (d <= yv) return side * 1;
   const z = Math.sqrt(d * d - yv * yv);
-  return z < 1 ? 1 : z;
+  return side * Math.max(1, z);
 }
 // volRestoreZLine(vels, zAnchor, yb)：主链（红石线行走区域）重定位——
 //   先算全部音符目标 z 的上下界；跨度 ≤30 → 取中位数；中位数致任一音偏移 >15 → 回退 30 跨度中点
@@ -1561,7 +1567,11 @@ function volRestoreZLine(vels, zAnchor, yb) {
     zLine = (zMin + zMax) / 2;
     zLine = Math.min(z0 + 15, Math.max(z0 - 15, zLine));
   }
-  return Math.max(zLine, 1);
+  // 符号钳制（2026-11-07 · N5）：下限 2 而非 1——第 3 位盒在 zc−1，zc=1 时该盒落进行走行 z=0（矿车路径）。
+  //   负侧对称：zc=−1 时第 2 位盒在 zc+1=0，同样撞行走行 → 上限 −2。
+  //   锚点符号决定侧向（D1）；zs 全同号故 zLine 与 zAnchor 同侧，此处只需按侧取钳制方向。
+  const limit = Math.sign(zAnchor) || 1;
+  return limit > 0 ? Math.max(zLine, 2) : Math.min(zLine, -2);
 }
 
 // 默认轨道 0 的顶层雪块导轨周期：每 32 格替换 1 格为赭黄蛙灯（用户风格；蛙灯与雪块同为不透明满方块，
@@ -1686,11 +1696,25 @@ function buildLayout(song, groups, groupStarts, nTicks, settings, defaultStart, 
   //   minZc ≥ 2 的布局（用户已把整布局拖离原点）shift=0 零改动；未启用时零改动（gen-example 回归保护）。
   //   须在尺寸计算前生效（zcList/zMax/zOffset 按让位后取值）。参考车道纯虚拟不占格，不参与让位。
   const listenerActive = !!(settings && settings.listener && settings.listener.enabled) && !!defaultStart;
+  // 矿车行走行让位（2026-11-07 用户定案 D4 修订）：只在**确有链的盒列落进行走行 z=0** 时平移。
+  //   链占据的盒列 = zc−1..zc+1 → 含 0 ⟺ |zc| ≤ 1。
+  //   · 无链含 0 → shift=0，全部保持用户拖的位置（旧行为会按最左链全局平移：一条拖到 −24 会把所有链推 26 格，
+  //     玩家被强制放在所有车道的一侧——用户 2026-11-07 反馈「强制以左侧为玩家」的直接来源）；
+  //   · 有链含 0 → 退回旧的**全局** shift = max(0, 2−minZc)，保持链间相对间距（逐链平移会破坏间距：
+  //     轨道 0 推到 2、车道停在 3 时，车道第 3 位盒 z=2 会撞上轨道 0 中继器，主链断裂）。
+  const laneShifts = [];
   if (listenerActive) {
-    const minZc = Math.min(...chains.filter(c => !c.isRefLane).map(c => c.zc));
-    const shift = Math.max(0, 2 - minZc);
-    for (const c of chains) {
-      if (!c.isRefLane) c.zc += shift;
+    const realChains = chains.filter(c => !c.isRefLane);
+    const hitsWalkRow = realChains.some(c => Math.abs(c.zc) <= 1);
+    if (hitsWalkRow) {
+      const minZc = Math.min(...realChains.map(c => c.zc));
+      const shift = Math.max(0, 2 - minZc);
+      if (shift > 0) {
+        for (const c of realChains) {
+          c.zc += shift;
+          laneShifts.push({ groupIndex: c.groupIndex, shift });
+        }
+      }
     }
   }
   // 音量还原预计算（2026-10-09 用户定案 · 每轨 opt-in）：
@@ -1725,17 +1749,32 @@ function buildLayout(song, groups, groupStarts, nTicks, settings, defaultStart, 
       if (velArr.length === 0) {
         stats.discardedDetails.push(`组 ${c.groupIndex + 1}：音量还原开启但无有效音符（velocity=0 或全静音），保持起点不重定位`);
         volRestoreEntries.push({ lane: c.groupIndex, anchorZc: c.zc, zLine: c.zc, g0: c.volG0,
-          truncated: 0, clampedTo100: false, noteCount: 0 });
+          clampedTo100: false, noteCount: 0, uiAnchorZ: c.zc, uiZLine: c.zc });
         continue;
       }
       c.volZLine = volRestoreZLine(velArr, c.zc, c.yb);
       c.volReqZ = velArr.map(v => volRestoreReqZ(v, c.zc, c.yb)).sort((a, b) => a - b);
       const z0 = volRestoreReqZ(100, c.zc, c.yb);
       const zMin = c.volReqZ[0], zMax = c.volReqZ[c.volReqZ.length - 1];
-      c.zc = Math.round(c.volZLine); // 主链重定位到整数 z（zLine 浮点就近取整；末端盒误差 ≤0.5 格，增益误差 <1/48；就地；锚点语义不变）
+      // 重定位碰撞护栏（2026-11-07 · 原则「声音缺失优于破坏结构」）：
+      //   主链占据 [zc−1, zc+1]；重定位会就地改写 c.zc，而主链/中继器/主位/±1 槽位的写入**没有**
+      //   占用检查（只有分支有）→ 撞上邻链会静默覆盖对方的音符盒。撞了就放弃重定位，
+      //   退回现有的「分支 ±15 截断 + 告警」模式：宁可音量失真，不可破坏他链结构。
+      const newZc = Math.round(c.volZLine);
+      const clashChain = chains.find(o => o !== c && !o.isRefLane && Math.abs(o.zc - newZc) <= 2);
+      if (clashChain) {
+        c.volZLine = c.zc; // 放弃重定位（保持锚点）
+        stats.discardedDetails.push(`组 ${c.groupIndex + 1}：音量还原重定位目标 z=${newZc} 与组 ${clashChain.groupIndex + 1}（z=${clashChain.zc}）冲突，保持原点 z=${c.zc}——超出 ±15 的音将截断偏音`);
+      } else {
+        c.zc = newZc; // 主链重定位到整数 z（zLine 浮点就近取整；末端盒误差 ≤0.5 格，增益误差 <1/48；就地；锚点语义不变）
+      }
       const clamped = !(z0 >= zMin && z0 <= zMax); // z0 在 [zMin,zMax] 外 = 100 侧被截断（偏音告警）
       volRestoreEntries.push({ lane: c.groupIndex, anchorZc: c.volAnchorZc, zLine: c.zc,
-        g0: c.volG0, truncated: 0, clampedTo100: clamped, noteCount: velArr.length });
+        g0: c.volG0, clampedTo100: clamped, noteCount: velArr.length,
+        // UI 布局图基准（2026-11-07 · N3）：渲染层用用户拖的 start.dz 画车道，但实际锚点/主链被
+        //   让位平移与重定位改写过 → 两者最多差十几格。这两个字段给出**布局坐标系**（= 用户拖动坐标系）的实际值，
+        //   供渲染层对齐；网格坐标 = 这里 + geometry.zOffset。
+        uiAnchorZ: c.volAnchorZc, uiZLine: c.zc });
       if (clamped) {
         stats.discardedDetails.push(`组 ${c.groupIndex + 1}：音量还原跨度 >30，100 基准侧（v=100）被截断到边界，该侧音量偏移`);
       }
@@ -1743,6 +1782,10 @@ function buildLayout(song, groups, groupStarts, nTicks, settings, defaultStart, 
     if (volRestoreEntries.length > 0) {
       stats.discardedDetails.push(`音量还原启用：${volRestoreEntries.length} 条车道主链已重定位（每 tick ≤1 盒；velocity=0 音符丢弃）`);
     }
+  }
+  if (laneShifts.length > 0) {
+    const desc = laneShifts.map(s => `组 ${s.groupIndex + 1} +${s.shift}`).join('、');
+    stats.discardedDetails.push(`矿车行走行让位：${laneShifts.length} 条车道起点向 +Z 平移（${desc}，保证盒列不落进行走行 z=0）`);
   }
   const realChains = chains.filter(c => !c.isRefLane);
   const zcList = realChains.map(c => c.zc);
@@ -1755,10 +1798,18 @@ function buildLayout(song, groups, groupStarts, nTicks, settings, defaultStart, 
   // 默认轨道 0 顶层导轨在 yb+2、音符盒在 yb+1 → 网格 y 最大用到 maxYb+2+yOffset → 总高 +3；
   //   监听启用时启动/跟随 CB 在 yb+3、yb+4（链头正上方两层，避开顶层导轨）→ 再 +2
   const sy = maxYb + yOffset + 3 + (listenerActive ? 2 : 0);
-  // 网格 Z 上界：第 2 音符盒在 zc+1、音量还原分支盒在 zLine+15 → 取较大者
-  const zHi = Math.max(zMax + 1, ...realChains.map(c => c.volRestore && listenerActive ? c.zc + 15 : c.zc + 1));
-  // 下界（布局 z）：第 3 音符盒在 zc−1；音量还原分支盒在 zLine−15 → 取各链最小，主偏移保证 ≥−(zOffset−1)
-  const zLo = zOffset + Math.min(...realChains.map(c => c.zc - (c.volRestore && listenerActive ? 15 : 1)));
+  // 网格 Z 上下界：第 2/3 音符盒在 zc±1；音量还原分支盒在 [zc + zOffMin, zc + zOffMax] 内
+  //   （2026-11-07 · N7：旧写法无条件按 zc±15 预留，zc 小时白占十几格体积、更早撞 4000 万格上限）。
+  //   分支实际可达范围与放置段同源：正侧 [max(zc−15, 1), zc+15]、负侧 [zc−15, min(zc+15, −1)]；未勾选还原的链只有 zc±1。
+  const volZRange = (c) => {
+    if (!(c.volRestore && listenerActive)) return [c.zc - 1, c.zc + 1];
+    const lo = c.zc > 0 ? Math.max(c.zc - 15, 1) : c.zc - 15;
+    const hi = c.zc < 0 ? Math.min(c.zc + 15, -1) : c.zc + 15;
+    return [Math.min(lo, c.zc - 1), Math.max(hi, c.zc + 1)];
+  };
+  const zbounds = realChains.map(volZRange);
+  const zHi = Math.max(...zbounds.map(b => b[1]));
+  const zLo = zOffset + Math.min(...zbounds.map(b => b[0]));
   // zOffset = 1−min(0,minZc) 保证下界 ≥0（全非负起点 = 1，旧行为）；音量还原下界更低时再加平移
   const zExtra = Math.max(0, -zLo);
   const zOff = zOffset + zExtra; // 网格 z 实际偏移（TE/导轨/监听 CB 一律用 zOff）
@@ -2143,8 +2194,12 @@ function buildLayout(song, groups, groupStarts, nTicks, settings, defaultStart, 
           } else {
             const v = pick.note.velocity;
             const dzRaw = Math.round(volRestoreReqZ(v, c.volAnchorZc, yb) - c.volZLine);
-            // 分支预算 ±15（红石功率 15 反编译实锤）；下端受行走行约束：末端盒 z ≥ 1（z=0 恒空气）
-            const dzEnd = Math.max(1 - zc, Math.min(15, Math.max(-15, dzRaw)));
+            // 分支预算（2026-11-07 · 符号化）：|dz| ≤ 15（红石功率 15 反编译实锤），且不落在行走行 z=0、不跨越它。
+            //   正侧主链（zc>0）：分支下界 1−zc（末端盒 z≥1）；负侧主链（zc<0）：分支上界 −1−zc（末端盒 z≤−1）。
+            //   旧写法 Math.max(1 − zc, …) 在 zc<0 时 1−zc>1 会反向抬高下界（zc=−24 → 强制 dzEnd=25，越权 ±15）。
+            const zOffMin = zc > 0 ? 1 - zc : -15;
+            const zOffMax = zc < 0 ? -1 - zc : 15;
+            const dzEnd = Math.max(zOffMin, Math.min(zOffMax, Math.max(-15, Math.min(15, dzRaw))));
             const truncated = dzEnd !== dzRaw;
             const zEnd = zc + dzEnd;
             W(xCur + 1, ySig, zc, 'minecraft:redstone_wire');
@@ -3888,7 +3943,7 @@ function duplicateLane(li) {
       if (free(dz, baseDy)) start = { dz, dy: baseDy };
     }
   }
-  AppState.lanes.splice(li + 1, 0, { tracks: [...src.tracks], start: start || { dz: 0, dy: 1 } });
+  AppState.lanes.splice(li + 1, 0, { tracks: [...src.tracks], start: start || { dz: 0, dy: 1 }, volRestore: !!src.volRestore });
   syncLaneStarts();
   renderLaneSection();
   return true;
@@ -3922,7 +3977,13 @@ function assignUnassigned(song) {
     target.tracks.push(i);
     for (const tick of layer.notes.keys()) target.ticks.set(tick, (target.ticks.get(tick) || 0) + 1);
   }
-  AppState.lanes = lanes.map(l => ({ tracks: l.tracks }));
+  // 保留原车道的起点与音量还原勾选（2026-11-07 · N1）：lanes 由 AppState.lanes 保序 map 而来、
+  //   只追加从不重排 → 前 N 条与原来一一对应，按下标继承即可。旧写法只留 tracks，随后 syncLaneStarts
+  //   会把全部起点重置为 i*3+3，用户的手动布局在点一次「自动并入」后被静默清空。
+  const prev = AppState.lanes;
+  AppState.lanes = lanes.map((l, i) => (i < prev.length
+    ? { tracks: l.tracks, start: { ...prev[i].start }, volRestore: !!prev[i].volRestore }
+    : { tracks: l.tracks }));
   syncLaneStarts();
   renderLaneSection();
   return rest.length;
@@ -4813,8 +4874,12 @@ function renderLaneSection() {
     restoreCb.dataset.li = String(li);
     restoreCb.checked = !!lane.volRestore;
     const g0Hint = volRestoreGain(lane.start.dz, lane.start.dy);
-    restoreCb.title = `音量还原：以起点增益（≈ ${Math.round(g0Hint * 100)}%）为 100 基准按 velocity 沿 Z 偏移；`
-      + '主链重定位到音符中位数（跨度>30 夹取保 100 侧）；每 tick ≤1 盒，和弦保留 velocity 最高。需「矿车监听」启用';
+    // 文案（2026-11-07 修正）：语义是「本轨原位 = 100%」，不是「玩家位置 = 100%」；
+    //   百分比是**近似**——实际锚点还要加矿车让位平移（见生成明细「矿车行走行让位」）。
+    restoreCb.title = `音量还原：以本轨原位（起点，增益≈ ${Math.round(g0Hint * 100)}%）为 100 基准按 velocity 沿 Z 偏移——`
+      + 'v=100 的盒就在原位、v<100 更远（更轻）、v>100 更近（更响）；'
+      + '主链重定位到音符中位数（跨度>30 夹取保 100 侧，撞邻车道则放弃重定位）；每 tick ≤1 盒，和弦保留 velocity 最高。'
+      + '需「矿车监听」启用（启用时部分车道会向 +Z 让位，实际位置见生成明细）';
     const restoreTxt = document.createElement('span');
     restoreTxt.textContent = ' 音量还原';
     restoreBox.appendChild(restoreCb);
@@ -5897,8 +5962,14 @@ async function generate() {
     // 负起点时网格整体平移（yOffset/zOffset，见 buildLayout），实际跨度 = max − min（min 可为负），
     // 故按 max−min 预估才能与 buildLayout 的真实包围盒一致（起点为负时跨度更大，只估 max 会绕过 40M 上限）
     const ys = lanes.map(l => l.start.dy), zs = lanes.map(l => l.start.dz);
-    // 音量还原分支盒沿 Z 延伸 ±15（主链重定位后的 zc 上下各 15 格）→ 上下界扩展
-    const zsExt = lanes.flatMap(l => l.volRestore ? [l.start.dz - 15, l.start.dz + 15] : [l.start.dz]);
+    // 音量还原分支可达范围（2026-11-07 · 与 buildLayout 的 volZRange 同源）：主链重定位后最多 ±15，
+    //   但正侧不越过行走行（末端盒 z≥1）、负侧不越过 z≤−1，且重定位位置未定 → 按「起点 ±15 且不跨 0」保守估。
+    const zsExt = lanes.flatMap(l => {
+      if (!l.volRestore) return [l.start.dz];
+      const lo = l.start.dz > 0 ? Math.max(l.start.dz - 15, 1) : l.start.dz - 15;
+      const hi = l.start.dz < 0 ? Math.min(l.start.dz + 15, -1) : l.start.dz + 15;
+      return [Math.min(lo, l.start.dz - 1), Math.max(hi, l.start.dz + 1)];
+    });
     const estY = Math.max(...ys, AppState.lane0.start.dy) - Math.min(...ys, AppState.lane0.start.dy, 0) + 3;
     const estZ = Math.max(...zsExt, AppState.lane0.start.dz) - Math.min(...zsExt, AppState.lane0.start.dz, 0) + 5;
     // 4000 万格：Uint16Array 2 字节/格 ≈ 80MB 网格 + 调色板/位打包/产物 NBT 开销，防止浏览器内存打爆
@@ -6212,7 +6283,11 @@ $('layerList').addEventListener('change', (e) => {
     return;
   }
 });
-$('autoGroupBtn').addEventListener('click', () => { rebuildLanesAuto(); renderLaneSection(); scheduleStateSave(); });
+$('autoGroupBtn').addEventListener('click', () => {
+  // 重建语义（2026-11-07 · N1）：车道全部按每 3 音轨重新分组，起点与音量还原勾选无法对应保留
+  if (!confirm('自动分配会按「每 3 音轨一车道」重建全部车道，**起点与音量还原勾选将被重置**。继续？')) return;
+  rebuildLanesAuto(); renderLaneSection(); scheduleStateSave();
+});
 $('addLaneBtn').addEventListener('click', () => {
   AppState.lanes.push({ tracks: [] });
   syncLaneStarts();
@@ -6224,7 +6299,7 @@ $('applyPackBtn').addEventListener('click', () => {
   const pool = lanePoolMembers(song);
   if (!song || pool.length === 0) return;
   const packed = packLanesNoConflict(song, pool);
-  if (!confirm(`应用无冲突打包：${packed.length} 条车道（将替换当前分配，手动重复分配会丢失）？`)) return;
+  if (!confirm(`应用无冲突打包：${packed.length} 条车道？\n\n注意：车道会按新方案重排，全部车道的**起点与音量还原勾选将被重置**（手动布局与重复分配会丢失）。`)) return;
   AppState.lanes = packed.map(tracks => ({ tracks }));
   syncLaneStarts();
   renderLaneSection();

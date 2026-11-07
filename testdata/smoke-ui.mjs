@@ -1916,7 +1916,7 @@ check(!infoHtml.includes('小号'), 'v5 歌曲：ID 16 是自定义乐器而非�
       `M 锚点=让位后 zc 8、参与音符 2（组索引 ${vr[0].lane} = 音轨车道，组 0 = 轨道 0；anchorZc=${vr[0].anchorZc}）`);
     check(vr[0].zLine === 16 && Math.abs(vr[0].g0 - 0.8320362969) < 1e-9,
       `M 主链重定位 zLine=16、g0=${vr[0].g0}（=1−√65/48）`);
-    check(vr[0].clampedTo100 === false && vr[0].truncated === 0, 'M 未截断（跨度 8.02 ≤ 30 且 |dz| ≤ 15）');
+    check(vr[0].clampedTo100 === false && !('truncated' in vr[0]), 'M 未截断（跨度 8.02 ≤ 30 且 |dz| ≤ 15；N8 已删除恒 0 的 truncated 死字段）');
   }
   check(r && r.stats.volRestoreNotes === 2 && r.stats.noteBlocks === 2 && r.stats.notesDiscarded === 0,
     `M 两音符均放盒（v100 分支末端 / v80 主位；volRestoreNotes=${r && r.stats.volRestoreNotes}）`);
@@ -1930,6 +1930,44 @@ check(!infoHtml.includes('小号'), 'v5 歌曲：ID 16 是自定义乐器而非�
   const r2 = st.result.result;
   check(r2.geometry.volRestore === null && r2.stats.volRestoreNotes === 0, 'M 取消音量还原 → geometry.volRestore=null（零回归）');
   cb.checked = false; cb.dispatch('change', { target: cb }); // 复原监听开关
+}
+
+// ---------- N1（2026-11-07 新增）：车道重建路径不得丢失 start / volRestore ----------
+{
+  const st = context.window.__NBS2SCHEMATIC.state;
+  const canonN1 = context.parseNBS(new Uint8Array(readFileSync(path.join(__dirname, 'canon in d major Loop.nbs'))));
+  canonN1.sourceFileName = 'canon in d major Loop.nbs';
+  context.onSongLoaded(canonN1, null);
+  check(st.lanes.length >= 3, `N1 前置：卡农建道 ≥3 条（实际 ${st.lanes.length}）`);
+  // 手动设定每条车道的起点与音量还原，然后模拟「自动并入未分配音轨」
+  st.lanes.forEach((l, i) => { l.start = { dz: (i + 1) * 7, dy: i * 3 }; l.volRestore = i % 2 === 1; });
+  const n1Before = st.lanes.map(l => ({ dz: l.start.dz, dy: l.start.dy, vr: !!l.volRestore }));
+  // 清空一条车道的音轨制造「未分配」，迫使 assignUnassigned 走追加路径
+  st.lanes[0].tracks = [];
+  context.assignUnassigned(canonN1);
+  const n1After = st.lanes.slice(0, n1Before.length).map(l => ({ dz: l.start.dz, dy: l.start.dy, vr: !!l.volRestore }));
+  const n1Kept = n1Before.every((b, i) => n1After[i] && n1After[i].dz === b.dz && n1After[i].dy === b.dy && n1After[i].vr === b.vr);
+  check(n1Kept, `N1 assignUnassigned 保留 start/volRestore（前 ${n1Before.length} 条；before=${JSON.stringify(n1Before)} after=${JSON.stringify(n1After)}）`);
+
+  // duplicateLane 复制 volRestore
+  st.lanes[1].volRestore = true;
+  st.lanes[1].start = { dz: 11, dy: 4 };
+  const dupOk = context.duplicateLane(1);
+  const dupLane = st.lanes[2];
+  check(dupOk && dupLane && dupLane.volRestore === true,
+    `N1 duplicateLane 复制 volRestore（新车道 volRestore=${dupLane && dupLane.volRestore}）`);
+  check(dupOk && dupLane && dupLane.start && dupLane.start.dz === -11 && dupLane.start.dy === 4,
+    `N1 duplicateLane 起点走镜像规则（dz=${dupLane && dupLane.start && dupLane.start.dz}、dy=${dupLane && dupLane.start && dupLane.start.dy}）`);
+  // 渲染层：复制后新卡片的复选框应为勾选（DOM 桩无选择器 → 递归收集）
+  context.renderLaneSection();
+  const collectRestore = (node, out = []) => {
+    if (node.className && String(node.className).split(/\s+/).includes('lane-restore')) out.push(node);
+    for (const c of (node.children || [])) collectRestore(c, out);
+    return out;
+  };
+  const cbs = collectRestore(elements.get('groupList'));
+  const dupIdx = st.lanes.indexOf(dupLane);
+  check(cbs.length > dupIdx && cbs[dupIdx].checked === true, `N1 复制后卡片复选框为勾选（第 ${dupIdx + 1} 条 checked=${cbs[dupIdx] && cbs[dupIdx].checked}）`);
 }
 
 console.log(`汇总：共 ${passed + failed} 项 — ${passed} PASS / ${failed} FAIL`);

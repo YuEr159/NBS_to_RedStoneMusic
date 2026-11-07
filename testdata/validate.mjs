@@ -3134,6 +3134,47 @@ try {
     ok = false;
   } else console.log('PASS V1 纯函数：g0 定义、reqZ 单调/v=100 恰回锚点/v>100 回 z=1/逆函数、span≤30 中位数、S>30 保 100 侧 clamp、v=0 过滤、空输入=锚点');
 
+  // ---------- V1b/V1c/V1d/V6（2026-11-07 新增：符号、中心、下限、分支预算） ----------
+  {
+    // V1b 负侧：D1 符号语义——v=100 恰回锚点、v<100 更远、v>100 更近（不镜像到另一侧）
+    const nAnchor = -24;
+    const n100 = volRestoreReqZ(100, nAnchor, 0);
+    const n50 = volRestoreReqZ(50, nAnchor, 0);
+    const n120 = volRestoreReqZ(120, nAnchor, 0);
+    const n200 = volRestoreReqZ(200, nAnchor, 0);
+    const v1bOk = Math.abs(n100 - (-24)) < eps          // v=100 → 原位
+      && n50 < -24 && n50 > -48                          // v<100 → 更远（同侧）
+      && n120 > -24 && n120 < 0                          // v>100 → 更近（同侧）
+      && n200 === -1;                                    // 上溢 → 同侧最近格
+    if (!v1bOk) {
+      console.log(`FAIL V1b 负侧符号：reqZ(100)=${n100} reqZ(50)=${n50} reqZ(120)=${n120} reqZ(200)=${n200}`); ok = false;
+    } else console.log('PASS V1b 负侧符号：v=100 → −24（原位）、v=50 → 更远同侧、v=120 → 更近同侧、v=200 → −1');
+
+    // V1c 中心（zAnchor=0，D1 默认朝右）：v=100 恰落最近格 +1；v=50 更远（正侧）；v=120 上溢夹 +1
+    const c100 = volRestoreReqZ(100, 0, 0);
+    const c50 = volRestoreReqZ(50, 0, 0);
+    const c120 = volRestoreReqZ(120, 0, 0);
+    const v1cOk = c100 === 1 && c50 > 20 && c50 < 30 && c120 === 1
+      && c50 > 0 && c100 > 0 && c120 > 0;                // 全正 = 默认右侧
+    if (!v1cOk) {
+      console.log(`FAIL V1c 中心：reqZ(100,0)=${c100} reqZ(50,0)=${c50} reqZ(120,0)=${c120}`); ok = false;
+    } else console.log(`PASS V1c 中心：zAnchor=0 → v=100 落 +1（最近格）、v=50 落 +${c50.toFixed(2)}（更远）、v=120 上溢夹 +1、全为正（默认朝右）`);
+
+    // V1d zLine 符号钳（N5）：正侧恒 ≥2、负侧恒 ≤−2（第 3/第 2 位盒不得落进行走行 z=0）
+    const zlPos = volRestoreZLine([127, 127, 127], 2, 0);
+    const zlNeg = volRestoreZLine([127, 127, 127], -24, 0);
+    const v1dOk = zlPos >= 2 && zlNeg <= -2;
+    if (!v1dOk) {
+      console.log(`FAIL V1d zLine 符号钳：正侧=${zlPos}（应≥2） 负侧=${zlNeg}（应≤−2）`); ok = false;
+    } else console.log(`PASS V1d zLine 符号钳（N5）：正侧全 127 → ${zlPos}（≥2）、负侧全 127 → ${zlNeg}（≤−2），第 3/第 2 位盒均不落进行走行 z=0`);
+
+    // V1e 负数解析（补充 D1）：zAnchor 为小数时符号仍正确
+    const halfNeg = volRestoreReqZ(60, -7.5, 0);
+    const v1eOk = halfNeg < 0;
+    if (!v1eOk) { console.log(`FAIL V1e 小数锚点：reqZ(60,−7.5)=${halfNeg}（应为负）`); ok = false; }
+    else console.log('PASS V1e 小数锚点：reqZ(60,−7.5) 为负（符号随锚点）');
+  }
+
   // V2/V3/V4/V5 e2e（合成 NBS；监听启用 + 音轨组 dz=6 → 锚点 8）
   const nbs = makeNbs({ tempoTps: 20, songLength: 4, noteSpecs: [
     { tick: 0, layer: 0, instrument: 0, key: 40, velocity: 100 },
@@ -3150,8 +3191,8 @@ try {
     const gV = rV.result.geometry, grV = rV.result.grid;
     const chV = rV.result.chains.find(c => c.volRestore);
     const entry = gV.volRestore && gV.volRestore[0];
-    const g0A = volRestoreGain(8, 0); // 锚点 8（让位后）→ g0 = 1−√65/48
-    // zLine=12 → 下界 12−15=−3 → zExtra=2、zOffset=3；zHi=max(13,27)=27 → sz=31；主位网格 12+3=15
+    const g0A = volRestoreGain(8, 0); // 锚点 8（全局让位 shift=2：车道 dz=6 → 8）→ g0 = 1−√65/48
+    // zLine=12 → 正侧分支可达 [max(12−15,1)=1, 27] → zLo=1 → zExtra=0、zOffset=1；zHi=27 → sz=29；主位网格 13
     const mainZ = entry && entry.zLine + gV.zOffset;
     const idWire = grV.stateIds.get('minecraft:redstone_wire');
     const stOf = (x, y, z) => { const id = grV.data[grV.idx(x, y, z)]; return id === 0 ? null : [...grV.stateIds.entries()].find(([, v]) => v === id)[0]; };
@@ -3160,23 +3201,23 @@ try {
     const v2coreOk = gV.volRestore && gV.volRestore.length === 1
       && entry.anchorZc === 8 && entry.zLine === 12 && entry.noteCount === 3
       && Math.abs(entry.g0 - g0A) < eps && entry.clampedTo100 === false
-      && chV.zc === 12 && gV.zOffset === 3 && grV.sz === 31; // 下界 −3 → zExtra=2
+      && chV.zc === 12 && gV.zOffset === 1 && grV.sz === 29; // N7：分支可达 [1,27] → 无额外负向平移
     if (!v2coreOk) {
       console.log(`FAIL V2 主链重定位：entry=${JSON.stringify(entry)} chV.zc=${chV && chV.zc} zOff=${gV.zOffset} sz=${grV.sz}`); ok = false;
-    } else console.log('PASS V2 主链重定位：锚点 zc=8 → zLine=12（中位数 12.014 取整，span 8.0≤30）、g0=1−√65/48、zOffset=3、sz=31、geometry.volRestore 齐备');
-    // t0 v=100 → dz=−4 末端 z=8（网格 11）：主位粉 (1,1,15) + 分支粉 z=11..9 网格 14..12 + 末端盒 (1,*,11)
+    } else console.log('PASS V2 主链重定位：锚点 zc=8 → zLine=12（中位数 12.014 取整，span 8.0≤30）、g0=1−√65/48、zOffset=1、sz=29、geometry.volRestore 齐备');
+    // t0 v=100 → dz=−4 末端 z=8（网格 9）：主位粉 (1,1,13) + 分支粉 z=11..9 网格 12..10 + 末端盒 (1,*,9)
     const t0ok = grV.data[grV.idx(1, 1, mainZ)] === idWire
-      && [12, 13, 14].every(z => grV.data[grV.idx(1, 1, z)] === idWire)
-      && boxAt(1, 11) && stOf(1, 0, 11) === 'minecraft:snow_block'
-      && grV.data[grV.idx(1, 1, 10)] === 0;
-    // t1/t3 v=90 → dz=0 盒在主位（网格 15）：note=key−33=8 / 10
+      && [10, 11, 12].every(z => grV.data[grV.idx(1, 1, z)] === idWire)
+      && boxAt(1, 9) && stOf(1, 0, 9) === 'minecraft:snow_block'
+      && grV.data[grV.idx(1, 1, 8)] === 0;
+    // t1/t3 v=90 → dz=0 盒在主位（网格 13）：note=key−33=8 / 10
     const t1ok = stOf(3, 1, mainZ) === 'minecraft:note_block[instrument=harp,note=8,powered=false]' && stOf(3, 0, mainZ) === 'minecraft:snow_block';
     const t3ok = stOf(7, 1, mainZ) === 'minecraft:note_block[instrument=harp,note=10,powered=false]';
-    // t2 v=80 → dz=+4 末端 z=16（网格 19）：主位粉 (5,1,15) + 分支粉 z=13..15 网格 16..18 + 末端盒 (5,*,19)
+    // t2 v=80 → dz=+4 末端 z=16（网格 17）：主位粉 (5,1,13) + 分支粉 z=13..15 网格 14..16 + 末端盒 (5,*,17)
     const t2ok = grV.data[grV.idx(5, 1, mainZ)] === idWire
-      && [16, 17, 18].every(z => grV.data[grV.idx(5, 1, z)] === idWire)
-      && boxAt(5, 19) && stOf(5, 0, 19) === 'minecraft:snow_block'
-      && grV.data[grV.idx(5, 1, 20)] === 0;
+      && [14, 15, 16].every(z => grV.data[grV.idx(5, 1, z)] === idWire)
+      && boxAt(5, 17) && stOf(5, 0, 17) === 'minecraft:snow_block'
+      && grV.data[grV.idx(5, 1, 18)] === 0;
     if (!(t0ok && t1ok && t2ok && t3ok)) {
       console.log(`FAIL V2 放置：t0=${t0ok} t1=${t1ok} t2=${t2ok} t3=${t3ok} mainZ=${mainZ}`); ok = false;
     } else console.log('PASS V2 放置：v=100 → 分支粉 z=11..9 + 末端盒 z=8；v=90 → 盒在主位（dz=0）；v=80 → 分支粉 z=13..15 + 末端盒 z=16');
@@ -3293,6 +3334,95 @@ try {
     if (!v5ok) {
       console.log(`FAIL V5 零回归：volRestore=${rV5.result.geometry.volRestore} sz=${rV5.result.grid.sz} notes=${rV5.result.stats.volRestoreNotes}`); ok = false;
     } else console.log('PASS V5 零回归：未启用 → geometry.volRestore=null、sz=11 无扩展、volRestoreNotes=0');
+
+    // ---------- N5a（2026-11-07 新增）：高 velocity 不得把主链压进行走行 ----------
+    //   触发条件：锚点很小（≤2）。车道 dz=0 → 全局让位 2 → 锚点 2；v=127 → target=g0×1.27 > 1 → 上溢回 z=1
+    //   → zs=[1] → zLine 未钳时 =1 → 主链 zc=1 → 第 3 位盒 z=0 = 矿车行走行。
+    //   期望：zLine 钳到 2，主链 zc=2，全部盒 z≥1。
+    const nbsN5 = makeNbs({ tempoTps: 20, songLength: 2, noteSpecs: [
+      { tick: 0, layer: 0, instrument: 0, key: 40, velocity: 127 },
+      { tick: 1, layer: 0, instrument: 0, key: 41, velocity: 127 },
+    ]});
+    const tmpN5 = 'synth_n5.nbs';
+    writeFileSync(path.join(__dirname, tmpN5), nbsN5);
+    try {
+      const rN5 = runE2E(tmpN5, { lane0: { dz: 5, dy: 0 }, groups: [{ layers: [0], volRestore: true }], groupStarts: [{ dz: 0, dy: 0 }], settings: sV });
+      const eN5 = rN5.result.geometry.volRestore[0];
+      const grN5 = rN5.result.grid;
+      const zoN5 = rN5.result.geometry.zOffset;
+      // 收集全部音符盒的布局 z（网格 z − zOffset）
+      const boxZ = [];
+      for (let z = 0; z < grN5.sz; z++) for (let x = 0; x < grN5.sx; x++) {
+        const id = grN5.data[grN5.idx(x, 1, z)];
+        if (id !== 0) {
+          const st = [...grN5.stateIds.entries()].find(([, v]) => v === id)[0];
+          if (st.startsWith('minecraft:note_block')) boxZ.push(z - zoN5);
+        }
+      }
+      const n5ok = eN5.zLine >= 2 && boxZ.length === 2 && boxZ.every(z => z >= 1);
+      if (!n5ok) {
+        console.log(`FAIL N5a zc 下限：zLine=${eN5.zLine}（应≥2）盒 z=${JSON.stringify(boxZ)}（应全≥1）`); ok = false;
+      } else console.log(`PASS N5a zc 下限（N5）：全 v=127 → zLine=${eN5.zLine}（钳到 ≥2）、${boxZ.length} 盒 z=${JSON.stringify(boxZ)} 全部 ≥1，无盒落进行走行 z=0`);
+
+      // ---------- N2a（新增）：重定位撞邻链时放弃重定位、不覆盖 ----------
+      //   A 轨（volRestore，dz=6→让位 8，v=70）→ zLine=20；B 轨（普通，dz=18→让位 20）→ 撞上。
+      //   期望：A 放弃重定位（保持 8）+ 明细告警；B 的音符盒完好。
+      const nbsN2 = makeNbs({ tempoTps: 20, songLength: 2, layers: 2, noteSpecs: [
+        { tick: 0, layer: 0, instrument: 0, key: 40, velocity: 70 },
+        { tick: 1, layer: 0, instrument: 0, key: 41, velocity: 70 },
+        { tick: 0, layer: 1, instrument: 1, key: 50 },
+      ]});
+      const tmpN2 = 'synth_n2.nbs';
+      writeFileSync(path.join(__dirname, tmpN2), nbsN2);
+      try {
+        const rN2 = runE2E(tmpN2, {
+          lane0: l0V,
+          groups: [{ layers: [1] }, { layers: [0], volRestore: true }],
+          groupStarts: [{ dz: 18, dy: 0 }, { dz: 6, dy: 0 }],
+          settings: sV,
+        });
+        const eN2 = rN2.result.geometry.volRestore[0];
+        const n2warn = rN2.result.stats.discardedDetails.some(d => d.includes('音量还原重定位目标') && d.includes('冲突'));
+        const n2ok = n2warn && Math.abs(eN2.zLine - eN2.anchorZc) < 1e-9;   // 未重定位
+        if (!n2ok) {
+          console.log(`FAIL N2a 碰撞护栏：warn=${n2warn} anchor=${eN2.anchorZc} zLine=${eN2.zLine} details=${JSON.stringify(rN2.result.stats.discardedDetails)}`); ok = false;
+        } else console.log(`PASS N2a 碰撞护栏（N2）：A 重定位目标与 B（z=${eN2.anchorZc}）冲突 → 放弃重定位（zLine 保持 ${eN2.zLine}）+ 明细告警`);
+      } finally {
+        try { rmSync(path.join(__dirname, tmpN2)); } catch {}
+      }
+    } finally {
+      try { rmSync(path.join(__dirname, tmpN5)); } catch {}
+    }
+
+    // ---------- D4（2026-11-07 新增）：让位只在必要时全局平移 ----------
+    //   ① 默认布局（轨道 0 在 z=0）→ 撞行走行 → 全局平移 2，与旧行为一致
+    //   ② 两条链都远离行走行 → shift=0，保持用户位置
+    const d4a = runE2E(tmpFile, { lane0: { dz: 0, dy: 0 }, groups: [{ layers: [0] }], groupStarts: [{ dz: 3, dy: 0 }], settings: sV });
+    const d4aShift = d4a.result.chains.filter(c => !c.isRefLane).map(c => c.zc);
+    const d4aOk = d4aShift[0] === 2 && d4aShift[1] === 5;   // 轨道0 0→2、车道 3→5（全局平移，间距保持 3）
+    if (!d4aOk) { console.log(`FAIL D4a 默认让位：zc=${JSON.stringify(d4aShift)}（期望 [2,5]）`); ok = false; }
+    else console.log('PASS D4a 默认让位：轨道 0 在 z=0 → 全局平移 2 → 轨道0=2、车道=5（与旧行为一致，间距保持 3）');
+
+    const d4b = runE2E(tmpFile, { lane0: { dz: 0, dy: 0 }, groups: [{ layers: [0] }], groupStarts: [{ dz: -24, dy: 0 }], settings: sV });
+    const d4bShift = d4b.result.chains.filter(c => !c.isRefLane).map(c => c.zc);
+    // 轨道 0 仍在 z=0 → 撞行走行 → 全局平移 26（−24 → 2）；间距保持
+    const d4bOk = d4bShift[0] === 26 && d4bShift[1] === 2;
+    if (!d4bOk) { console.log(`FAIL D4b 负起点+轨道0撞0：zc=${JSON.stringify(d4bShift)}（期望 [26,2]）`); ok = false; }
+    else console.log('PASS D4b 负起点+轨道0撞0：全局平移 26 → 轨道0=26、车道 −24→2（链间距保持 24，用户位置相对关系不变）');
+
+    const d4c = runE2E(tmpFile, { lane0: { dz: 5, dy: 0 }, groups: [{ layers: [0] }], groupStarts: [{ dz: 9, dy: 0 }], settings: sV });
+    const d4cShift = d4c.result.chains.filter(c => !c.isRefLane).map(c => c.zc);
+    const d4cOk = d4cShift[0] === 5 && d4cShift[1] === 9;   // 都不撞 0 → 零平移（旧行为会按 minZc=5 → shift=0 也成立）
+    const d4cWarn = d4c.result.stats.discardedDetails.some(d => d.includes('矿车行走行让位'));
+    if (!d4cOk || d4cWarn) { console.log(`FAIL D4c 远离行走行：zc=${JSON.stringify(d4cShift)}（期望 [5,9]）warn=${d4cWarn}`); ok = false; }
+    else console.log('PASS D4c 远离行走行：两条链都不撞 z=0 → 零平移（zc=[5,9] 保持用户位置）、无让位明细');
+
+    // D4d：用户诉求 3 —— 负起点车道 + 轨道 0 也被拖走 → 全部保持原位
+    const d4d = runE2E(tmpFile, { lane0: { dz: 6, dy: 0 }, groups: [{ layers: [0] }], groupStarts: [{ dz: -24, dy: 0 }], settings: sV });
+    const d4dShift = d4d.result.chains.filter(c => !c.isRefLane).map(c => c.zc);
+    const d4dOk = d4dShift[0] === 6 && d4dShift[1] === -24;
+    if (!d4dOk) { console.log(`FAIL D4d 负起点保持：zc=${JSON.stringify(d4dShift)}（期望 [6,−24]）`); ok = false; }
+    else console.log('PASS D4d 负起点保持（用户诉求 3）：轨道 0 在 6、车道在 −24，两者都不撞行走行 → 全部保持原位，v=100 的盒就在 −24');
   } finally {
     try { rmSync(path.join(__dirname, tmpFile)); } catch {}
   }
