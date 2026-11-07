@@ -214,8 +214,8 @@ input[type="number"] { width: 70px; }
     <span class="hint">音轨池侧栏已折叠</span>
   </div>
   <section id="file-section">
-    <div id="dropzone">把 <b>.nbs</b> 文件拖到这里，或 <button id="fileBtn">选择文件</button></div>
-    <input type="file" id="fileInput" accept=".nbs" hidden>
+    <div id="dropzone">把 <b>.nbs</b> 或 <b>.nbsproj</b> 工程文件拖到这里，或 <button id="fileBtn">选择文件</button></div>
+    <input type="file" id="fileInput" accept=".nbs,.nbsproj" hidden>
   </section>
 
   <section id="song-section" hidden>
@@ -396,6 +396,7 @@ input[type="number"] { width: 70px; }
       <button id="downloadBtn" hidden>下载 .litematic</button>
       <button id="sfxZipBtn" hidden title="粒子数据包：放入世界 datapacks 后 /reload；歌词 PNG 另需部署到 .minecraft/particleImages/lyric/">⬇ 下载粒子数据包 (.zip)</button>
       <button id="debugBtn" hidden>导出 JSON 调试包</button>
+      <button id="exportProjBtn" hidden title="把 NBS 文件与当前全部项目设置打包成单个 .nbsproj（换机/分享/归档用）">⬇ 导出工程文件 (.nbsproj)</button>
       <span class="hint" id="genStatus"></span>
       <div class="gen-progress" id="genProgress" hidden><div id="genProgressFill"></div></div>
     </div>
@@ -2805,50 +2806,90 @@ function zipCrc32(data) {
   return (c ^ 0xFFFFFFFF) >>> 0;
 }
 // files: [{ name, data: Uint8Array }] → zip 字节（STORE：无压缩，解压端零成本）
+// 2026-11-08 内存重构（工程文件导出前置）：原实现用 `[...data]` 把每个条目展开成普通 JS 数组，
+//   再整体 concat —— MB 级 NBS 会被展开成上亿个数组元素（撑爆内存/调用栈）。改为
+//   Uint8Array + 分块 set：字节内容逐位不变（粒子 zip 产物逐字节一致，validate 断言把关）。
+//   结构：先按总长分配 out，再逐条目写入本地头 30+N 字节 + 数据，最后写中央目录与 EOCD。
 function buildZip(files) {
   const enc = new TextEncoder();
+  const u32 = (v) => [v & 0xFF, (v >> 8) & 0xFF, (v >> 16) & 0xFF, (v >>> 24) & 0xFF];
+  const u16 = (v) => [v & 0xFF, (v >> 8) & 0xFF];
   const entries = [];
   let offset = 0;
-  const u16 = (v) => [v & 0xFF, (v >> 8) & 0xFF];
-  const u32 = (v) => [v & 0xFF, (v >> 8) & 0xFF, (v >> 16) & 0xFF, (v >>> 24) & 0xFF];
   for (const f of files) {
     const nameB = enc.encode(f.name);
     const data = f.data;
-    const crc = zipCrc32(data);
-    const local = [
-      ...u32(0x04034b50), ...u16(20), ...u16(0x0800), ...u16(0), ...u16(0), ...u16(0x2a), // 签名/版本/标志(STORE)/时间/日期
-      ...u32(crc), ...u32(data.length), ...u32(data.length),
-      ...u16(nameB.length), ...u16(0),
-      ...nameB, ...[...data],
-    ];
-    entries.push({ name: nameB, crc, size: data.length, local, localOffset: offset });
-    offset += local.length;
+    entries.push({ name: nameB, crc: zipCrc32(data), size: data.length, data, localOffset: offset });
+    // 本地头 30 字节：签名/版本 20/标志 STORE/方法 0/时间 0/日期 0x2a
+    offset += 30 + nameB.length + data.length;
   }
   const centralOffset = offset;
-  const central = [];
+  for (const e of entries) offset += 46 + e.name.length;
+  const centralSize = offset - centralOffset;
+  const out = new Uint8Array(offset + 22);
+  let o = 0;
+  const put = (arr) => { for (let i = 0; i < arr.length; i++) out[o++] = arr[i]; };
+  for (const e of entries) {
+    put(u32(0x04034b50)); put(u16(20)); put(u16(0x0800)); put(u16(0)); put(u16(0)); put(u16(0x2a));
+    put(u32(e.crc)); put(u32(e.size)); put(u32(e.size));
+    put(u16(e.name.length)); put(u16(0));
+    put(e.name);
+    out.set(e.data, o); o += e.data.length;
+  }
   for (const e of entries) {
     // 中央目录条目固定 46 字节 + 文件名（PKZIP 规范字段序；internal attrs 为 2 字节，不可省）
-    central.push(
-      ...u32(0x02014b50), ...u16(20), ...u16(20), ...u16(0x0800), ...u16(0), ...u16(0), ...u16(0x2a), // 签名+版本+标志+方法+时间+日期
-      ...u32(e.crc), ...u32(e.size), ...u32(e.size),
-      ...u16(e.name.length), ...u16(0), ...u16(0), ...u16(0), // 名长、extra、comment、diskStart
-      ...u16(0), // 内部属性
-      ...u32(0), // 外部属性
-      ...u32(e.localOffset), ...e.name,
-    );
-    offset += 46 + e.name.length;
+    put(u32(0x02014b50)); put(u16(20)); put(u16(20)); put(u16(0x0800)); put(u16(0)); put(u16(0)); put(u16(0x2a));
+    put(u32(e.crc)); put(u32(e.size)); put(u32(e.size));
+    put(u16(e.name.length)); put(u16(0)); put(u16(0)); put(u16(0));
+    put(u16(0)); // 内部属性
+    put(u32(0)); // 外部属性
+    put(u32(e.localOffset)); put(e.name);
   }
-  const centralSize = offset - centralOffset;
-  const end = [
-    ...u32(0x06054b50), ...u16(0), ...u16(0),
-    ...u16(entries.length), ...u16(entries.length),
-    ...u32(centralSize), ...u32(centralOffset), ...u16(0),
-  ];
-  const parts = entries.map(e => e.local).concat([central, end]);
-  const out = new Uint8Array(parts.reduce((s, p) => s + p.length, 0));
-  let o = 0;
-  for (const p of parts) { out.set(p, o); o += p.length; }
+  put(u32(0x06054b50)); put(u16(0)); put(u16(0));
+  put(u16(entries.length)); put(u16(entries.length));
+  put(u32(centralSize)); put(u32(centralOffset)); put(u16(0));
   return out;
+}
+
+// readZip(bytes)：读 STORE-only zip（工程文件导入用，2026-11-08）。
+//   只支持 method=0（本工具自产 zip 恒 STORE）；其他方法抛错，由调用方转成用户可读文案。
+//   从 EOCD（尾部 PK\x05\x06）取中央目录偏移，再顺条目读本地头拿数据切片（不复制，返回 subarray 视图）。
+//   CRC 逐条校验：损坏/截断 → 抛错（相当于原规划的 sha256 校验，且解压端零依赖）。
+function readZip(bytes) {
+  const u16 = (o) => bytes[o] | (bytes[o + 1] << 8);
+  const u32 = (o) => (bytes[o] | (bytes[o + 1] << 8) | (bytes[o + 2] << 16) | (bytes[o + 3] << 24)) >>> 0;
+  // EOCD 最长 22 + 65535 注释，从尾部向前找签名
+  let eocd = -1;
+  for (let i = bytes.length - 22; i >= 0 && i >= bytes.length - 22 - 65535; i--) {
+    if (u32(i) === 0x06054b50) { eocd = i; break; }
+  }
+  if (eocd < 0) throw new Error('不是有效的 zip 文件（找不到目录结尾记录）');
+  const count = u16(eocd + 10);
+  let p = u32(eocd + 16);
+  const dec = new TextDecoder();
+  const files = new Map();
+  for (let k = 0; k < count; k++) {
+    if (p + 46 > bytes.length || u32(p) !== 0x02014b50) throw new Error('zip 中央目录损坏');
+    const method = u16(p + 10);
+    const crc = u32(p + 16);
+    const compSize = u32(p + 20);
+    const nameLen = u16(p + 28);
+    const extraLen = u16(p + 30);
+    const commentLen = u16(p + 32);
+    const localOffset = u32(p + 42);
+    const name = dec.decode(bytes.subarray(p + 46, p + 46 + nameLen));
+    if (method !== 0) throw new Error(`工程文件条目 ${name} 使用了压缩（method=${method}），本工具只支持 STORE 格式`);
+    if (localOffset + 30 > bytes.length || u32(localOffset) !== 0x04034b50) throw new Error(`zip 条目 ${name} 的本地头损坏`);
+    const lNameLen = u16(localOffset + 26);
+    const lExtraLen = u16(localOffset + 28);
+    const dataStart = localOffset + 30 + lNameLen + lExtraLen;
+    const data = bytes.subarray(dataStart, dataStart + compSize);
+    if (data.length !== compSize) throw new Error(`zip 条目 ${name} 被截断`);
+    if (zipCrc32(data) !== crc) throw new Error(`zip 条目 ${name} CRC 校验失败（文件损坏）`);
+    files.set(name, data);
+    p += 46 + nameLen + extraLen + commentLen;
+  }
+  return files;
 }
 
 // 完整粒子数据包：pack.mcmeta + data/<ns>/<dir>/<tick>.mcfunction（按目标版本目录名）
@@ -3376,7 +3417,9 @@ function renderTempoAdvice() {
   $('tempoAdvice').innerHTML = lines.map(l => `<div class="advice-line">${l}</div>`).join('');
 }
 
-function onSongLoaded(song, bytes) {
+// overrideState（2026-11-08 · 工程文件导入）：传校验后的载荷则跳过 localStorage 读取，直接应用；
+//   statusMsg 覆盖末尾状态文案（导入显示「已载入工程文件」，缺省按「已恢复上次编辑状态」）。
+function onSongLoaded(song, bytes, overrideState = null, statusMsg = null) {
   AppState.song = song;
   AppState.fileBytes = bytes;
   clearError();
@@ -3384,7 +3427,7 @@ function onSongLoaded(song, bytes) {
   renderTempoAdvice();
   $('tempo-section').hidden = false;
   // 优先恢复上次保存的车道/音轨/设置（key = 文件名+大小哈希，换歌不误恢复）
-  const saved = loadSavedState(song);
+  const saved = overrideState || loadSavedState(song);
   if (saved) {
     applySavedState(song, saved);
   } else {
@@ -3417,12 +3460,14 @@ function onSongLoaded(song, bytes) {
   $('downloadBtn').hidden = true;
   $('sfxZipBtn').hidden = true;
   $('debugBtn').hidden = true;
+  $('exportProjBtn').hidden = false;   // 工程文件导出不依赖生成成功（载歌即可用）
   $('statsPanel').hidden = true;
   $('previewPanel').hidden = true;
   $('warnings').innerHTML = '';
-  $('genStatus').textContent = saved
-    ? `已恢复上次编辑状态（${new Date(saved.savedAt).toLocaleString()}）`
-    : '';
+  $('genStatus').textContent = statusMsg
+    || (saved
+      ? `已恢复上次编辑状态（${new Date(saved.savedAt).toLocaleString()}）`
+      : '');
   if (topPreview) topPreview.clear();
   if (frontPreview) frontPreview.clear();
   if (sidePreview) sidePreview.clear();
@@ -3442,50 +3487,54 @@ function stateKey(song) {
   const size = AppState.fileBytes ? AppState.fileBytes.length : 0;
   return 'nbs2schematic:v1:' + fnv1a32((song.sourceFileName || song.songName || 'unnamed') + ':' + size);
 }
+// 载荷构造（2026-11-08 从 saveStateNow 抽出的单一来源）：localStorage 与工程文件导出共用，
+//   避免两份序列化代码漂移（新增字段只需改这里）。返回值可直接 JSON.stringify。
+function buildStatePayload() {
+  return {
+    v: 2, // v2（2026-09-07 MIDI式中心可拖）：v1 的MIDI式 start 是自动排布占位（i×3+6），v2 起其语义=粒子中心基准（默认 (0,0)）
+    savedAt: Date.now(),
+    selectedLayers: [...AppState.selectedLayers],
+    refLayers: [...AppState.refLayers.entries()],
+    lanes: AppState.lanes.map(l => ({
+      tracks: [...l.tracks],
+      start: l.start ? { dz: l.start.dz, dy: l.start.dy } : null,
+      volRestore: !!l.volRestore, // 音量还原 opt-in（2026-10-09；false = 不写该键保持旧形状）
+    })),
+    lane0Start: AppState.lane0 ? { dz: AppState.lane0.start.dz, dy: AppState.lane0.start.dy } : null,
+    refLanes: AppState.refLanes.map(l => ({
+      tracks: [...l.tracks],
+      type: l.type || 'independent',
+      start: l.start ? { dz: l.start.dz, dy: l.start.dy } : null,
+      effects: Array.isArray(l.effects) ? [...l.effects] : undefined, // 缺省 = 全选（不写该键，保持旧载荷形状）
+      sfxParams: sfxParamsPayload(l) // 车道级特效模板（触发 5 字段 + 连接/背景文本；空 = 不写该键）
+    })),
+    // 歌词：可选（旧存档无此字段 = 无歌词）；每句 {start, end, text}，tick 整数
+    lyrics: Array.isArray(AppState.lyrics)
+      ? AppState.lyrics.map(s => ({ start: Number(s && s.start), end: Number(s && s.end), text: String(s && s.text || '') }))
+      : [],
+    settings: {
+      targetVersion: AppState.settings.targetVersion,
+      customInstrumentMap: [...AppState.settings.customInstrumentMap.entries()],
+      soundIdMap: [...AppState.settings.soundIdMap.entries()],
+      sfxPitchStep: AppState.settings.sfxPitchStep,
+      // 矿车监听系统：可选（旧存档无此字段 = 未启用）
+      listener: { enabled: !!(AppState.settings.listener && AppState.settings.listener.enabled) },
+      lyric: {
+        particle: AppState.settings.lyric.particle,
+        size: AppState.settings.lyric.size,
+        gap: AppState.settings.lyric.gap,
+        maxChars: AppState.settings.lyric.maxChars,
+        rotate: AppState.settings.lyric.rotate,
+        pos: { ...AppState.settings.lyric.pos },
+        font: AppState.settings.lyric.font,
+      },
+    },
+  };
+}
 function saveStateNow() {
   if (typeof localStorage === 'undefined' || !AppState.song) return;
   try {
-    const payload = {
-      v: 2, // v2（2026-09-07 MIDI式中心可拖）：v1 的MIDI式 start 是自动排布占位（i×3+6），v2 起其语义=粒子中心基准（默认 (0,0)）
-      savedAt: Date.now(),
-      selectedLayers: [...AppState.selectedLayers],
-      refLayers: [...AppState.refLayers.entries()],
-      lanes: AppState.lanes.map(l => ({
-        tracks: [...l.tracks],
-        start: l.start ? { dz: l.start.dz, dy: l.start.dy } : null,
-        volRestore: !!l.volRestore, // 音量还原 opt-in（2026-10-09；false = 不写该键保持旧形状）
-      })),
-      lane0Start: AppState.lane0 ? { dz: AppState.lane0.start.dz, dy: AppState.lane0.start.dy } : null,
-      refLanes: AppState.refLanes.map(l => ({
-        tracks: [...l.tracks],
-        type: l.type || 'independent',
-        start: l.start ? { dz: l.start.dz, dy: l.start.dy } : null,
-        effects: Array.isArray(l.effects) ? [...l.effects] : undefined, // 缺省 = 全选（不写该键，保持旧载荷形状）
-        sfxParams: sfxParamsPayload(l) // 车道级特效模板（触发 5 字段 + 连接/背景文本；空 = 不写该键）
-      })),
-      // 歌词：可选（旧存档无此字段 = 无歌词）；每句 {start, end, text}，tick 整数
-      lyrics: Array.isArray(AppState.lyrics)
-        ? AppState.lyrics.map(s => ({ start: Number(s && s.start), end: Number(s && s.end), text: String(s && s.text || '') }))
-        : [],
-      settings: {
-        targetVersion: AppState.settings.targetVersion,
-        customInstrumentMap: [...AppState.settings.customInstrumentMap.entries()],
-        soundIdMap: [...AppState.settings.soundIdMap.entries()],
-        sfxPitchStep: AppState.settings.sfxPitchStep,
-        // 矿车监听系统：可选（旧存档无此字段 = 未启用）
-        listener: { enabled: !!(AppState.settings.listener && AppState.settings.listener.enabled) },
-        lyric: {
-          particle: AppState.settings.lyric.particle,
-          size: AppState.settings.lyric.size,
-          gap: AppState.settings.lyric.gap,
-          maxChars: AppState.settings.lyric.maxChars,
-          rotate: AppState.settings.lyric.rotate,
-          pos: { ...AppState.settings.lyric.pos },
-          font: AppState.settings.lyric.font,
-        },
-      },
-    };
-    localStorage.setItem(stateKey(AppState.song), JSON.stringify(payload));
+    localStorage.setItem(stateKey(AppState.song), JSON.stringify(buildStatePayload()));
   } catch (e) { /* 配额/安全异常：静默忽略，不影响主流程 */ }
 }
 let stateSaveTimer = null;
@@ -3495,13 +3544,19 @@ function scheduleStateSave() {
   // 300ms 防抖：勾选/拖拽等高频操作合并为一次 localStorage 写入
   stateSaveTimer = setTimeout(() => { stateSaveTimer = null; saveStateNow(); }, 300);
 }
-// 读取并校验已存状态；返回 {selectedLayers, lanes, settings} 或 null（任何一项不合法即整体放弃）
+// 读取并校验已存状态；返回校验后的载荷或 null（任何一项不合法即整体放弃）
 function loadSavedState(song) {
   if (typeof localStorage === 'undefined') return null;
   try {
     const raw = localStorage.getItem(stateKey(song));
     if (!raw) return null;
-    const s = JSON.parse(raw);
+    return validateStatePayload(song, JSON.parse(raw));
+  } catch (e) { return null; }
+}
+// 载荷校验（2026-11-08 从 loadSavedState 抽出的单一来源）：localStorage 恢复与工程文件导入共用。
+//   语义「全有或全无」——任一字段不合法即返回 null（导入时绝不半应用）。
+function validateStatePayload(song, s) {
+  try {
     if (!s || (s.v !== 1 && s.v !== 2)) return null; // v2 = MIDI式中心可拖后格式（载荷形状同 v1，仅MIDI式 start 语义变更）
     const nLayers = song.layers.length;
     if (!Array.isArray(s.selectedLayers) || !Array.isArray(s.lanes)) return null;
@@ -5888,6 +5943,7 @@ window.__NBS2SCHEMATIC = {
   get sidePreview() { return sidePreview; },
   parseNBS, computeDelays, noteFromKey, baseBlockFor, instrumentNameFor,
   buildLayout, buildPalette, buildLitematic,
+  buildStatePayload, validateStatePayload, readZip, exportProject, importProject,
   volRestoreGain, volRestoreReqZ, volRestoreZLine,
   SFX_NAMESPACE, SFX_PARTICLE_CMD, SFX_CB_STATE, SFX_PACKFORMAT, sfxPackFormat, sfxParticleCmd,
   SFX_PARTICLE_FIELDS, sfxParticleCmdFromParts, sfxParticleCmdWithGroup, normSfxParams, sfxParamsPayload,
@@ -6180,6 +6236,87 @@ function downloadSfxDatapack() {
   setTimeout(() => URL.revokeObjectURL(url), 5000);
 }
 
+/* ===== 工程文件导出/导入（.nbsproj，2026-11-08） =====
+   格式 = STORE zip：song.nbs（原始字节逐位不变）+ project.json（state = localStorage 载荷同构）
+   + 可选 assets/lyric-font.ttf（用户上传字体，刷新即丢的那部分）。
+   · state 由 buildStatePayload 产、validateStatePayload 验 —— 与 localStorage 完全同源，零重复实现；
+   · 导入复用 onSongLoaded（overrideState），UI 重建链不重写；
+   · 不设 manifest / sha256：CRC32 + 长度足够（crypto.subtle 在 file:// 下不可用）。 */
+const PROJECT_FORMAT = 'nbs2schematic-project';
+const PROJECT_FORMAT_VERSION = 1;
+const PROJECT_FONT_ENTRY = 'assets/lyric-font.ttf';
+
+// 上传字体的原始字节（FontFace 只持有解析后的字体，无法回读字节 → 上传时另存一份供导出）
+let lyricFontBytes = null;
+
+function exportProject() {
+  if (!AppState.song || !AppState.fileBytes) { showError('请先载入 NBS 文件'); return; }
+  try {
+    const meta = {
+      exportedAt: Date.now(),
+      song: { fileName: AppState.song.sourceFileName || '', bytes: AppState.fileBytes.length },
+      font: lyricFontBytes ? { name: LyricFont.uploadName || '', entry: PROJECT_FONT_ENTRY } : null,
+    };
+    const state = buildStatePayload();
+    const files = [
+      { name: 'song.nbs', data: AppState.fileBytes },
+      { name: 'project.json', data: new TextEncoder().encode(JSON.stringify({
+        format: PROJECT_FORMAT, formatVersion: PROJECT_FORMAT_VERSION, meta, state,
+      })) },
+    ];
+    if (lyricFontBytes) files.push({ name: PROJECT_FONT_ENTRY, data: lyricFontBytes });
+    const zip = buildZip(files);
+    const blob = new Blob([zip], { type: 'application/zip' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = sanitizeFilename(AppState.song.songName || 'project') + '.nbsproj';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  } catch (err) {
+    showError('导出工程文件失败：' + (err.message || String(err)), err);
+  }
+}
+
+// 导入：先全验后应用（任何一步失败 → 抛错，当前会话不被改动）
+function importProject(bytes) {
+  const files = readZip(bytes);
+  const songBytes = files.get('song.nbs');
+  const projBytes = files.get('project.json');
+  if (!songBytes || songBytes.length === 0) throw new Error('工程文件缺少 song.nbs（或内容为空）');
+  if (!projBytes) throw new Error('工程文件缺少 project.json');
+  let proj;
+  try { proj = JSON.parse(new TextDecoder().decode(projBytes)); }
+  catch (e) { throw new Error('project.json 无法解析（文件损坏）'); }
+  if (!proj || proj.format !== PROJECT_FORMAT) throw new Error('不是 NBS2schematic 工程文件（format 不匹配）');
+  if (!(proj.formatVersion <= PROJECT_FORMAT_VERSION)) {
+    throw new Error(`工程文件格式版本 ${proj.formatVersion} 高于本工具支持的 ${PROJECT_FORMAT_VERSION}，请更新工具`);
+  }
+  const song = parseNBS(songBytes);   // 失败即抛（NBS 损坏）
+  // stateKey = 文件名 + 字节数 → 导入后必须沿用导出时的文件名，localStorage 才能对上
+  song.sourceFileName = (proj.meta && proj.meta.song && proj.meta.song.fileName) || 'project.nbs';
+  const state = validateStatePayload(song, proj.state);
+  if (!state) throw new Error('工程文件内的项目设置不合法（版本不兼容或字段损坏），已放弃导入');
+  // 应用：复用完整 UI 重建链，不自己拼刷新
+  AppState.fileBytes = new Uint8Array(songBytes);   // subarray 视图落在 zip 大 buffer 上，复制一份独立持有
+  onSongLoaded(song, AppState.fileBytes, state, `已载入工程文件（${new Date().toLocaleString()}）`);
+  saveStateNow(); // 强制覆盖 localStorage（导入即当前状态）
+  // 字体：有则加载；缺失但设置要求 upload → 提示重传（不阻断）
+  const fontBytes = files.get(PROJECT_FONT_ENTRY);
+  lyricFontBytes = fontBytes ? new Uint8Array(fontBytes) : null;
+  if (fontBytes) {
+    lyricFontUpload(lyricFontBytes.buffer.slice(lyricFontBytes.byteOffset, lyricFontBytes.byteOffset + lyricFontBytes.byteLength),
+      (proj.meta && proj.meta.font && proj.meta.font.name) || 'project-font.ttf');
+  } else if (AppState.settings.lyric && AppState.settings.lyric.font === 'upload') {
+    const d = document.createElement('div');
+    d.className = 'w';
+    d.textContent = '⚠ 工程文件不含歌词字体：请在「粒子歌词」区重新上传字体（当前回退系统楷体）';
+    $('warnings').appendChild(d);
+  }
+}
+
 function exportDebugBundle() {
   const { result, palette, size, totalBlocks } = AppState.result;
   const bundle = {
@@ -6236,23 +6373,30 @@ $('fileInput').addEventListener('change', (e) => {
 const dz = $('dropzone');
 dz.addEventListener('dragover', (e) => { e.preventDefault(); dz.classList.add('dragover'); });
 dz.addEventListener('dragleave', () => dz.classList.remove('dragover'));
-dz.addEventListener('drop', (e) => {
+$('dropzone').addEventListener('drop', (e) => {
   e.preventDefault();
   dz.classList.remove('dragover');
   const f = e.dataTransfer.files[0];
-  if (f && f.name.toLowerCase().endsWith('.nbs')) loadFile(f);
-  else showError('请拖入 .nbs 文件');
+  if (f && (f.name.toLowerCase().endsWith('.nbs') || f.name.toLowerCase().endsWith('.nbsproj'))) loadFile(f);
+  else showError('请拖入 .nbs 文件或 .nbsproj 工程文件');
 });
 
 function loadFile(file) {
   clearError();
+  const isProject = file.name.toLowerCase().endsWith('.nbsproj');
   // 规模上限前置：NBS 是 KB~MB 级小文件，readAsArrayBuffer 整读之前先拒超大文件（防内存打爆）
-  if (file.size > NBS_MAX_FILE_BYTES) { showError(`文件 ${(file.size / 1024 / 1024).toFixed(0)}MB 超过 256MB 上限，不像 NBS 文件（NBS 通常为 KB~MB 级），请确认选择了 .nbs 文件`); return; }
+  if (file.size > NBS_MAX_FILE_BYTES) { showError(`文件 ${(file.size / 1024 / 1024).toFixed(0)}MB 超过 256MB 上限，不像 NBS 文件（NBS 通常为 KB~MB 级），请确认选择了 ${isProject ? '.nbsproj 工程文件' : '.nbs 文件'}`); return; }
+  // 工程文件导入会整体覆盖当前项目状态 → 先二次确认（NBS 正常载入也覆盖，但那是既有语义，此处只针对新入口）
+  if (isProject && AppState.song) {
+    const ok = confirm('导入工程文件将覆盖当前项目的全部设置（车道、起点、特效、歌词等）。继续？');
+    if (!ok) return;
+  }
   const reader = new FileReader();
   reader.onerror = () => showError('读取文件失败');
   reader.onload = () => {
     try {
       const bytes = new Uint8Array(reader.result);
+      if (isProject) { importProject(bytes); return; }
       const song = parseNBS(bytes);
       song.sourceFileName = file.name;
       onSongLoaded(song, bytes);
@@ -6548,6 +6692,7 @@ $('generateBtn').addEventListener('click', generate);
 $('downloadBtn').addEventListener('click', downloadLitematic);
 $('sfxZipBtn').addEventListener('click', downloadSfxDatapack);
 $('debugBtn').addEventListener('click', exportDebugBundle);
+$('exportProjBtn').addEventListener('click', exportProject);
 
 // 预置布局（用户 2026-09-04 定）：模板均以 0 号车道（轨道 0）起点为中心对称排布，
 // 只重排音轨车道（2026-09-07 参考车道虚拟化后：参考车道不生成物理结构、不参与碰撞，
@@ -6852,6 +6997,8 @@ $('lyricFontFileInput').addEventListener('change', (e) => {
   reader.onerror = () => showError('字体文件读取失败');
   reader.onload = () => {
     if (!lyricFontUpload(reader.result, f.name)) { showError('字体加载失败（格式不支持或文件损坏）'); return; }
+    // 原始字节另存一份：FontFace 无法回读，工程文件导出需要它（2026-11-08）
+    lyricFontBytes = new Uint8Array(reader.result.slice(0));
     renderLyricSection();
   };
   reader.readAsArrayBuffer(f);

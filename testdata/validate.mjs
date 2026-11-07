@@ -3462,6 +3462,55 @@ try {
   }
 }
 
+// ---------- Z（2026-11-08）：readZip 读写往返 + 工程文件格式 ----------
+{
+  const { buildZip, readZip, zipCrc32 } = context.window.__NBS2SCHEMATIC;
+  const enc = new TextEncoder();
+  const a = enc.encode('hello 工程');
+  const b = new Uint8Array(70000);            // >64KB：覆盖「大条目 + 中央目录偏移」
+  for (let i = 0; i < b.length; i++) b[i] = (i * 37) & 0xFF;
+  const zip = buildZip([{ name: 'a.txt', data: a }, { name: 'dir/b.bin', data: b }]);
+  const back = readZip(zip);
+  const roundOk = back.size === 2
+    && Buffer.from(back.get('a.txt')).equals(Buffer.from(a))
+    && Buffer.from(back.get('dir/b.bin')).equals(Buffer.from(b))
+    && back.get('dir/b.bin').length === 70000;
+  if (!roundOk) { console.log(`FAIL Z1 zip 往返：size=${back.size} a=${!!back.get('a.txt')} bLen=${back.get('dir/b.bin') && back.get('dir/b.bin').length}`); ok = false; }
+  else console.log('PASS Z1 zip 读写往返：buildZip → readZip 两条目（含 >64KB）名字与字节逐字一致');
+
+  // Z2 损坏检测：翻一个数据字节 → CRC 失败；截断 → 找不到 EOCD
+  const bad = zip.slice();
+  bad[30 + 'a.txt'.length] ^= 0xFF;
+  let z2a = null; try { readZip(bad); } catch (e) { z2a = e.message; }
+  let z2b = null; try { readZip(zip.slice(0, zip.length - 10)); } catch (e) { z2b = e.message; }
+  const z2ok = !!z2a && z2a.includes('CRC') && !!z2b && z2b.includes('目录结尾');
+  if (!z2ok) { console.log(`FAIL Z2 zip 损坏检测：crc=${JSON.stringify(z2a)} trunc=${JSON.stringify(z2b)}`); ok = false; }
+  else console.log('PASS Z2 zip 损坏检测：翻字节 → CRC 校验失败；截断 → 「找不到目录结尾记录」');
+
+  // Z3 非 STORE（method≠0）拒绝：手改中央目录 method 字段
+  const deflated = zip.slice();
+  // 中央目录起点 = EOCD 记录的 centralOffset
+  const eocdPos = zip.length - 22;
+  const centralOff = zip[eocdPos + 16] | (zip[eocdPos + 17] << 8) | (zip[eocdPos + 18] << 16) | (zip[eocdPos + 19] << 24);
+  deflated[centralOff + 10] = 8;   // method = deflate
+  let z3msg = null; try { readZip(deflated); } catch (e) { z3msg = e.message; }
+  const z3ok = !!z3msg && z3msg.includes('只支持 STORE');
+  if (!z3ok) { console.log(`FAIL Z3 非 STORE 拒绝：${JSON.stringify(z3msg)}`); ok = false; }
+  else console.log('PASS Z3 非 STORE 拒绝：method=8 条目 → 报错「只支持 STORE 格式」');
+
+  // Z4 工程文件端到端：exportProject 逻辑（buildStatePayload + 格式包装）→ importProject 全链恢复
+  //   直接调 UI 函数需要 DOM 桩（smoke 覆盖）；此处只验格式契约：format/formatVersion/meta.state 可往返
+  const st = { v: 2, selectedLayers: [0], lanes: [{ tracks: [0], start: { dz: 3, dy: 0 }, volRestore: false }] };
+  const proj = { format: 'nbs2schematic-project', formatVersion: 1, meta: { exportedAt: 1, song: { fileName: 'x.nbs', bytes: 8 }, font: null }, state: st };
+  const pz = buildZip([{ name: 'song.nbs', data: new Uint8Array([1, 2, 3]) }, { name: 'project.json', data: enc.encode(JSON.stringify(proj)) }]);
+  const pBack = readZip(pz);
+  const pj = JSON.parse(new TextDecoder().decode(pBack.get('project.json')));
+  const z4ok = pj.format === 'nbs2schematic-project' && pj.formatVersion === 1
+    && pj.state.lanes[0].start.dz === 3 && pBack.get('song.nbs').length === 3;
+  if (!z4ok) { console.log(`FAIL Z4 工程格式契约：${JSON.stringify(pj).slice(0, 200)}`); ok = false; }
+  else console.log('PASS Z4 工程格式契约：format/formatVersion/meta/state 与 song.nbs 条目往返完整');
+}
+
 // ---------- W 分支底座（2026-11-07 用户反馈）与 X 徽章音高越界 ----------
 {
   // W：音量还原的纯粉分支格下方必须有雪块底座（此前只写红石粉 → 游戏内是浮空线）

@@ -1970,5 +1970,65 @@ check(!infoHtml.includes('小号'), 'v5 歌曲：ID 16 是自定义乐器而非�
   check(cbs.length > dupIdx && cbs[dupIdx].checked === true, `N1 复制后卡片复选框为勾选（第 ${dupIdx + 1} 条 checked=${cbs[dupIdx] && cbs[dupIdx].checked}）`);
 }
 
+// ---------- Z 工程文件导出/导入（2026-11-08） ----------
+{
+  const api = context.window.__NBS2SCHEMATIC;
+  const st = api.state;
+  // 准备可识别的项目状态：改车道起点 + 目标版本 + 歌词，导出后应完整回来
+  st.lanes[0].start = { dz: 13, dy: 5 };
+  st.lanes[0].volRestore = false;
+  st.settings.targetVersion = '1.20.4';
+  st.lyrics = [{ start: 0, end: 10, text: '工程往返' }];
+  // 用**当前歌**（卡农）的真实字节：state 里的 tracks 下标按当前 song 层数，用别的歌会校验失败
+  const bytesBefore = new Uint8Array(readFileSync(path.join(__dirname, 'canon in d major Loop.nbs')));
+  st.song.sourceFileName = 'canon in d major Loop.nbs';
+  // 导出：buildStatePayload + 格式包装 + zip（exportProject 的纯逻辑部分，DOM 下载桩不涉及）
+  const payload = api.buildStatePayload();
+  const projJson = JSON.stringify({ format: 'nbs2schematic-project', formatVersion: 1,
+    meta: { exportedAt: Date.now(), song: { fileName: st.song.sourceFileName, bytes: bytesBefore.length }, font: null },
+    state: payload });
+  const enc = new TextEncoder();
+  const projZip = api.buildZip([
+    { name: 'song.nbs', data: bytesBefore },
+    { name: 'project.json', data: enc.encode(projJson) },
+  ]);
+  check(payload.lanes[0].start.dz === 13 && payload.lanes[0].start.dy === 5 && payload.settings.targetVersion === '1.20.4',
+    'Z5 导出载荷含当前车道起点与目标版本');
+  // 破坏当前状态，再导入恢复
+  st.lanes[0].start = { dz: 99, dy: 99 };
+  st.settings.targetVersion = '1.21.11';
+  st.lyrics = [];
+  api.importProject(new Uint8Array(projZip));
+  check(st.lanes[0].start.dz === 13 && st.lanes[0].start.dy === 5,
+    `Z6 导入恢复车道起点（dz=${st.lanes[0].start.dz}、dy=${st.lanes[0].start.dy}，期望 13/5）`);
+  check(st.settings.targetVersion === '1.20.4', `Z7 导入恢复目标版本（${st.settings.targetVersion}）`);
+  check(st.lyrics.length === 1 && st.lyrics[0].text === '工程往返', `Z8 导入恢复歌词（${JSON.stringify(st.lyrics)}）`);
+  check(st.fileBytes.length === bytesBefore.length && st.fileBytes[0] === bytesBefore[0],
+    'Z9 导入恢复 NBS 原始字节（长度与首字节一致）');
+  check(elements.get('genStatus').textContent.includes('已载入工程文件'), `Z10 状态文案为「已载入工程文件」（${elements.get('genStatus').textContent}）`);
+  check(!!context.localStorage.getItem(context.stateKey(st.song)) && JSON.parse(context.localStorage.getItem(context.stateKey(st.song))).lanes[0].start.dz === 13,
+    'Z11 导入后强制写回 localStorage（覆盖旧状态）');
+  // 非法工程文件：当前会话不被破坏
+  const dzNow = st.lanes[0].start.dz;
+  let z12err = null;
+  try { api.importProject(new Uint8Array(api.buildZip([{ name: 'song.nbs', data: bytesBefore }]))); } catch (e) { z12err = e.message; }
+  check(!!z12err && z12err.includes('project.json') && st.lanes[0].start.dz === dzNow,
+    `Z12 缺 project.json → 报错且当前会话不变（${z12err}）`);
+  let z13err = null;
+  try { api.importProject(new Uint8Array(api.buildZip([
+    { name: 'song.nbs', data: bytesBefore },
+    { name: 'project.json', data: enc.encode(JSON.stringify({ format: 'other', formatVersion: 1, state: payload })) },
+  ]))); } catch (e) { z13err = e.message; }
+  check(!!z13err && z13err.includes('不是 NBS2schematic 工程文件') && st.lanes[0].start.dz === dzNow,
+    `Z13 format 不符 → 报错且当前会话不变（${z13err}）`);
+  let z14err = null;
+  try { api.importProject(new Uint8Array(api.buildZip([
+    { name: 'song.nbs', data: bytesBefore },
+    { name: 'project.json', data: enc.encode(JSON.stringify({ format: 'nbs2schematic-project', formatVersion: 99, state: payload })) },
+  ]))); } catch (e) { z14err = e.message; }
+  check(!!z14err && z14err.includes('高于本工具支持') && st.lanes[0].start.dz === dzNow,
+    `Z14 版本过高 → 报错且当前会话不变（${z14err}）`);
+}
+
 console.log(`汇总：共 ${passed + failed} 项 — ${passed} PASS / ${failed} FAIL`);
 process.exit(failed ? 1 : 0);
