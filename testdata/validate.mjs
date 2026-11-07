@@ -3071,18 +3071,19 @@ try {
         console.log(`FAIL L4b 未启用 zip：条目=${zipOff.fileCount} 含listener=${txtOff.includes('listener_')}`); ok = false;
       } else console.log('PASS L4b 未启用零回归：zip 仅 pack.mcmeta、无 listener 条目');
     }
-    // L5 轨道 0 非原点（2026-10-08 可拖）：lane0=(0,4)（dz=0、dy=4 → 主链抬高 4 格、zc=0）
-    //   → 监听让位照旧 shift=2（minZc=0）：主链 zc=2；CB 随 yb/zc 平移至 (0,7,3)（默认布局为 (0,3,3)）；
-    //   geom 按实际布局算出（summonDy=−7、summonDz=−2、setblockDy=−2）；行走行（布局 z=0）恒空气
+    // L5 轨道 0 非原点（2026-10-08 可拖；2026-11-08 三维判定后期望更新）：lane0=(dz=0, dy=4)
+    //   → 行走行是布局 (x,0,0) 一条线，链方块在 y=4…6（CB 在 y=7/8）→ **不占用行走行 → 零平移**（zc 保持 0）；
+    //   CB 随 yb 抬高至 (0,7,1)（z=zc+zOffset=0+1）；geom 按实际布局算出（summonDy=−7、summonDz=0、setblockDy=−2）；
+    //   行走行（布局 y=0、z=0 → 网格 y=0、z=zOffset）恒空气
     const rOn2 = runE2E(tmpFile, { lane0: { dz: 0, dy: 4 }, settings: sOn });
     const rOff2 = runE2E(tmpFile, { lane0: { dz: 0, dy: 4 }, settings: sOff });
     const rail2 = rOn2.result.chains.find(c => c.isDefaultRail);
     const g2 = rOn2.result.geometry, gr2 = rOn2.result.grid;
     const teStart2 = rOn2.result.tileEntities.find(te => te.Command === `function ${SFX_NAMESPACE}:listener_start`);
     const geom2 = g2.listener && g2.listener.geom;
-    const walk2Ok = rail2.zc === 2 && rail2.yb === 4
-      && teStart2 && teStart2.x === 0 && teStart2.y === 7 && teStart2.z === 3   // 抬高 4 + 让位 2：CB 网格 (0,7,3)
-      && geom2 && geom2.summonDy === -7 && geom2.summonDz === -2 && geom2.setblockDy === -2
+    const walk2Ok = rail2.zc === 0 && rail2.yb === 4
+      && teStart2 && teStart2.x === 0 && teStart2.y === 7 && teStart2.z === 1   // 抬高 4、零平移：CB 网格 (0,7,1)
+      && geom2 && geom2.summonDy === -7 && geom2.summonDz === 0 && geom2.setblockDy === -2
       && geom2.summonDy + teStart2.y === g2.yOffset
       && geom2.summonDz + teStart2.z === g2.zOffset
       && geom2.setblockDy + teStart2.y === rail2.yb + 1 + g2.yOffset
@@ -3093,7 +3094,7 @@ try {
     }
     if (!(walk2Ok && walkRow2Ok)) {
       console.log(`FAIL L5 轨道 0 非原点 (0,4)+监听：zc=${rail2 && rail2.zc} yb=${rail2 && rail2.yb} cb=${JSON.stringify(teStart2)} geom=${JSON.stringify(geom2)}`); ok = false;
-    } else console.log('PASS L5 轨道 0 非原点 (0,4)：让位照旧（zc 0→2）、CB 随布局平移 (0,7,3)、geom 自洽（−7/−2/−2）、行走行恒空气；未监听时零让位（zc=0、listener=null）');
+    } else console.log('PASS L5 轨道 0 非原点 (0,4)：抬高不占行走行 → 零平移（zc=0）、CB 网格 (0,7,1)、geom 自洽（−7/0/−2）、行走行恒空气；未监听时零让位（zc=0、listener=null）');
   } finally {
     try { rmSync(path.join(__dirname, tmpFile)); } catch {}
   }
@@ -3423,6 +3424,39 @@ try {
     const d4dOk = d4dShift[0] === 6 && d4dShift[1] === -24;
     if (!d4dOk) { console.log(`FAIL D4d 负起点保持：zc=${JSON.stringify(d4dShift)}（期望 [6,−24]）`); ok = false; }
     else console.log('PASS D4d 负起点保持（用户诉求 3）：轨道 0 在 6、车道在 −24，两者都不撞行走行 → 全部保持原位，v=100 的盒就在 −24');
+
+    // ---------- D4e（2026-11-08 新增）：三维让位判定 —— 用户实测布局回归 ----------
+    //   用户 debug.debug.json：轨道 0 在 (dz=0, dy=24)（方块全在 y=24…28，离行走线 24 格）+
+    //   22 条车道左右对称（最左 dz=−24）。旧判定只看 Z → 轨道 0 命中 → 全局 +26 → 车道 −24 变 +2（左右翻转）。
+    //   新判定加 Y 条件（yb ∈ [−4,1]）→ 无链占用行走行 → 零平移，车道保持 −24、g0 恢复 0.4996。
+    const d4e = runE2E(tmpFile, { lane0: { dz: 0, dy: 24 }, groups: [{ layers: [0], volRestore: true }], groupStarts: [{ dz: -24, dy: 0 }], settings: sV });
+    const d4eShift = d4e.result.chains.filter(c => !c.isRefLane).map(c => c.zc);
+    const d4eWarn = d4e.result.stats.discardedDetails.some(d => d.includes('矿车行走行让位'));
+    const d4eEntry = d4e.result.geometry.volRestore && d4e.result.geometry.volRestore[0];
+    const d4eOk = d4eShift[0] === 0 && !d4eWarn
+      && d4eEntry && d4eEntry.anchorZc === -24 && d4eShift[1] === d4eEntry.zLine
+      && d4eEntry.g0 > 0.49 && d4eEntry.g0 < 0.51;
+    if (!d4eOk) {
+      console.log(`FAIL D4e 抬高轨道 0 不触发让位：zc=${JSON.stringify(d4eShift)}（期望 [0, zLine]）warn=${d4eWarn} entry=${JSON.stringify(d4eEntry)}`); ok = false;
+    } else console.log(`PASS D4e 三维让位（用户实测布局）：轨道 0 在 dy=24 不占行走行 → 零平移（zc=[0,${d4eShift[1]}]，第二项为重定位结果）、无让位明细、anchorZc=−24、g0=${d4eEntry.g0.toFixed(4)}（>0 有效）`);
+
+    // ---------- G1（2026-11-08 新增）：g0=0（锚点超 48 格）必须报错，不静默生成坏产物 ----------
+    //   车道 dz=48 → hypot(48,1) ≥ 48 → g0=0 → 目标增益恒 0 → 每盒都被 ±15 截断、音量还原静默失效。
+    //   对照组：同一位置**不勾**音量还原 → 不报错、正常生成（普通车道不受此护栏影响）。
+    let g1Threw = null;
+    try {
+      runE2E(tmpFile, { lane0: { dz: 5, dy: 0 }, groups: [{ layers: [0], volRestore: true }], groupStarts: [{ dz: 48, dy: 0 }], settings: sV });
+    } catch (e) { g1Threw = e.message; }
+    const g1ok = !!g1Threw && g1Threw.includes('增益为 0');
+    let g1CtrlOk = false;
+    try {
+      const g1c = runE2E(tmpFile, { lane0: { dz: 5, dy: 0 }, groups: [{ layers: [0] }], groupStarts: [{ dz: 48, dy: 0 }], settings: sV });
+      g1CtrlOk = g1c.result.chains.filter(c => !c.isRefLane).map(c => c.zc).join(',') === '5,48'
+        && g1c.result.geometry.volRestore === null;
+    } catch (e) { g1CtrlOk = false; }
+    if (!g1ok || !g1CtrlOk) {
+      console.log(`FAIL G1 g0 护栏：threw=${JSON.stringify(g1Threw)} ctrl=${g1CtrlOk}`); ok = false;
+    } else console.log('PASS G1 g0 护栏：音量还原车道拖到 dz=48（增益 0）→ 生成报错「增益为 0」；同位置不勾还原 → 正常生成（普通车道不受限）');
   } finally {
     try { rmSync(path.join(__dirname, tmpFile)); } catch {}
   }

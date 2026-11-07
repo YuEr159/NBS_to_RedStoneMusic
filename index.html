@@ -1690,22 +1690,21 @@ function buildLayout(song, groups, groupStarts, nTicks, settings, defaultStart, 
   // W 内嵌两个偏移；TE 坐标 = 网格坐标；单线式粒子偏移是虚拟参考车道与轨道 0 的坐标差，平移对其无影响。
   // 2026-09-07 参考车道虚拟化：参考车道不生成任何物理结构 → 尺寸/平移只由真实链（轨道 0 + 音轨车道）决定，
   //   参考车道的虚拟起点即使超出网格范围也不影响产物（它只是粒子锚点几何，不占格）。
-  // 矿车监听让位（2026-10-07 用户定 · 方案 A）：矿车在布局 (0,0,0) 沿 +X 行走（每 tick tp ^1 推进），
-  //   行走行 z=0 须恒空气 → 所有真实链整体向 +Z 平移 shift = max(0, 2−minZc)（最低盒位列 minZc−1 ≥ 1），
-  //   链间相对间距不变（原有 3 格间距保持，不引入新碰撞）。
-  //   minZc ≥ 2 的布局（用户已把整布局拖离原点）shift=0 零改动；未启用时零改动（gen-example 回归保护）。
+  // 矿车监听让位（2026-10-07 用户定 · 方案 A）：矿车在布局原点 (0,0,0) 沿 +X 行走（每 tick tp ^1 ^0 ^0 推进），
+  //   行走行 = 布局 y=0、z=0、x≥0 的**一条线**（不是「z=0 的整面」）→ 有真实链写进这条线时，
+  //   所有真实链整体向 +Z 平移 shift = max(0, 2−minZc)，保持链间相对间距（逐链平移会破坏间距：
+  //   轨道 0 推到 2、车道停在 3 时，车道第 3 位盒 z=2 会撞上轨道 0 中继器，主链断裂）。
+  //   无占用 → shift=0，全部保持用户拖的位置；未启用监听 → 零改动（gen-example 回归保护）。
   //   须在尺寸计算前生效（zcList/zMax/zOffset 按让位后取值）。参考车道纯虚拟不占格，不参与让位。
   const listenerActive = !!(settings && settings.listener && settings.listener.enabled) && !!defaultStart;
-  // 矿车行走行让位（2026-11-07 用户定案 D4 修订）：只在**确有链的盒列落进行走行 z=0** 时平移。
-  //   链占据的盒列 = zc−1..zc+1 → 含 0 ⟺ |zc| ≤ 1。
-  //   · 无链含 0 → shift=0，全部保持用户拖的位置（旧行为会按最左链全局平移：一条拖到 −24 会把所有链推 26 格，
-  //     玩家被强制放在所有车道的一侧——用户 2026-11-07 反馈「强制以左侧为玩家」的直接来源）；
-  //   · 有链含 0 → 退回旧的**全局** shift = max(0, 2−minZc)，保持链间相对间距（逐链平移会破坏间距：
-  //     轨道 0 推到 2、车道停在 3 时，车道第 3 位盒 z=2 会撞上轨道 0 中继器，主链断裂）。
+  // 行走行占用判定（2026-11-08 用户定案 · 三维）：链写进 y=0 的层 = 底座 yb、信号/盒 yb+1、
+  //   轨道 0 导轨 yb+2、防掉落托底 yb−1、监听 CB yb+3/yb+4 → yb ∈ [−4, 1]；Z 向盒列 zc−1..zc+1 含 0 ⟺ |zc| ≤ 1。
+  //   两者同时成立才算占用。旧判定只看 Z：用户把轨道 0 拖到 dy=24（方块全在 y=24…28）仍被当成占用，
+  //   再按最左车道（−24）算平移量 → 23 条链全体 +26，8 条音量还原车道左右翻转 / 被推出 48 格听距（g0=0）。
   const laneShifts = [];
   if (listenerActive) {
     const realChains = chains.filter(c => !c.isRefLane);
-    const hitsWalkRow = realChains.some(c => Math.abs(c.zc) <= 1);
+    const hitsWalkRow = realChains.some(c => Math.abs(c.zc) <= 1 && c.yb >= -4 && c.yb <= 1);
     if (hitsWalkRow) {
       const minZc = Math.min(...realChains.map(c => c.zc));
       const shift = Math.max(0, 2 - minZc);
@@ -1751,6 +1750,13 @@ function buildLayout(song, groups, groupStarts, nTicks, settings, defaultStart, 
         volRestoreEntries.push({ lane: c.groupIndex, anchorZc: c.zc, zLine: c.zc, g0: c.volG0,
           clampedTo100: false, noteCount: 0, uiAnchorZ: c.zc, uiZLine: c.zc });
         continue;
+      }
+      // 可听范围护栏（2026-11-08 用户定案）：锚点距行走行 ≥48 格 → g0=0 → 全部目标增益恒 0 →
+      //   每个盒都被 ±15 截断堆在边界，音量还原**静默失效**（用户实测布局 4 条车道即此）。
+      //   宁可报错让用户挪车道，也不要生成一份看不出问题的坏产物。无有效音符的车道已在上方提前 continue。
+      if (!(c.volG0 > 0)) {
+        throw new Error(`组 ${c.groupIndex + 1}：音量还原锚点 z=${c.zc}、yb=${c.yb} 距矿车行走行 ≥ 48 格（增益为 0），`
+          + '音量还原无法表达——请把该车道拖到 |z| ≤ 40 后重新生成');
       }
       c.volZLine = volRestoreZLine(velArr, c.zc, c.yb);
       c.volReqZ = velArr.map(v => volRestoreReqZ(v, c.zc, c.yb)).sort((a, b) => a - b);
